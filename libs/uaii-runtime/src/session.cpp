@@ -4,6 +4,7 @@
 #include "uaii/ir/registry.hpp"
 #include "uaii/ir/validator.hpp"
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/loaders/registry.hpp"
 
 #include <cstring>
 #include <fstream>
@@ -149,14 +150,26 @@ Error Session::load_or_init_weights() {
 
     bool loaded = false;
     if (!t.weight_ref.empty()) {
-      const std::string path = join_path(options_.weights_dir, t.weight_ref);
-      std::ifstream in(path, std::ios::binary);
-      if (in) {
-        in.read(reinterpret_cast<char*>(data),
-                static_cast<std::streamsize>(buf.nbytes));
-        if (static_cast<std::size_t>(in.gcount()) == buf.nbytes) {
-          loaded = true;
-          log::debug("session") << "loaded weight " << t.name << " from " << path;
+      Error werr = loaders::load_weight_ref_f32(t.weight_ref, options_.weights_dir,
+                                               t.shape, data, buf.nbytes);
+      if (werr.ok()) {
+        loaded = true;
+        log::debug("session") << "loaded weight " << t.name << " from "
+                              << t.weight_ref;
+      } else {
+        // Fallback: raw binary path (legacy Phase 3)
+        const std::string path = join_path(options_.weights_dir, t.weight_ref);
+        std::ifstream in(path, std::ios::binary);
+        if (in) {
+          in.read(reinterpret_cast<char*>(data),
+                  static_cast<std::streamsize>(buf.nbytes));
+          if (static_cast<std::size_t>(in.gcount()) == buf.nbytes) {
+            loaded = true;
+            log::debug("session") << "loaded weight " << t.name << " from " << path;
+          }
+        }
+        if (!loaded) {
+          log::debug("session") << "weight load deferred/fail: " << werr.to_string();
         }
       }
     }

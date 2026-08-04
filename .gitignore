@@ -50,4 +50,6 @@ uaii.local.toml
 # Model fixtures / large artifacts (use Git LFS later)
 *.gguf
 *.safetensors
+uaii_phase4_models/
 !tests/fixtures/.gitkeep
+!examples/models/README.md

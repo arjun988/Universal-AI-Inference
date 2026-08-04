@@ -45,6 +45,45 @@ namespace kernels {
 
 [[nodiscard]] UAII_API Error identity_f32(const TensorView& in, TensorView* out);
 
+/// tokens: f32 ids with shape [batch, seq]; weight: [vocab, dim]
+[[nodiscard]] UAII_API Error embedding_f32(const TensorView& tokens,
+                                           const TensorView& weight,
+                                           TensorView* out);
+
+/// Apply RoPE in-place style: out = rotate(in); optional positions [seq]
+[[nodiscard]] UAII_API Error rope_f32(const TensorView& in,
+                                      const TensorView* positions,
+                                      TensorView* out,
+                                      float theta = 10000.0f);
+
+/// Simplified MHA: Q,K,V are [batch, seq, dim]; out same. attrs via scale/causal.
+[[nodiscard]] UAII_API Error attention_f32(const TensorView& q,
+                                           const TensorView& k,
+                                           const TensorView& v,
+                                           TensorView* out,
+                                           int num_heads,
+                                           float scale,
+                                           bool causal);
+
+/// MoE router: logits = x @ gate_w^T ; probs = softmax; returns top-1 expert index in out_index (f32)
+[[nodiscard]] UAII_API Error moe_router_f32(const TensorView& x,
+                                            const TensorView& gate_w,
+                                            TensorView* probs,
+                                            TensorView* top_expert /*[batch,1] f32 ids*/);
+
+/// MoE expert dispatch: for each row pick expert e and compute x @ We^T (experts stacked [E, dim, dim] as E separate mats via flat)
+/// experts_w: [num_experts, dim, dim] flattened row-major expert-major
+[[nodiscard]] UAII_API Error moe_experts_f32(const TensorView& x,
+                                             const TensorView& experts_w,
+                                             const TensorView& top_expert,
+                                             TensorView* out,
+                                             int num_experts);
+
+[[nodiscard]] UAII_API Error reshape_f32(const TensorView& in, TensorView* out);
+[[nodiscard]] UAII_API Error transpose_f32(const TensorView& in,
+                                           TensorView* out,
+                                           const std::vector<std::int64_t>& perm);
+
 /// Dispatch by operator name for CPU execution.
 [[nodiscard]] UAII_API Error dispatch_cpu(const std::string& op_name,
                                           const std::string& op_version,

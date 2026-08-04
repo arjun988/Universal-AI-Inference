@@ -4,6 +4,7 @@ uaii_add_module(kernels
     src/softmax.cpp
     src/norm.cpp
     src/elementwise.cpp
+    src/transformer.cpp
     src/dispatch.cpp
   DEPS uaii::core uaii::ir
 )

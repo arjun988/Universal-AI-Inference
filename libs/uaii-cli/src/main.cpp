@@ -1,3 +1,4 @@
+#include "commands/convert.hpp"
 #include "commands/doctor.hpp"
 #include "commands/ir_commands.hpp"
 #include "commands/run.hpp"
@@ -23,18 +24,17 @@ void print_usage(const char* argv0) {
       << "  validate   Validate a UAII IR graph\n"
       << "  inspect    Inspect tensors / nodes / metadata\n"
       << "  graph      Dump IR graph (text|dot|json|plan)\n"
+      << "  convert    GGUF/Safetensors → UAII IR\n"
+      << "  tokenize   Encode/decode text with SimpleTokenizer\n"
       << "  run        Execute IR on CPU (or built-in demos)\n"
       << "  help       Show this help\n"
       << "  version    Print version\n\n"
-      << "Global options:\n"
-      << "  --config <path>     Load config file\n"
-      << "  --log-level <lvl>   trace|debug|info|warn|error|off\n"
-      << "  --no-color          Disable ANSI colors\n\n"
-      << "Examples:\n"
-      << "  " << argv0 << " run --demo toy_mlp\n"
-      << "  " << argv0 << " run --demo tiny_block\n"
-      << "  " << argv0 << " run examples/ir/toy_mlp.uaii.json --weight-init ones "
-         "--input x=1,2,3,4 --output y_prob\n";
+      << "Phase 4 demos:\n"
+      << "  " << argv0 << " run --demo gguf\n"
+      << "  " << argv0 << " run --demo safetensors\n"
+      << "  " << argv0 << " run --demo moe\n"
+      << "  " << argv0 << " convert model.gguf -o model.uaii.json\n"
+      << "  " << argv0 << " tokenize encode hello world\n";
 }
 
 struct GlobalOptions {
@@ -137,6 +137,12 @@ int main(int argc, char** argv) {
   }
   if (command == "graph") {
     return uaii::cli::cmd_graph(opts.rest);
+  }
+  if (command == "convert") {
+    return uaii::cli::cmd_convert(opts.rest);
+  }
+  if (command == "tokenize") {
+    return uaii::cli::cmd_tokenize(opts.rest);
   }
   if (command == "run") {
     return uaii::cli::cmd_run(opts.rest);

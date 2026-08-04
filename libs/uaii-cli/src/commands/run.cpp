@@ -14,7 +14,7 @@ namespace {
 void print_usage() {
   std::cout
       << "Usage:\n"
-      << "  uaii run --demo toy_mlp|tiny_block\n"
+      << "  uaii run --demo toy_mlp|tiny_block|gguf|safetensors|moe\n"
       << "  uaii run <ir-path> --input name=v1,v2,... [options]\n\n"
       << "Options:\n"
       << "  --output <name>           Tensor to print (default: first graph output)\n"
@@ -113,7 +113,42 @@ int cmd_run(const std::vector<std::string>& args) {
       print_vector("y", out);
       return 0;
     }
-    std::cerr << "Unknown demo '" << demo << "' (toy_mlp|tiny_block)\n";
+    if (demo == "gguf") {
+      std::string decoded;
+      bool ok = false;
+      Error err = runtime::run_gguf_generate_demo(&decoded, &ok);
+      if (!err.ok()) {
+        std::cerr << err.to_string() << '\n';
+        return 1;
+      }
+      std::cout << "decoded: " << decoded << "\nok: " << (ok ? "true" : "false")
+                << '\n';
+      return ok ? 0 : 2;
+    }
+    if (demo == "safetensors") {
+      std::string decoded;
+      bool ok = false;
+      Error err = runtime::run_safetensors_generate_demo(&decoded, &ok);
+      if (!err.ok()) {
+        std::cerr << err.to_string() << '\n';
+        return 1;
+      }
+      std::cout << "decoded: " << decoded << "\nok: " << (ok ? "true" : "false")
+                << '\n';
+      return ok ? 0 : 2;
+    }
+    if (demo == "moe") {
+      bool ok = false;
+      Error err = runtime::run_moe_smoke_demo(&ok);
+      if (!err.ok()) {
+        std::cerr << err.to_string() << '\n';
+        return 1;
+      }
+      std::cout << "moe_ok: " << (ok ? "true" : "false") << '\n';
+      return ok ? 0 : 2;
+    }
+    std::cerr << "Unknown demo '" << demo
+              << "' (toy_mlp|tiny_block|gguf|safetensors|moe)\n";
     return 1;
   }
 

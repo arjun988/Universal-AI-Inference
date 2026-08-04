@@ -93,5 +93,16 @@ class UAII_API Session {
 
 [[nodiscard]] UAII_API Error run_tiny_block_demo(std::vector<float>* out_values);
 
+/// Phase 4: write tiny GGUF → load → generate-style forward; checks softmax mass.
+[[nodiscard]] UAII_API Error run_gguf_generate_demo(std::string* decoded,
+                                                    bool* ok);
+
+/// Phase 4: write tiny Safetensors → load → generate-style forward.
+[[nodiscard]] UAII_API Error run_safetensors_generate_demo(std::string* decoded,
+                                                           bool* ok);
+
+/// Phase 4: MoE router + expert dispatch smoke test.
+[[nodiscard]] UAII_API Error run_moe_smoke_demo(bool* ok);
+
 }  // namespace runtime
 }  // namespace uaii

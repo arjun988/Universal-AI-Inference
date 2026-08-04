@@ -3,5 +3,6 @@ uaii_add_module(runtime
     src/scheduler_cpu.cpp
     src/session.cpp
     src/demos.cpp
-  DEPS uaii::core uaii::ir uaii::memory uaii::storage uaii::planner uaii::kernels uaii::backends
+    src/demos_phase4.cpp
+  DEPS uaii::core uaii::ir uaii::memory uaii::storage uaii::planner uaii::kernels uaii::backends uaii::loaders uaii::tokenizers
 )

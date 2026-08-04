@@ -82,17 +82,18 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   print_kv("uaii-planner", "stub (Phase 3/6 — IR plan used)");
   print_kv("uaii-kernels", "active (Phase 3 CPU)");
   print_kv("uaii-backends", "active (CPU; GPU Phase 5)");
-  print_kv("uaii-loaders", "stub (Phase 4)");
+  print_kv("uaii-loaders", "active (GGUF + Safetensors)");
+  print_kv("uaii-tokenizers", "active (SimpleTokenizer)");
   print_kv("uaii-profiler", "stub (Phase 6)");
   std::cout << '\n';
 
   std::cout << "Interfaces\n";
   print_kv("IBackend", "declared");
-  print_kv("IModelLoader", "declared");
+  print_kv("IModelLoader", "GGUF + Safetensors");
   print_kv("IOperator / IOperatorRegistry", "declared");
   print_kv("IStorageProvider", "declared");
-  print_kv("IScheduler", "declared");
-  print_kv("ITokenizer", "declared");
+  print_kv("IScheduler", "CPU");
+  print_kv("ITokenizer", "SimpleTokenizer");
   std::cout << '\n';
 
   PluginRegistry registry;

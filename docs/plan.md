@@ -221,7 +221,7 @@ See [roadmap/PHASE3.md](./roadmap/PHASE3.md).
 
 ---
 
-### Phase 4 — Model Support (Weeks 15–20)
+### Phase 4 — Model Support (Weeks 15–20) — **Implemented**
 
 **Objective:** Real formats and architectures enter via loaders.
 
@@ -234,6 +234,8 @@ Deliverables:
 - Initial MoE support (routing + expert dispatch)
 
 **Exit criteria:** At least one GGUF and one Safetensors model path produce usable generations; MoE smoke test passes.
+
+See [roadmap/PHASE4.md](./roadmap/PHASE4.md).
 
 ---
 

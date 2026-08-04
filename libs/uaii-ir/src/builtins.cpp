@@ -50,13 +50,21 @@ void OperatorRegistry::register_builtin_schemas() {
   (void)register_schema(schema("Concat", 1, -1, 1, 1, {"axis"}, "Concatenate"));
   (void)register_schema(schema("Split", 1, 1, 1, -1, {"axis", "split"}, "Split"));
 
-  // Attention / LLM building blocks (schemas only in Phase 2)
-  (void)register_schema(schema("Attention", 2, -1, 1, 1,
+  // Attention / LLM building blocks (Phase 4)
+  (void)register_schema(schema("Attention", 3, 3, 1, 1,
                                {"num_heads", "kv_heads", "scale", "causal"},
-                               "Multi-head attention"));
+                               "Multi-head attention (Q,K,V)"));
   (void)register_schema(schema("RoPE", 1, 2, 1, 1, {"theta", "interleaved"},
                                "Rotary position embedding"));
-  (void)register_schema(schema("Embedding", 1, 2, 1, 1, {}, "Token embedding lookup"));
+  (void)register_schema(schema("Embedding", 2, 2, 1, 1, {}, "Token embedding lookup"));
+  (void)register_schema(schema("MLP", 3, 3, 1, 1, {"activation"},
+                               "Composite MLP (expand in IR for execution)"));
+
+  // MoE
+  (void)register_schema(schema("MoERouter", 2, 2, 2, 2, {"num_experts", "top_k"},
+                               "MoE gate router → probs + top expert ids"));
+  (void)register_schema(schema("MoEExperts", 3, 3, 1, 1, {"num_experts"},
+                               "MoE expert dispatch (top-1)"));
 }
 
 }  // namespace ir

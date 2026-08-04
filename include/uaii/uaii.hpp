@@ -18,4 +18,6 @@
 #include "uaii/memory/memory.hpp"
 #include "uaii/kernels/kernels.hpp"
 #include "uaii/backends/cpu_backend.hpp"
+#include "uaii/loaders/loaders.hpp"
+#include "uaii/tokenizers/tokenizers.hpp"
 #include "uaii/runtime/runtime.hpp"
