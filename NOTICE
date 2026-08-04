@@ -1,0 +1,8 @@
+Universal AI Inference Runtime (UAII Runtime)
+Copyright (c) 2026 arjun shukla and contributors
+
+This product is licensed under the MIT License. See the LICENSE file.
+
+Third-party dependencies may be introduced in later phases (for example
+FlatBuffers, GoogleTest, CUDA toolkits). Their notices will be listed here
+when vendored or required at build time.

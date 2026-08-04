@@ -1,0 +1,9 @@
+# Universal AI Inference Runtime — default config (Phase 1)
+
+[log]
+level = "info"
+color = "true"
+
+[plugin]
+# Comma or semicolon separated directories searched by `uaii doctor --load-plugins`
+dirs = "plugins,build/plugins/example_probe,build/lib,build/bin"

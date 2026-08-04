@@ -139,7 +139,7 @@ Produce bit-identical outputs whenever backend precision and reduction order per
 | Model developers | Ship loaders / operators as plugins |
 | Edge AI developers | Storage-aware, multi-backend execution |
 | Hardware vendors | Integrate via backend plugins |
-| Open-source contributors | Modular crates/modules with clear boundaries |
+| Open-source contributors | Modular libraries/modules with clear boundaries |
 
 ---
 
@@ -187,7 +187,7 @@ When the vision succeeds:
 | **Universal AI Inference Runtime** | Full product name |
 | **UAII Runtime** | Short form in docs and UI |
 | **UAII IR** | Intermediate representation |
-| **uaii-*** | Repository / crate / module prefix |
+| **uaii-*** | Repository / library / module prefix |
 
 Do not use alternate product codenames in public documentation.
 

@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (single-config)
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUAII_BUILD_TESTS=ON -DUAII_BUILD_PLUGINS=ON
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -DUAII_BUILD_TESTS=ON -DUAII_BUILD_PLUGINS=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Doctor
+        shell: bash
+        run: |
+          set -e
+          BIN=""
+          for c in \
+            build/uaii \
+            build/Release/uaii \
+            build/Release/uaii.exe \
+            build/libs/uaii-cli/uaii \
+            build/libs/uaii-cli/Release/uaii.exe
+          do
+            if [[ -x "$c" || -f "$c" ]]; then
+              BIN="$c"
+              break
+            fi
+          done
+          if [[ -z "$BIN" ]]; then
+            echo "uaii binary not found" >&2
+            find build -name 'uaii*' -type f | head
+            exit 1
+          fi
+          echo "Using $BIN"
+          "$BIN" version
+          "$BIN" doctor --load-plugins

@@ -101,7 +101,7 @@ Model file (GGUF / Safetensors / ONNX / …)
 | Principle | Implication |
 |---|---|
 | Universal | Core depends on IR + registries, never on a model family |
-| Hardware independent | Stable `Backend` trait / C ABI; capability queries |
+| Hardware independent | Stable `Backend` interface / C ABI; capability queries |
 | Storage first | `TensorHandle` may reference non-RAM locations; scheduler costs include IO |
 | Extensible | Plugins for loaders, ops, backends, storage, schedulers, quant, profilers |
 | Deterministic | Documented reduction order / seed / precision modes |
@@ -113,16 +113,16 @@ Model file (GGUF / Safetensors / ONNX / …)
 
 ### 5.1 `uaii-core`
 
-Foundation shared by all crates.
+Foundation shared by all libraries.
 
 **Contains:**
 
 - Runtime configuration
 - Shared utilities
 - Error type hierarchy
-- Logging / tracing setup helpers
+- Logging setup helpers
 - Plugin discovery & loading
-- Versioning helpers (crate, IR, ABI)
+- Versioning helpers (library, IR, ABI)
 - Common IDs (tensor ids, node ids, device ids)
 
 **Must not contain:** model math, vendor SDK calls, format parsers.
@@ -315,7 +315,7 @@ Official CLI (`uaii`): `run`, `benchmark`, `inspect`, `validate`, `profile`, `gr
 
 Language bindings over a stable **C API** plus idiomatic wrappers:
 
-Python · Rust · Go · Node · Swift · Java · C
+Python · C++ · Go · Node · Swift · Java · C
 
 ---
 
@@ -487,7 +487,7 @@ Release / recycle previous window buffers
 
 ## 11. Backend Interface Contract
 
-Every backend must implement (Rust trait + mirrored C ABI):
+Every backend must implement (C++ abstract interface + mirrored C ABI):
 
 1. **Device enumeration & init**
 2. **Tensor allocation / free / view**
@@ -558,15 +558,15 @@ Future work (post-MVP):
 ## 16. Tech Stack Anchors (Architecture View)
 
 | Layer | Technology |
-|---|---|---|
-| Core orchestration | Rust |
+|---|---|
+| Core orchestration | C++17 |
 | Plugin / SDK ABI | C |
 | IR serialization | FlatBuffers |
-| CLI / logging | clap, tracing |
-| CPU SIMD | `std::arch` / vendor intrinsics |
+| CLI / logging | C++ CLI + `uaii::log` |
+| CPU SIMD | Intrinsics (AVX2/NEON) |
 | CUDA / HIP / Metal | Native vendor languages via backends |
-| Vulkan / WebGPU | ash / wgpu |
-| Python bindings | PyO3 |
+| Vulkan / WebGPU | Vulkan SDK / Dawn |
+| Python bindings | pybind11 or nanobind |
 
 Full stack detail: [Plan §2](./plan.md#2-tech-stack).
 
@@ -590,7 +590,7 @@ Distributed **inference** (remote node targets) may appear later as scheduler/ba
 1. Prefer new plugins over core changes.
 2. Breaking IR changes bump IR major; provide loaders/migrators when possible.
 3. Backend-specific optimizations stay behind capability APIs.
-4. Hot-path traits stay allocation-free after session init.
+4. Hot-path interfaces stay allocation-free after session init.
 5. Document determinism mode whenever numerical behavior changes.
 
 ---

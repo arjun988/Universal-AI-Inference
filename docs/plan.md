@@ -25,97 +25,98 @@ Any Model  →  UAII IR  →  Planner / Scheduler  →  Any Hardware Backend
 
 | Layer | Choice | Rationale |
 |---|---|---|
-| **Primary language** | **Rust** (Edition 2021+) | Zero-cost abstractions, strong ownership for memory/storage planners, excellent FFI, safe concurrency, modern packaging |
-| **Stable ABI / plugins** | **C ABI** (`extern "C"`) + versioned structs | Language-agnostic plugins; loaders/backends can be Rust, C++, or C |
-| **GPU / vendor kernels** | **CUDA C++ / HIP / Metal Shading Language / WGSL** as needed | Meet vendor toolchains where they are; invoke via backend crates |
-| **Optional hot kernels** | Hand-tuned **SIMD** (Rust `std::arch`, or C++ with FFI) | Performance-first CPU path |
+| **Primary language** | **C++17** (C++20 features optional later) | Industry standard for inference runtimes; zero-cost abstractions; excellent CUDA/Metal/HIP interop; wide contributor base |
+| **Stable ABI / plugins** | **C ABI** (`extern "C"`) + versioned structs | Language-agnostic plugins; loaders/backends can be C++, C, or other languages via FFI |
+| **GPU / vendor kernels** | **CUDA C++ / HIP / Metal Shading Language / WGSL** as needed | Meet vendor toolchains where they are; invoke via backend libraries |
+| **Optional hot kernels** | Hand-tuned **SIMD** (AVX2/NEON intrinsics, optional ISPC later) | Performance-first CPU path |
+| **Python** | Bindings / SDK / tooling (Phase 7; pybind11 or nanobind) | Ergonomic API for researchers; not used in the hot path |
 
-Rust owns orchestration, IR, planning, memory, storage, CLI, and plugin host. Device-specific code lives behind backend interfaces.
+C++ owns orchestration, IR, planning, memory, storage, CLI, and plugin host. Device-specific code lives behind backend interfaces. Python is a first-class SDK language, not the core runtime.
 
 ### 2.2 Build & Workspace
 
 | Concern | Choice |
 |---|---|
-| Workspace | **Cargo workspace** (`uaii-*` crates) |
-| Native / CUDA build glue | **CMake** (invoked from `build.rs` where required) |
-| Cross-compilation | `cross` / target triples for aarch64, WASM (WebGPU path) |
-| Feature flags | Cargo features per backend (`cuda`, `metal`, `vulkan`, `webgpu`, `rocm`) |
-| CI | **GitHub Actions** — build, test, clippy, fmt, backend smoke jobs |
-| Packaging | crates.io (libraries), GitHub Releases (CLI binaries), wheels via **maturin** (Python) |
+| Build system | **CMake 3.20+** (presets optional) |
+| Layout | Modular `libs/uaii-*` libraries + shared `include/uaii` |
+| Cross-compilation | CMake toolchains for aarch64 / secondary targets |
+| Feature flags | CMake options per backend (`UAII_WITH_CUDA`, `UAII_WITH_METAL`, …) |
+| CI | **GitHub Actions** — configure, build, test, clang-format/tidy checks |
+| Packaging | CMake install + CPack; GitHub Releases for CLI; Python wheels later |
+| Style | `.clang-format`, `.clang-tidy` |
 
 ### 2.3 Intermediate Representation & Serialization
 
 | Concern | Choice |
 |---|---|
-| In-memory IR | Typed Rust graph (`uaii-ir`) |
+| In-memory IR | Typed C++ graph (`uaii-ir`) |
 | On-disk / IPC IR | **FlatBuffers** (primary) + optional JSON for debug |
 | Schema evolution | Explicit IR version + compatibility policy |
-| Hashing / cache keys | BLAKE3 of canonical IR + planner config |
+| Hashing / cache keys | BLAKE3 (or XXH3) of canonical IR + planner config |
 
 ### 2.4 Memory, Storage & Concurrency
 
 | Concern | Choice |
 |---|---|
 | Allocator | Custom arenas / pools in `uaii-memory` (over system allocator) |
-| Async IO (storage) | **Tokio** for storage planner / streaming (not on kernel hot path) |
-| mmap | `memmap2` |
-| Compression | `zstd`, optional `lz4` |
-| Object storage (later) | AWS SDK / OpenDAL abstraction |
-| Threading | Rayon for CPU parallel sections; backend-owned streams/queues for GPU |
+| Async IO (storage) | Platform async IO / thread-pool prefetch (not on kernel hot path) |
+| mmap | POSIX `mmap` / Win32 `MapViewOfFile` |
+| Compression | `zstd`, optional `lz4` (vendored or system) |
+| Object storage (later) | Abstract client interface (S3-compatible) |
+| Threading | `std::thread` / thread pool; backend-owned streams/queues for GPU |
 
 ### 2.5 Backends (Planned Stack)
 
 | Backend | Tech |
 |---|---|
-| CPU | Rust + SIMD; optional OpenMP-style thread pools |
-| CUDA | CUDA Toolkit, NVRTC optional, cuBLAS/cuDNN where beneficial (behind interface) |
-| Metal | Metal Performance Shaders / custom Metal shaders via FFI |
+| CPU | C++ + SIMD; optional OpenMP |
+| CUDA | CUDA Toolkit, optional NVRTC, cuBLAS where beneficial (behind interface) |
+| Metal | Metal Performance Shaders / custom Metal shaders via ObjC++/FFI |
 | ROCm | HIP |
-| Vulkan | `ash` + compute pipelines |
-| WebGPU | `wgpu` |
+| Vulkan | Vulkan SDK + compute pipelines |
+| WebGPU | Dawn or wgpu-native via C API |
 
 ### 2.6 Tooling, CLI & SDKs
 
 | Component | Stack |
 |---|---|
-| CLI | Rust + **clap** + **tracing** / **tracing-subscriber** |
-| Config | TOML + env overlays (`uaii.toml`, `UAII_*`) |
-| Errors | `thiserror` / `anyhow` at boundaries |
-| Logging | `tracing` with structured fields |
+| CLI | C++ (`uaii-cli`) |
+| Config | TOML subset + env overlays (`uaii.toml`, `UAII_*`) |
+| Errors | Structured `uaii::Error` / status codes |
+| Logging | Structured severity logger (`uaii::log`) |
 | Profiler export | Chrome trace JSON, optional Parquet later |
-| Python SDK | **PyO3** + **maturin** |
-| Node SDK | **napi-rs** (phase 7) |
-| Go / Java / Swift | C ABI bindings + thin idiomatic wrappers |
-| Docs site | mdBook or Docusaurus (later) |
+| Python SDK | **pybind11** or **nanobind** (Phase 7) |
+| Node / Go / Java / Swift | C ABI bindings + thin idiomatic wrappers |
+| Docs site | Docusaurus or MkDocs (later) |
 
 ### 2.7 Testing & Benchmarks
 
 | Concern | Choice |
 |---|---|
-| Unit / integration | `cargo test`, crate-level tests |
-| Property / fuzz | `proptest` / cargo-fuzz on IR validators |
+| Unit / integration | **GoogleTest** (fetched or system; enabled via CMake) |
+| Property / fuzz | libFuzzer / AFL++ on IR validators (later) |
 | Golden outputs | Determinism suites (bit-exact where required) |
-| Benchmarks | **Criterion** + custom `uaii benchmark` CLI |
+| Benchmarks | Google Benchmark + custom `uaii benchmark` CLI |
 | Model fixtures | Small GGUF / Safetensors samples in `tests/fixtures` (LFS if large) |
 
 ### 2.8 Tech Stack Summary Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  SDKs: Python (PyO3) · Rust · C API · Go/Node/Swift/Java   │
-├─────────────────────────────────────────────────────────────┤
-│  uaii-cli  (clap, tracing)                                  │
-├─────────────────────────────────────────────────────────────┤
-│  uaii-runtime · uaii-planner · uaii-profiler                │
-│  uaii-memory · uaii-storage · uaii-kernels                  │
-├─────────────────────────────────────────────────────────────┤
-│  uaii-ir  (FlatBuffers schema) · uaii-loaders               │
-├─────────────────────────────────────────────────────────────┤
-│  Plugin Host (C ABI) ← loaders · ops · backends · storage   │
-├──────────┬──────────┬──────────┬──────────┬─────────────────┤
-│   CPU    │   CUDA   │  Metal   │ Vulkan   │ WebGPU / ROCm   │
-│  SIMD    │  CUDA C++│  MSL     │  ash     │  wgpu / HIP     │
-└──────────┴──────────┴──────────┴──────────┴─────────────────┘
++-------------------------------------------------------------+
+|  SDKs: Python (pybind11/nanobind) · C API · Go/Node/Swift   |
++-------------------------------------------------------------+
+|  uaii-cli  (C++)                                            |
++-------------------------------------------------------------+
+|  uaii-runtime · uaii-planner · uaii-profiler                |
+|  uaii-memory · uaii-storage · uaii-kernels                  |
++-------------------------------------------------------------+
+|  uaii-ir  (FlatBuffers schema) · uaii-loaders               |
++-------------------------------------------------------------+
+|  Plugin Host (C ABI) <- loaders · ops · backends · storage  |
++----------+----------+----------+----------+-----------------+
+|   CPU    |   CUDA   |  Metal   | Vulkan   | WebGPU / ROCm   |
+|  SIMD    |  CUDA C++|  MSL     |  Vulkan  |  Dawn / HIP     |
++----------+----------+----------+----------+-----------------+
 ```
 
 ---
@@ -123,7 +124,7 @@ Rust owns orchestration, IR, planning, memory, storage, CLI, and plugin host. De
 ## 3. Repository Layout
 
 ```
-uaii-runtime/                    # monorepo root (Universal AI Inference Runtime)
+Universal-AI-Inference/          # monorepo root (UAII Runtime)
 ├── docs/
 │   ├── vision.md
 │   ├── plan.md
@@ -133,7 +134,8 @@ uaii-runtime/                    # monorepo root (Universal AI Inference Runtime
 │   ├── design/
 │   ├── research/
 │   └── roadmap/
-├── crates/                      # or top-level crate dirs
+├── include/uaii/                # public headers
+├── libs/
 │   ├── uaii-core/
 │   ├── uaii-ir/
 │   ├── uaii-runtime/
@@ -144,17 +146,17 @@ uaii-runtime/                    # monorepo root (Universal AI Inference Runtime
 │   ├── uaii-backends/
 │   ├── uaii-kernels/
 │   ├── uaii-profiler/
-│   ├── uaii-cli/
-│   └── uaii-sdk/                # Rust SDK + C headers
+│   └── uaii-cli/
+├── plugins/                     # example / out-of-tree style plugins
 ├── bindings/
-│   ├── python/
-│   ├── node/                    # later
+│   ├── python/                  # Phase 7
 │   └── ...
+├── cmake/
 ├── benchmarks/
 ├── examples/
 ├── tests/
 ├── tools/
-├── Cargo.toml                   # workspace
+├── CMakeLists.txt
 └── README.md
 ```
 
@@ -170,10 +172,10 @@ Module responsibilities match [Architecture](./architecture.md).
 
 Deliverables:
 
-- Cargo workspace and crate boundaries
-- Build system + CI (fmt, clippy, test)
+- CMake workspace and `libs/uaii-*` module boundaries
+- Build system + CI (configure/build/test, format checks)
 - Plugin architecture (discovery, versioning, C ABI stubs)
-- Logging (`tracing`), configuration (TOML/env), error system
+- Logging, configuration (TOML subset/env), error system
 - Core interfaces (backend, loader, operator, storage, scheduler)
 - Initial documentation (this set)
 
@@ -270,13 +272,12 @@ Deliverables:
 
 Deliverables:
 
-- Python SDK
-- Idiomatic Rust SDK polish
+- Python SDK (pybind11 / nanobind)
 - C API stability guarantees (semver)
 - Documentation site, examples, benchmarks
 - Design notes for future plugin marketplace
 
-**Exit criteria:** External developer can load a model, run inference, and profile from Python without reading crate internals.
+**Exit criteria:** External developer can load a model, run inference, and profile from Python without reading library internals.
 
 ---
 
@@ -338,7 +339,7 @@ Ship with `uaii-cli` (command prefix: `uaii`):
 
 | Artifact | Scheme |
 |---|---|
-| Crates / CLI | SemVer |
+| Libraries / CLI | SemVer |
 | UAII IR | `uaii_ir_major.minor` with documented compatibility |
 | Plugin ABI | `UAII_PLUGIN_ABI` integer; host rejects incompatible majors |
 | Quant / op schemas | Namespaced version strings in registry |

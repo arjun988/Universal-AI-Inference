@@ -201,7 +201,7 @@ Every backend exposes:
 | **CUDA** | Streams, async copy, GPU kernels | 5 |
 | **Metal** | Apple GPU execution | 5 |
 | **Vulkan** | Cross-vendor compute | 5 |
-| **WebGPU** | Browser / portable GPU via wgpu | 5 |
+| **WebGPU** | Browser / portable GPU via Dawn or wgpu-native | 5 |
 | **ROCm** | AMD HIP path | 5+ |
 | **FPGA / ASIC** | Vendor plugins | Future |
 
@@ -283,17 +283,17 @@ CLI UX goals: actionable errors, JSON output mode for scripting, stable exit cod
 | Binding | Capabilities | Phase |
 |---|---|---|
 | **C API** | Session, tensor I/O, convert, profile | 3–7 |
-| **Rust SDK** | Idiomatic wrappers over crates | 3–7 |
-| **Python** | High-level run/convert/profile (PyO3) | 7 |
-| **Go** | CGO / FFI wrapper | 7+ |
-| **Node** | napi-rs bindings | 7+ |
+| **C++ SDK** | Idiomatic headers over `uaii-*` libraries | 3–7 |
+| **Python** | High-level run/convert/profile (pybind11/nanobind) | 7 |
+| **Go** | cgo / FFI wrapper | 7+ |
+| **Node** | N-API bindings | 7+ |
 | **Swift / Java** | Mobile/JVM wrappers | 7+ |
 
 SDK requirements:
 
 - Explicit resource lifetimes
 - Error mapping to language idioms
-- No need to understand crate internals for common flows
+- No need to understand library internals for common flows
 
 ---
 
@@ -323,7 +323,7 @@ SDK requirements:
 |---|---|---|
 | TOML config | `uaii.toml` hierarchical config | 1 |
 | Env overlays | `UAII_*` environment variables | 1 |
-| Structured logging | `tracing` fields / levels | 1 |
+| Structured logging | `uaii::log` severity / fields | 1 |
 | Error taxonomy | Stable error codes/categories | 1 |
 | `uaii doctor` | Backend & driver diagnostics | 1 |
 | Feature flags | Compile-time backend selection | 1–5 |
@@ -403,15 +403,15 @@ Everything else (GPU matrix, fusion, streaming, SDKs) expands the same architect
 
 | Feature area | Primary tech |
 |---|---|
-| Core features | Rust crates (`uaii-*`) |
+| Core features | C++17 libraries (`uaii-*`) |
 | Plugins / SDK ABI | C ABI |
 | IR exchange | FlatBuffers |
-| CLI | clap + tracing |
-| Python features | PyO3 / maturin |
+| CLI | C++ (`uaii-cli`) |
+| Python features | pybind11 / nanobind |
 | CPU accel | SIMD intrinsics |
 | CUDA/Metal/ROCm/Vulkan/WebGPU | Backend-native stacks |
 | Compression | zstd, lz4 |
-| Async storage IO | Tokio (off hot path) |
+| Async storage IO | Thread-pool / platform async (off hot path) |
 
 See [Plan §2](./plan.md#2-tech-stack) for the full stack table.
 

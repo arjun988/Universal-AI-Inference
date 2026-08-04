@@ -1,0 +1,53 @@
+# Build
+build/
+cmake-build-*/
+out/
+install/
+compile_commands.json
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Compiler / linker
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Python (future bindings)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+*.egg-info/
+
+# Caches / coverage
+.cache/
+.coverage
+coverage/
+*.gcda
+*.gcno
+
+# Local config overrides
+uaii.local.toml
+.env
+.env.*
+
+# Model fixtures / large artifacts (use Git LFS later)
+*.gguf
+*.safetensors
+!tests/fixtures/.gitkeep
