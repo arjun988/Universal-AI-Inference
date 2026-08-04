@@ -284,9 +284,10 @@ CLI UX goals: actionable errors, JSON output mode for scripting, stable exit cod
 
 | Binding | Capabilities | Phase |
 |---|---|---|
-| **C API** | Session, tensor I/O, convert, profile | 3–7 |
+| **C API** | Session, tensor I/O, convert, profile (`uaii.h` 1.0.0) | 7 |
 | **C++ SDK** | Idiomatic headers over `uaii-*` libraries | 3–7 |
-| **Python** | High-level run/convert/profile (pybind11/nanobind) | 7 |
+| **Python** | `uaii.Session` load/run/profile (ctypes + optional pybind11) | 7 |
+| **Docs site** | Next.js static export (`website/`, no backend) | 7 |
 | **Go** | cgo / FFI wrapper | 7+ |
 | **Node** | N-API bindings | 7+ |
 | **Swift / Java** | Mobile/JVM wrappers | 7+ |

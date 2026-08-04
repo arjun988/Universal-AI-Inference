@@ -5,6 +5,7 @@
 | `ir/` | Hand-authored UAII IR graphs |
 | `cpu/` | Run notes for CPU / multi-backend execution |
 | `models/` | Tiny GGUF/Safetensors fixtures (written by Phase 4 demos) |
+| `python/` | Phase 7 load → run → profile SDK example |
 
 ```bash
 uaii doctor --load-plugins

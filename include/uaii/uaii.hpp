@@ -25,3 +25,4 @@
 #include "uaii/profiler/profiler.hpp"
 #include "uaii/quant/quant.hpp"
 #include "uaii/runtime/runtime.hpp"
+#include "uaii/c_api/uaii.h"

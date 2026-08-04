@@ -1,5 +1,6 @@
 option(UAII_BUILD_TESTS "Build unit tests" ON)
 option(UAII_BUILD_PLUGINS "Build example plugins" ON)
+option(UAII_BUILD_PYTHON "Build Python extension module (pybind11)" OFF)
 option(UAII_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 

@@ -2,6 +2,7 @@
 
 #include "uaii/backends/factory.hpp"
 #include "uaii/c_api/plugin_abi.h"
+#include "uaii/c_api/version.h"
 #include "uaii/core/log.hpp"
 #include "uaii/core/plugin.hpp"
 #include "uaii/version.hpp"
@@ -39,6 +40,7 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
 
   std::cout << "Version\n";
   print_kv("uaii", version_string());
+  print_kv("c_api", UAII_C_API_VERSION_STRING);
   print_kv("plugin_abi", std::to_string(UAII_PLUGIN_ABI_VERSION));
 #if defined(_WIN32)
   print_kv("platform", "windows");
@@ -87,6 +89,8 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   print_kv("uaii-tokenizers", "active (SimpleTokenizer)");
   print_kv("uaii-quant", "active (F16/BF16/INT8/INT4/NF4/MXFP4)");
   print_kv("uaii-profiler", "active (chrome-trace timelines)");
+  print_kv("uaii-capi", "active (C API 1.0.0 shared lib)");
+  print_kv("python SDK", "bindings/python (ctypes + optional pybind11)");
   std::cout << '\n';
 
   std::cout << "Backends (Phase 5)\n";

@@ -326,11 +326,13 @@ Official CLI (`uaii`): `run`, `benchmark`, `inspect`, `validate`, `profile`, `gr
 
 ---
 
-### 5.12 `uaii-sdk`
+### 5.12 `uaii-sdk` / `uaii-capi`
 
-Language bindings over a stable **C API** plus idiomatic wrappers:
+**Status:** Phase 7 — stable C API (`include/uaii/c_api/uaii.h`, semver **1.0.0**) shipped as shared library `uaii_capi`. Python SDK in `bindings/python` (ctypes over C API + optional pybind11). Documentation site in `website/` (Next.js static export).
 
-Python · C++ · Go · Node · Swift · Java · C
+Language bindings over the C API plus idiomatic wrappers:
+
+Python (shipped) · C++ headers · future Go / Node / Swift / Java
 
 ---
 

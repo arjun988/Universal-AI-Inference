@@ -282,12 +282,15 @@ See [roadmap/PHASE6.md](./roadmap/PHASE6.md).
 
 Deliverables:
 
-- Python SDK (pybind11 / nanobind)
+- Python SDK (pybind11 + ctypes over stable C API)
 - C API stability guarantees (semver)
-- Documentation site, examples, benchmarks
+- Documentation site (Next.js static export — no backend)
+- Examples, benchmarks
 - Design notes for future plugin marketplace
 
 **Exit criteria:** External developer can load a model, run inference, and profile from Python without reading library internals.
+
+See [roadmap/PHASE7.md](./roadmap/PHASE7.md).
 
 ---
 

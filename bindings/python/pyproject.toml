@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uaii"
+version = "0.1.0"
+description = "Universal AI Inference Runtime — Python SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "UAII contributors" }]
+keywords = ["inference", "uaii", "gguf", "runtime"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+]
+
+[project.urls]
+Documentation = "https://github.com/arjunshukla/Universal-AI-Inference"
+Homepage = "https://github.com/arjunshukla/Universal-AI-Inference"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["uaii*"]
