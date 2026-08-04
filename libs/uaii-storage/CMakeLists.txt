@@ -1,5 +1,6 @@
 uaii_add_module(storage
-  STUB
-  SOURCES src/stub.cpp
-  DEPS uaii::core
+  SOURCES
+    src/file_provider.cpp
+    src/streaming.cpp
+  DEPS uaii::core uaii::ir uaii::planner
 )

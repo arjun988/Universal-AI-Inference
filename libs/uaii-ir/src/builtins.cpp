@@ -29,6 +29,8 @@ void OperatorRegistry::register_builtin_schemas() {
   // Linear algebra / elementwise
   (void)register_schema(schema("MatMul", 2, 2, 1, 1, {"transpose_a", "transpose_b"},
                                "Matrix multiplication"));
+  (void)register_schema(schema("MatMulRelu", 2, 2, 1, 1, {"transpose_a", "transpose_b"},
+                               "Fused MatMul + ReLU (Phase 6)"));
   (void)register_schema(schema("Add", 2, 2, 1, 1, {}, "Element-wise add"));
   (void)register_schema(schema("Mul", 2, 2, 1, 1, {}, "Element-wise multiply"));
   (void)register_schema(schema("Sub", 2, 2, 1, 1, {}, "Element-wise subtract"));

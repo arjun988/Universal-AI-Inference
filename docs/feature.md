@@ -125,7 +125,7 @@ Related docs: [Vision](./vision.md) · [Architecture](./architecture.md) · [Pla
 |---|---|---|
 | Kernel selection | Capability-aware choice of impl | 3–6 |
 | Execution ordering | Legal topological / pipeline schedules | 3 |
-| Operator fusion | Fuse eligible subgraphs | 6 |
+| Operator fusion | Identity removal + MatMulRelu (`planner::apply_fusion_passes`) | 6 |
 | Memory reuse plan | Lifetime-based buffer sharing | 6 |
 | Storage plan | Tiering, prefetch windows | 6 |
 | Scheduling hints | Device affinity, priorities | 5–6 |

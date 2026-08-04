@@ -20,4 +20,8 @@
 #include "uaii/backends/cpu_backend.hpp"
 #include "uaii/loaders/loaders.hpp"
 #include "uaii/tokenizers/tokenizers.hpp"
+#include "uaii/planner/planner.hpp"
+#include "uaii/storage/storage.hpp"
+#include "uaii/profiler/profiler.hpp"
+#include "uaii/quant/quant.hpp"
 #include "uaii/runtime/runtime.hpp"

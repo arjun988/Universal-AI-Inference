@@ -6,6 +6,9 @@
 uaii run --demo toy_mlp
 uaii run --demo tiny_block
 uaii run --demo parity   # Phase 5: cpu vs cuda under parity policy
+uaii run --demo optimize # Phase 6: fusion + memory reuse wins
+uaii run --demo streaming
+uaii benchmark --demo
 ```
 
 `toy_mlp` checks a known expected softmax output (`0.25` uniform with all-ones weights).

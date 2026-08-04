@@ -48,12 +48,12 @@ std::vector<std::int64_t> attr_int_array(const std::vector<ir::Attribute>& attrs
 }  // namespace
 
 bool supports_cpu_op(const std::string& op_name, const std::string& /*op_version*/) noexcept {
-  return op_name == "MatMul" || op_name == "Softmax" || op_name == "LayerNorm" ||
-         op_name == "RMSNorm" || op_name == "Relu" || op_name == "Gelu" ||
-         op_name == "Silu" || op_name == "Add" || op_name == "Mul" ||
+  return op_name == "MatMul" || op_name == "MatMulRelu" || op_name == "Softmax" ||
+         op_name == "LayerNorm" || op_name == "RMSNorm" || op_name == "Relu" ||
+         op_name == "Gelu" || op_name == "Silu" || op_name == "Add" || op_name == "Mul" ||
          op_name == "Identity" || op_name == "Embedding" || op_name == "RoPE" ||
          op_name == "Attention" || op_name == "MoERouter" || op_name == "MoEExperts" ||
-         op_name == "Reshape" || op_name == "Transpose" || op_name == "MLP" ;
+         op_name == "Reshape" || op_name == "Transpose" || op_name == "MLP";
 }
 
 Error dispatch_cpu(const std::string& op_name,
@@ -65,13 +65,18 @@ Error dispatch_cpu(const std::string& op_name,
     return Error::make(ErrorCode::InvalidArgument, "dispatch outputs empty");
   }
 
-  if (op_name == "MatMul") {
+  if (op_name == "MatMul" || op_name == "MatMulRelu") {
     if (inputs.size() != 2 || outputs->size() != 1) {
       return Error::make(ErrorCode::InvalidArgument, "MatMul expects 2 inputs / 1 output");
     }
-    return matmul_f32(inputs[0], inputs[1], &(*outputs)[0],
-                      attr_bool(attrs, "transpose_a", false),
-                      attr_bool(attrs, "transpose_b", false));
+    Error err = matmul_f32(inputs[0], inputs[1], &(*outputs)[0],
+                           attr_bool(attrs, "transpose_a", false),
+                           attr_bool(attrs, "transpose_b", false));
+    if (!err.ok()) return err;
+    if (op_name == "MatMulRelu") {
+      return relu_f32((*outputs)[0], &(*outputs)[0]);
+    }
+    return Error::ok();
   }
   if (op_name == "Softmax") {
     if (inputs.size() != 1 || outputs->size() != 1) {

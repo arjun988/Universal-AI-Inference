@@ -214,6 +214,8 @@ Memory works with **handles** coordinated with `uaii-storage` when tensors are n
 
 Treats storage as a **backend-like resource**.
 
+**Status:** Phase 6 — `FileStorageProvider` + `StreamingWeightStore` (disk/mmap-tiered reads, staging under RAM budget).
+
 **Support targets:**
 
 - RAM
@@ -246,11 +248,13 @@ The scheduler and storage planner decide **when** to stage handles into executab
 
 Produces optimized execution plans from validated IR.
 
+**Status:** Phase 6 — `optimize_graph` (fusion → execution plan → memory reuse → storage plan) + `PlanCache`.
+
 **Responsibilities:**
 
 - Kernel selection (given backend capabilities)
 - Execution ordering (legal schedules)
-- Operator fusion opportunities
+- Operator fusion opportunities (`Identity` removal, `MatMulRelu`)
 - Scheduling hints (device affinity, priority)
 - Memory reuse planning
 - Storage tier decisions / prefetch pipeline generation
@@ -291,9 +295,7 @@ Each backend implements common interfaces:
 
 Portable mathematical kernels (reference + optimized variants).
 
-**Status:** Phase 3 CPU f32 kernels: MatMul, Softmax, LayerNorm, RMSNorm, Relu/Gelu/Silu, Add/Mul, Identity.
-
-**Examples (later):** Attention fused, Conv, Pooling, RoPE, MoE, Sampling, TopK.
+**Status:** Phase 3–6 CPU f32 kernels: MatMul, **MatMulRelu**, Softmax, norms, activations, Attention, RoPE, MoE, …
 
 Kernels are selected by the CPU dispatcher today; registry-backed plugin kernels follow.
 
@@ -302,6 +304,8 @@ Kernels are selected by the CPU dispatcher today; registry-backed plugin kernels
 ### 5.10 `uaii-profiler`
 
 Integrated profiler—not an afterthought.
+
+**Status:** Phase 6 — `Profiler` scopes on optimize/allocate/IO/kernel; `write_chrome_trace` JSON for chrome://tracing / Perfetto.
 
 **Features:**
 

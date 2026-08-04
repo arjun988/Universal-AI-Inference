@@ -1,5 +1,5 @@
 uaii_add_module(profiler
-  STUB
-  SOURCES src/stub.cpp
+  SOURCES
+    src/profiler.cpp
   DEPS uaii::core
 )

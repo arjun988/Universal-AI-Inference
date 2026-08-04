@@ -272,6 +272,8 @@ Deliverables:
 
 **Exit criteria:** Measurable wins vs. Phase 3 baseline; profiler timelines for kernels/IO; streaming path for model larger than RAM (controlled fixture).
 
+See [roadmap/PHASE6.md](./roadmap/PHASE6.md).
+
 ---
 
 ### Phase 7 — Ecosystem

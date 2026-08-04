@@ -79,13 +79,14 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   print_kv("uaii-ir", "active (Phase 2)");
   print_kv("uaii-runtime", "active (Phase 3 CPU session)");
   print_kv("uaii-memory", "active (Phase 3)");
-  print_kv("uaii-storage", "stub (Phase 3/6)");
-  print_kv("uaii-planner", "stub (Phase 3/6 — IR plan used)");
-  print_kv("uaii-kernels", "active (Phase 3 CPU)");
+  print_kv("uaii-storage", "active (file provider + streaming)");
+  print_kv("uaii-planner", "active (fusion, memory/storage plan, cache)");
+  print_kv("uaii-kernels", "active (Phase 3 CPU + MatMulRelu)");
   print_kv("uaii-backends", "active (CPU + CUDA/Metal/Vulkan/WebGPU/ROCm)");
   print_kv("uaii-loaders", "active (GGUF + Safetensors)");
   print_kv("uaii-tokenizers", "active (SimpleTokenizer)");
-  print_kv("uaii-profiler", "stub (Phase 6)");
+  print_kv("uaii-quant", "active (F16/BF16/INT8/INT4/NF4/MXFP4)");
+  print_kv("uaii-profiler", "active (chrome-trace timelines)");
   std::cout << '\n';
 
   std::cout << "Backends (Phase 5)\n";

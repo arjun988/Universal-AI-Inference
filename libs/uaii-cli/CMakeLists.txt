@@ -4,6 +4,7 @@ add_executable(uaii
   src/commands/ir_commands.cpp
   src/commands/run.cpp
   src/commands/convert.cpp
+  src/commands/optimize.cpp
 )
 
 target_include_directories(uaii PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -19,6 +20,7 @@ target_link_libraries(uaii
     uaii::backends
     uaii::tokenizers
     uaii::loaders
+    uaii::quant
     uaii::runtime
     uaii::profiler
 )

@@ -1,6 +1,7 @@
 #include "commands/convert.hpp"
 #include "commands/doctor.hpp"
 #include "commands/ir_commands.hpp"
+#include "commands/optimize.hpp"
 #include "commands/run.hpp"
 
 #include "uaii/core/config.hpp"
@@ -26,15 +27,19 @@ void print_usage(const char* argv0) {
       << "  graph      Dump IR graph (text|dot|json|plan)\n"
       << "  convert    GGUF/Safetensors → UAII IR\n"
       << "  tokenize   Encode/decode text with SimpleTokenizer\n"
-      << "  run        Execute IR on CPU (or built-in demos)\n"
+      << "  run        Execute IR (or built-in demos)\n"
+      << "  profile    Capture chrome-trace profiler JSON\n"
+      << "  benchmark  Baseline vs optimized timings\n"
+      << "  cache      Plan-cache status/clear\n"
       << "  help       Show this help\n"
       << "  version    Print version\n\n"
-      << "Phase 4 demos:\n"
-      << "  " << argv0 << " run --demo gguf\n"
-      << "  " << argv0 << " run --demo safetensors\n"
-      << "  " << argv0 << " run --demo moe\n"
-      << "  " << argv0 << " convert model.gguf -o model.uaii.json\n"
-      << "  " << argv0 << " tokenize encode hello world\n";
+      << "Phase 6:\n"
+      << "  " << argv0 << " run --demo optimize\n"
+      << "  " << argv0 << " run --demo streaming\n"
+      << "  " << argv0 << " run --demo profile\n"
+      << "  " << argv0 << " run --demo quant --format int8\n"
+      << "  " << argv0 << " benchmark --demo\n"
+      << "  " << argv0 << " profile --demo\n";
 }
 
 struct GlobalOptions {
@@ -146,6 +151,15 @@ int main(int argc, char** argv) {
   }
   if (command == "run") {
     return uaii::cli::cmd_run(opts.rest);
+  }
+  if (command == "profile") {
+    return uaii::cli::cmd_profile(opts.rest);
+  }
+  if (command == "benchmark") {
+    return uaii::cli::cmd_benchmark(opts.rest);
+  }
+  if (command == "cache") {
+    return uaii::cli::cmd_cache(opts.rest);
   }
 
   std::cerr << "Unknown command: " << command << "\n\n";

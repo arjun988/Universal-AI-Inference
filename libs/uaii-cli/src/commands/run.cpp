@@ -3,6 +3,7 @@
 #include "uaii/backends/factory.hpp"
 #include "uaii/core/log.hpp"
 #include "uaii/ir/serialize.hpp"
+#include "uaii/quant/formats.hpp"
 #include "uaii/runtime/session.hpp"
 
 #include <iostream>
@@ -15,11 +16,16 @@ namespace {
 void print_usage() {
   std::cout
       << "Usage:\n"
-      << "  uaii run --demo toy_mlp|tiny_block|gguf|safetensors|moe|parity\n"
+      << "  uaii run --demo toy_mlp|tiny_block|gguf|safetensors|moe|parity|\n"
+      << "                    optimize|streaming|profile|quant\n"
       << "  uaii run <ir-path> --input name=v1,v2,... [options]\n\n"
       << "Options:\n"
       << "  --backend <name>          cpu|cuda|metal|vulkan|webgpu|rocm (default: cpu)\n"
       << "  --force-host-fallback     Prefer host kernels even if native compiled\n"
+      << "  --no-fusion               Disable Phase 6 fusion\n"
+      << "  --no-memory-reuse         Disable memory reuse planner\n"
+      << "  --stream                  Enable weight streaming under --budget-mb\n"
+      << "  --profile                 Enable profiler (optional --trace path)\n"
       << "  --output <name>           Tensor to print (default: first graph output)\n"
       << "  --weights-dir <dir>       Directory for weight_ref files\n"
       << "  --weight-init <mode>      zeros|ones|sequence (fallback if file missing)\n"
@@ -167,8 +173,57 @@ int cmd_run(const std::vector<std::string>& args) {
       }
       return report.ok ? 0 : 2;
     }
+    if (demo == "optimize") {
+      runtime::OptimizeDemoReport report;
+      Error err = runtime::run_optimize_demo(&report);
+      std::cout << report.message << '\n';
+      std::cout << "baseline: " << report.baseline.summary << '\n';
+      std::cout << "optimized: " << report.optimized.summary << '\n';
+      if (!err.ok()) {
+        std::cerr << err.to_string() << '\n';
+        return 1;
+      }
+      return report.ok ? 0 : 2;
+    }
+    if (demo == "streaming") {
+      runtime::StreamingDemoReport report;
+      Error err = runtime::run_streaming_demo(&report);
+      std::cout << report.message << '\n';
+      if (!err.ok()) {
+        std::cerr << err.to_string() << '\n';
+        return 1;
+      }
+      return report.ok ? 0 : 2;
+    }
+    if (demo == "profile") {
+      runtime::ProfileDemoReport report;
+      Error err = runtime::run_profile_demo(get_opt(args, "--trace", "uaii_profile.json"),
+                                            &report);
+      std::cout << "trace: " << report.trace_path << '\n' << report.summary << '\n';
+      if (!err.ok()) {
+        std::cerr << err.to_string() << '\n';
+        return 1;
+      }
+      return report.ok ? 0 : 2;
+    }
+    if (demo == "quant") {
+      const std::string fmt = get_opt(args, "--format", "int8");
+      quant::QuantFormat qf = quant::QuantFormat::INT8;
+      if (!quant::parse_quant_format(fmt, &qf)) {
+        std::cerr << "bad --format (f16|bf16|int8|int4|nf4|mxfp4)\n";
+        return 1;
+      }
+      runtime::QuantDemoReport report;
+      Error err = runtime::run_quant_demo(qf, &report);
+      std::cout << report.message << '\n';
+      if (!err.ok()) {
+        std::cerr << err.to_string() << '\n';
+        return 1;
+      }
+      return report.ok ? 0 : 2;
+    }
     std::cerr << "Unknown demo '" << demo
-              << "' (toy_mlp|tiny_block|gguf|safetensors|moe|parity)\n";
+              << "' (toy_mlp|tiny_block|gguf|safetensors|moe|parity|optimize|streaming|profile|quant)\n";
     return 1;
   }
 
@@ -199,6 +254,11 @@ int cmd_run(const std::vector<std::string>& args) {
   opts.backend_name = get_opt(args, "--backend", "cpu");
   opts.force_host_fallback = has_flag(args, "--force-host-fallback");
   opts.prefer_native = !opts.force_host_fallback;
+  opts.enable_fusion = !has_flag(args, "--no-fusion");
+  opts.enable_memory_reuse = !has_flag(args, "--no-memory-reuse");
+  opts.enable_streaming = has_flag(args, "--stream");
+  opts.enable_profiler = has_flag(args, "--profile");
+  opts.profile_trace_path = get_opt(args, "--trace", opts.enable_profiler ? "uaii_profile.json" : "");
   if (!backends::backend_exists(opts.backend_name)) {
     std::cerr << "unknown --backend '" << opts.backend_name << "'\n";
     return 1;
