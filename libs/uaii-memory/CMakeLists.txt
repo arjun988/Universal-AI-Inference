@@ -1,5 +1,8 @@
 uaii_add_module(memory
-  STUB
-  SOURCES src/stub.cpp
-  DEPS uaii::core
+  SOURCES
+    src/budget.cpp
+    src/arena.cpp
+    src/pool.cpp
+    src/allocator.cpp
+  DEPS uaii::core uaii::ir
 )

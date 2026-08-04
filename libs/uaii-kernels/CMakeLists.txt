@@ -1,5 +1,9 @@
 uaii_add_module(kernels
-  STUB
-  SOURCES src/stub.cpp
-  DEPS uaii::core
+  SOURCES
+    src/matmul.cpp
+    src/softmax.cpp
+    src/norm.cpp
+    src/elementwise.cpp
+    src/dispatch.cpp
+  DEPS uaii::core uaii::ir
 )

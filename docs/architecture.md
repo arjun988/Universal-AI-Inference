@@ -180,6 +180,8 @@ Loaders **only** produce IR (+ optional weight blobs / tensor packs). They do no
 
 Graph execution host.
 
+**Status:** Phase 3 CPU session implemented (`runtime::Session`, `CpuScheduler`).
+
 **Responsibilities:**
 
 - Execution lifecycle (create / run / destroy)
@@ -195,15 +197,14 @@ Graph execution host.
 
 Owns allocation strategy for **device-visible** and host buffers.
 
+**Status:** Phase 3 implemented (arena, pool, budget, allocator).
+
 **Features:**
 
 - Arena allocation
 - Tensor pools / reuse
-- Pinned (page-locked) host memory
-- Huge pages (where OS supports)
-- NUMA awareness
 - Memory budgeting
-- Lifetime analysis inputs/outputs for the planner
+- (Later) Pinned host memory, huge pages, NUMA
 
 Memory works with **handles** coordinated with `uaii-storage` when tensors are not resident.
 
@@ -266,6 +267,8 @@ Produces optimized execution plans from validated IR.
 
 Hardware abstraction layer (HAL).
 
+**Status:** Phase 3 `CpuBackend` implemented; GPU backends in Phase 5.
+
 Each backend implements common interfaces:
 
 | Interface area | Examples |
@@ -285,9 +288,11 @@ Each backend implements common interfaces:
 
 Portable mathematical kernels (reference + optimized variants).
 
-**Examples:** MatMul, Attention, Softmax, LayerNorm, RMSNorm, Conv, Pooling, RoPE, MoE, Sampling, TopK, Activations.
+**Status:** Phase 3 CPU f32 kernels: MatMul, Softmax, LayerNorm, RMSNorm, Relu/Gelu/Silu, Add/Mul, Identity.
 
-Kernels register against the **operator registry** with versioned implementations and backend tags.
+**Examples (later):** Attention fused, Conv, Pooling, RoPE, MoE, Sampling, TopK.
+
+Kernels are selected by the CPU dispatcher today; registry-backed plugin kernels follow.
 
 ---
 

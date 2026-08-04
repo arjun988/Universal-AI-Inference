@@ -1,5 +1,6 @@
 #include "commands/doctor.hpp"
 #include "commands/ir_commands.hpp"
+#include "commands/run.hpp"
 
 #include "uaii/core/config.hpp"
 #include "uaii/core/log.hpp"
@@ -22,18 +23,18 @@ void print_usage(const char* argv0) {
       << "  validate   Validate a UAII IR graph\n"
       << "  inspect    Inspect tensors / nodes / metadata\n"
       << "  graph      Dump IR graph (text|dot|json|plan)\n"
+      << "  run        Execute IR on CPU (or built-in demos)\n"
       << "  help       Show this help\n"
       << "  version    Print version\n\n"
       << "Global options:\n"
       << "  --config <path>     Load config file\n"
       << "  --log-level <lvl>   trace|debug|info|warn|error|off\n"
       << "  --no-color          Disable ANSI colors\n\n"
-      << "doctor options:\n"
-      << "  --load-plugins      Load discovered plugins (default: discover only)\n\n"
-      << "IR examples:\n"
-      << "  " << argv0 << " validate examples/ir/toy_mlp.uaii.json\n"
-      << "  " << argv0 << " inspect examples/ir/toy_mlp.uaii.json\n"
-      << "  " << argv0 << " graph examples/ir/toy_mlp.uaii.json --format plan\n";
+      << "Examples:\n"
+      << "  " << argv0 << " run --demo toy_mlp\n"
+      << "  " << argv0 << " run --demo tiny_block\n"
+      << "  " << argv0 << " run examples/ir/toy_mlp.uaii.json --weight-init ones "
+         "--input x=1,2,3,4 --output y_prob\n";
 }
 
 struct GlobalOptions {
@@ -136,6 +137,9 @@ int main(int argc, char** argv) {
   }
   if (command == "graph") {
     return uaii::cli::cmd_graph(opts.rest);
+  }
+  if (command == "run") {
+    return uaii::cli::cmd_run(opts.rest);
   }
 
   std::cerr << "Unknown command: " << command << "\n\n";

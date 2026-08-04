@@ -76,12 +76,12 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   std::cout << "Modules (Phase 1)\n";
   print_kv("uaii-core", "active");
   print_kv("uaii-ir", "active (Phase 2)");
-  print_kv("uaii-runtime", "stub (Phase 3)");
-  print_kv("uaii-memory", "stub (Phase 3)");
+  print_kv("uaii-runtime", "active (Phase 3 CPU session)");
+  print_kv("uaii-memory", "active (Phase 3)");
   print_kv("uaii-storage", "stub (Phase 3/6)");
-  print_kv("uaii-planner", "stub (Phase 3/6)");
-  print_kv("uaii-kernels", "stub (Phase 3)");
-  print_kv("uaii-backends", "stub (Phase 3/5)");
+  print_kv("uaii-planner", "stub (Phase 3/6 — IR plan used)");
+  print_kv("uaii-kernels", "active (Phase 3 CPU)");
+  print_kv("uaii-backends", "active (CPU; GPU Phase 5)");
   print_kv("uaii-loaders", "stub (Phase 4)");
   print_kv("uaii-profiler", "stub (Phase 6)");
   std::cout << '\n';

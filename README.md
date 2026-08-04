@@ -6,7 +6,7 @@ any model → **UAII IR** → any hardware.
 It is designed as an *execution operating system* for inference—not a single-model
 engine. Models, operators, backends, schedulers, and storage providers are plugins.
 
-> Status: **Phase 2 — UAII IR** (graph IR, validator, registry, serialize, CLI inspect/graph/validate)
+> Status: **Phase 3 — CPU Runtime** (memory, scheduler, session, CPU kernels, `uaii run`)
 
 ## Docs
 
@@ -37,12 +37,13 @@ libs/uaii-core/        Errors, logging, config, plugin host
 libs/uaii-ir/          UAII IR (graph, registry, validator, serialize, plan)
 schemas/uaii_ir.fbs    FlatBuffers IR contract (native codec ships without flatc)
 examples/ir/           Hand-authored IR examples
-libs/uaii-runtime/     Execution engine (Phase 3 stub)
-libs/uaii-memory/      Allocators (Phase 3 stub)
-libs/uaii-storage/     Storage engine (Phase 3/6 stub)
-libs/uaii-planner/     Planner (Phase 3/6 stub)
-libs/uaii-kernels/     Kernels (Phase 3 stub)
-libs/uaii-backends/    Backends (Phase 3/5 stub)
+libs/uaii-runtime/     CPU session / scheduler / demos (Phase 3)
+libs/uaii-memory/      Arena, pool, budget allocator (Phase 3)
+libs/uaii-storage/     Storage engine (Phase 6 stub)
+libs/uaii-planner/     Advanced planner (stub; IR plan used in Phase 3)
+libs/uaii-kernels/     CPU kernels (MatMul, Softmax, norms, …)
+libs/uaii-backends/    CPU backend (GPU backends in Phase 5)
+examples/cpu/          CPU run notes
 libs/uaii-loaders/     Model loaders (Phase 4 stub)
 libs/uaii-profiler/    Profiler (Phase 6 stub)
 libs/uaii-cli/         `uaii` CLI
@@ -119,7 +120,9 @@ directory next to the CLI when plugins are built.
 | `uaii validate <path>` | Phase 2 |
 | `uaii inspect <path>` | Phase 2 |
 | `uaii graph <path> [--format text\|dot\|json\|plan]` | Phase 2 |
-| `uaii run` / `convert` / … | Later phases |
+| `uaii run --demo toy_mlp\|tiny_block` | Phase 3 |
+| `uaii run <ir> --input …` | Phase 3 |
+| `uaii convert` / … | Later phases |
 
 ### Phase 2 IR examples (run after you build)
 
@@ -130,6 +133,22 @@ uaii graph examples/ir/toy_mlp.uaii.json --format text
 uaii graph examples/ir/toy_mlp.uaii.json --format dot
 uaii graph examples/ir/toy_mlp.uaii.json --format plan
 ```
+
+### Phase 3 CPU execution (run after you build)
+
+```bash
+# Deterministic demos (preferred exit-criteria check)
+uaii run --demo toy_mlp
+uaii run --demo tiny_block
+
+# Hand-authored IR on CPU
+uaii run examples/ir/toy_mlp.uaii.json \
+  --weight-init ones \
+  --input x=1,2,3,4 \
+  --output y_prob
+```
+
+`toy_mlp` demo expects `y_prob = [0.25, 0.25, 0.25, 0.25]` with all-ones weights.
 
 IR formats:
 
@@ -199,6 +218,14 @@ Host rejects plugins whose `abi_version != UAII_PLUGIN_ABI_VERSION`.
 - [x] Execution plan data structures
 - [x] IR versioning (`1.0`)
 - [x] `uaii validate` / `inspect` / `graph`
+
+**Phase 3**
+
+- [x] Memory allocator (arena, pool, budget)
+- [x] CPU scheduler + session lifecycle
+- [x] CPU backend + f32 kernels (MatMul, Softmax, LayerNorm, RMSNorm, …)
+- [x] End-to-end CPU execution via `uaii run`
+- [x] Toy MLP demo with expected outputs + tiny transformer-style block
 
 ## Contributing & community
 

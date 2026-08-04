@@ -15,3 +15,7 @@
 #include "uaii/interfaces/tokenizer.hpp"
 #include "uaii/interfaces/types.hpp"
 #include "uaii/ir/ir.hpp"
+#include "uaii/memory/memory.hpp"
+#include "uaii/kernels/kernels.hpp"
+#include "uaii/backends/cpu_backend.hpp"
+#include "uaii/runtime/runtime.hpp"

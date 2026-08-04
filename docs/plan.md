@@ -202,7 +202,7 @@ See [roadmap/PHASE2.md](./roadmap/PHASE2.md).
 
 ---
 
-### Phase 3 — CPU Runtime (Weeks 9–14)
+### Phase 3 — CPU Runtime (Weeks 9–14) — **Implemented**
 
 **Objective:** First end-to-end inference on CPU.
 
@@ -216,6 +216,8 @@ Deliverables:
 - Minimal transformer-style graph execution
 
 **Exit criteria:** Toy or small real model runs end-to-end on CPU through UAII IR with correct outputs.
+
+See [roadmap/PHASE3.md](./roadmap/PHASE3.md).
 
 ---
 
