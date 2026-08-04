@@ -6,7 +6,7 @@ any model → **UAII IR** → any hardware.
 It is designed as an *execution operating system* for inference—not a single-model
 engine. Models, operators, backends, schedulers, and storage providers are plugins.
 
-> Status: **Phase 1 — Foundation** (scaffolding, core services, interfaces, CLI doctor)
+> Status: **Phase 2 — UAII IR** (graph IR, validator, registry, serialize, CLI inspect/graph/validate)
 
 ## Docs
 
@@ -34,7 +34,9 @@ Rust is **not** used in the core.
 ```
 include/uaii/          Public headers (core + interfaces + C ABI)
 libs/uaii-core/        Errors, logging, config, plugin host
-libs/uaii-ir/          IR (Phase 2 stub)
+libs/uaii-ir/          UAII IR (graph, registry, validator, serialize, plan)
+schemas/uaii_ir.fbs    FlatBuffers IR contract (native codec ships without flatc)
+examples/ir/           Hand-authored IR examples
 libs/uaii-runtime/     Execution engine (Phase 3 stub)
 libs/uaii-memory/      Allocators (Phase 3 stub)
 libs/uaii-storage/     Storage engine (Phase 3/6 stub)
@@ -108,13 +110,36 @@ On Windows multi-config builds the binary may be under `build/Release/uaii.exe`
 (or `build/Debug/uaii.exe`). The example plugin is copied to a `plugins/`
 directory next to the CLI when plugins are built.
 
-### Phase 1 CLI commands
+### CLI commands
 
 | Command | Status |
 |---|---|
-| `uaii doctor` | Implemented |
-| `uaii version` / `uaii help` | Implemented |
-| `uaii run` / `validate` / `convert` / … | Later phases |
+| `uaii doctor` | Phase 1 |
+| `uaii version` / `uaii help` | Phase 1 |
+| `uaii validate <path>` | Phase 2 |
+| `uaii inspect <path>` | Phase 2 |
+| `uaii graph <path> [--format text\|dot\|json\|plan]` | Phase 2 |
+| `uaii run` / `convert` / … | Later phases |
+
+### Phase 2 IR examples (run after you build)
+
+```bash
+uaii validate examples/ir/toy_mlp.uaii.json
+uaii inspect examples/ir/toy_mlp.uaii.json
+uaii graph examples/ir/toy_mlp.uaii.json --format text
+uaii graph examples/ir/toy_mlp.uaii.json --format dot
+uaii graph examples/ir/toy_mlp.uaii.json --format plan
+```
+
+IR formats:
+
+| Extension | Codec |
+|---|---|
+| `.uaii.json` / `.json` | JSON (hand-authored / debug) |
+| `.uaii` | Native binary (magic `UAIR`, schema-aligned with `schemas/uaii_ir.fbs`) |
+
+> FlatBuffers schema is the on-disk contract. Phase 2 ships a zero-dependency native
+> binary + JSON implementation so you do not need `flatc` installed to build.
 
 ## Tests (run these yourself — not executed by the authoring agent)
 
@@ -154,14 +179,26 @@ See [`include/uaii/c_api/plugin_abi.h`](include/uaii/c_api/plugin_abi.h) and
 
 Host rejects plugins whose `abi_version != UAII_PLUGIN_ABI_VERSION`.
 
-## Phase 1 exit criteria
+## Phase exit criteria
+
+**Phase 1**
 
 - [x] CMake workspace with modular `uaii-*` libraries
 - [x] Plugin discovery + load with ABI gate
 - [x] Logging, config, structured errors
-- [x] Core interfaces declared (`IBackend`, loaders, operators, storage, scheduler, tokenizer)
+- [x] Core interfaces declared
 - [x] `uaii doctor` reports environment
-- [x] Open-source project metadata (license, contributing, security, CI)
+- [x] Open-source project metadata
+
+**Phase 2**
+
+- [x] Graph / tensor / operator IR definitions
+- [x] Dynamic operator registry (+ builtins)
+- [x] Graph validator
+- [x] Serialize / deserialize (JSON + binary; FlatBuffers schema committed)
+- [x] Execution plan data structures
+- [x] IR versioning (`1.0`)
+- [x] `uaii validate` / `inspect` / `graph`
 
 ## Contributing & community
 

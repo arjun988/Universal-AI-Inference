@@ -183,7 +183,7 @@ Deliverables:
 
 ---
 
-### Phase 2 — UAII IR (Weeks 5–8)
+### Phase 2 — UAII IR (Weeks 5–8) — **Implemented**
 
 **Objective:** Make the IR the single source of truth.
 
@@ -192,11 +192,13 @@ Deliverables:
 - Graph, tensor, and operator definitions
 - Operator registry (dynamic registration)
 - Graph validator
-- Serialization / deserialization (FlatBuffers)
+- Serialization / deserialization (FlatBuffers schema + native binary/JSON codecs)
 - Execution plan data structures (pre-scheduler)
 - IR versioning rules
 
 **Exit criteria:** Hand-authored IR graphs validate, serialize, round-trip, and dump via `uaii inspect` / `uaii graph`.
+
+See [roadmap/PHASE2.md](./roadmap/PHASE2.md).
 
 ---
 

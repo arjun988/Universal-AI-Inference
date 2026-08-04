@@ -1,6 +1,7 @@
 add_executable(uaii
   src/main.cpp
   src/commands/doctor.cpp
+  src/commands/ir_commands.cpp
 )
 
 target_include_directories(uaii PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

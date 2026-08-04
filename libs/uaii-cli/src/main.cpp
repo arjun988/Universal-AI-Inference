@@ -1,4 +1,5 @@
 #include "commands/doctor.hpp"
+#include "commands/ir_commands.hpp"
 
 #include "uaii/core/config.hpp"
 #include "uaii/core/log.hpp"
@@ -18,6 +19,9 @@ void print_usage(const char* argv0) {
       << "  " << argv0 << " <command> [options]\n\n"
       << "Commands:\n"
       << "  doctor     Diagnose environment, modules, and plugins\n"
+      << "  validate   Validate a UAII IR graph\n"
+      << "  inspect    Inspect tensors / nodes / metadata\n"
+      << "  graph      Dump IR graph (text|dot|json|plan)\n"
       << "  help       Show this help\n"
       << "  version    Print version\n\n"
       << "Global options:\n"
@@ -25,7 +29,11 @@ void print_usage(const char* argv0) {
       << "  --log-level <lvl>   trace|debug|info|warn|error|off\n"
       << "  --no-color          Disable ANSI colors\n\n"
       << "doctor options:\n"
-      << "  --load-plugins      Load discovered plugins (default: discover only)\n";
+      << "  --load-plugins      Load discovered plugins (default: discover only)\n\n"
+      << "IR examples:\n"
+      << "  " << argv0 << " validate examples/ir/toy_mlp.uaii.json\n"
+      << "  " << argv0 << " inspect examples/ir/toy_mlp.uaii.json\n"
+      << "  " << argv0 << " graph examples/ir/toy_mlp.uaii.json --format plan\n";
 }
 
 struct GlobalOptions {
@@ -50,7 +58,11 @@ GlobalOptions parse_args(int argc, char** argv) {
     } else if (arg == "--load-plugins") {
       opts.load_plugins = true;
     } else if (arg == "-h" || arg == "--help") {
-      opts.command = "help";
+      if (opts.command.empty()) {
+        opts.command = "help";
+      } else {
+        opts.rest.push_back(arg);
+      }
     } else if (!arg.empty() && arg[0] == '-') {
       opts.rest.push_back(arg);
     } else if (opts.command.empty()) {
@@ -115,6 +127,15 @@ int main(int argc, char** argv) {
       exe_dir.clear();
     }
     return uaii::cli::cmd_doctor(config, opts.load_plugins, exe_dir);
+  }
+  if (command == "validate") {
+    return uaii::cli::cmd_validate(opts.rest);
+  }
+  if (command == "inspect") {
+    return uaii::cli::cmd_inspect(opts.rest);
+  }
+  if (command == "graph") {
+    return uaii::cli::cmd_graph(opts.rest);
   }
 
   std::cerr << "Unknown command: " << command << "\n\n";

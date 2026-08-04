@@ -1,0 +1,63 @@
+// UAII IR FlatBuffers schema (contract).
+// Phase 2 ships a matching native binary + JSON codec so the project builds
+// with zero external dependencies. When `flatc` is available, generated code
+// can replace the native binary path without changing the logical model.
+
+namespace uaii.ir.fbs;
+
+enum DType : ubyte {
+  Unknown = 0,
+  F32, F16, BF16,
+  I8, I32, I64,
+  U8, U32,
+  Bool
+}
+
+enum StorageHint : ubyte {
+  Unspecified = 0,
+  Ram,
+  Mmap,
+  External
+}
+
+table Attribute {
+  key: string;
+  // Encoded as string for schema simplicity; native codec preserves typed forms.
+  value: string;
+}
+
+table Tensor {
+  id: ulong;
+  name: string;
+  dtype: DType;
+  shape: [long];
+  storage_hint: StorageHint = Unspecified;
+  is_weight: bool = false;
+  weight_ref: string;
+}
+
+table Node {
+  id: ulong;
+  name: string;
+  op_name: string;
+  op_version: string;
+  inputs: [ulong];
+  outputs: [ulong];
+  attributes: [Attribute];
+}
+
+table Graph {
+  ir_major: uint;
+  ir_minor: uint;
+  name: string;
+  producer: string;
+  domain: string;
+  tensors: [Tensor];
+  nodes: [Node];
+  inputs: [ulong];
+  outputs: [ulong];
+  metadata_keys: [string];
+  metadata_values: [string];
+}
+
+root_type Graph;

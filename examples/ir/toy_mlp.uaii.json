@@ -1,0 +1,124 @@
+{
+  "ir_version": {
+    "major": 1,
+    "minor": 0
+  },
+  "name": "toy_mlp",
+  "producer": "hand-authored",
+  "domain": "uaii",
+  "tensors": [
+    {
+      "id": 1,
+      "name": "x",
+      "dtype": "f32",
+      "shape": [1, 4],
+      "storage_hint": "ram",
+      "is_weight": false,
+      "weight_ref": ""
+    },
+    {
+      "id": 2,
+      "name": "w1",
+      "dtype": "f32",
+      "shape": [4, 8],
+      "storage_hint": "external",
+      "is_weight": true,
+      "weight_ref": "weights/w1.bin"
+    },
+    {
+      "id": 3,
+      "name": "h",
+      "dtype": "f32",
+      "shape": [1, 8],
+      "storage_hint": "ram",
+      "is_weight": false,
+      "weight_ref": ""
+    },
+    {
+      "id": 4,
+      "name": "h_act",
+      "dtype": "f32",
+      "shape": [1, 8],
+      "storage_hint": "ram",
+      "is_weight": false,
+      "weight_ref": ""
+    },
+    {
+      "id": 5,
+      "name": "w2",
+      "dtype": "f32",
+      "shape": [8, 4],
+      "storage_hint": "external",
+      "is_weight": true,
+      "weight_ref": "weights/w2.bin"
+    },
+    {
+      "id": 6,
+      "name": "y",
+      "dtype": "f32",
+      "shape": [1, 4],
+      "storage_hint": "ram",
+      "is_weight": false,
+      "weight_ref": ""
+    },
+    {
+      "id": 7,
+      "name": "y_prob",
+      "dtype": "f32",
+      "shape": [1, 4],
+      "storage_hint": "ram",
+      "is_weight": false,
+      "weight_ref": ""
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "fc1",
+      "op_name": "MatMul",
+      "op_version": "1",
+      "inputs": [1, 2],
+      "outputs": [3],
+      "attributes": []
+    },
+    {
+      "id": 2,
+      "name": "act",
+      "op_name": "Relu",
+      "op_version": "1",
+      "inputs": [3],
+      "outputs": [4],
+      "attributes": []
+    },
+    {
+      "id": 3,
+      "name": "fc2",
+      "op_name": "MatMul",
+      "op_version": "1",
+      "inputs": [4, 5],
+      "outputs": [6],
+      "attributes": []
+    },
+    {
+      "id": 4,
+      "name": "prob",
+      "op_name": "Softmax",
+      "op_version": "1",
+      "inputs": [6],
+      "outputs": [7],
+      "attributes": [
+        {
+          "key": "axis",
+          "type": "int",
+          "value": -1
+        }
+      ]
+    }
+  ],
+  "inputs": [1],
+  "outputs": [7],
+  "metadata": {
+    "example": "phase2-toy-mlp",
+    "note": "Hand-authored UAII IR for validate/inspect/graph"
+  }
+}

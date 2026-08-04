@@ -75,7 +75,7 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
 
   std::cout << "Modules (Phase 1)\n";
   print_kv("uaii-core", "active");
-  print_kv("uaii-ir", "stub (Phase 2)");
+  print_kv("uaii-ir", "active (Phase 2)");
   print_kv("uaii-runtime", "stub (Phase 3)");
   print_kv("uaii-memory", "stub (Phase 3)");
   print_kv("uaii-storage", "stub (Phase 3/6)");

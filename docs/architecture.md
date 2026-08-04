@@ -133,6 +133,8 @@ Foundation shared by all libraries.
 
 Universal Intermediate Representation. **Everything eventually becomes UAII IR.**
 
+**Status:** Phase 2 implemented (`include/uaii/ir`, `libs/uaii-ir`).
+
 **Responsibilities:**
 
 - Tensor definitions (dtype, shape, layout, device hint, storage hint)
@@ -140,8 +142,9 @@ Universal Intermediate Representation. **Everything eventually becomes UAII IR.*
 - Execution graph (nodes, edges, control/data deps)
 - Graph metadata (model name, producer, IR version, domain)
 - Dependency representation
-- Validation APIs (structural + dtype/shape inference hooks)
-- Serialization (FlatBuffers) / debug JSON
+- Validation APIs (structural + dtype/shape checks)
+- Serialization: FlatBuffers schema (`schemas/uaii_ir.fbs`) + native binary/JSON codecs
+- Execution plan structures (topological, pre-scheduler)
 
 **Conceptual stack:**
 

@@ -14,3 +14,4 @@
 #include "uaii/interfaces/storage.hpp"
 #include "uaii/interfaces/tokenizer.hpp"
 #include "uaii/interfaces/types.hpp"
+#include "uaii/ir/ir.hpp"
