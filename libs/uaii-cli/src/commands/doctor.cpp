@@ -1,5 +1,6 @@
 #include "commands/doctor.hpp"
 
+#include "uaii/backends/factory.hpp"
 #include "uaii/c_api/plugin_abi.h"
 #include "uaii/core/log.hpp"
 #include "uaii/core/plugin.hpp"
@@ -81,14 +82,25 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   print_kv("uaii-storage", "stub (Phase 3/6)");
   print_kv("uaii-planner", "stub (Phase 3/6 — IR plan used)");
   print_kv("uaii-kernels", "active (Phase 3 CPU)");
-  print_kv("uaii-backends", "active (CPU; GPU Phase 5)");
+  print_kv("uaii-backends", "active (CPU + CUDA/Metal/Vulkan/WebGPU/ROCm)");
   print_kv("uaii-loaders", "active (GGUF + Safetensors)");
   print_kv("uaii-tokenizers", "active (SimpleTokenizer)");
   print_kv("uaii-profiler", "stub (Phase 6)");
   std::cout << '\n';
 
+  std::cout << "Backends (Phase 5)\n";
+  for (const auto& b : backends::list_backends()) {
+    std::ostringstream oss;
+    oss << to_string(b.device_type)
+        << " available=" << (b.always_available ? "yes" : "no")
+        << " native_compiled=" << (b.native_compiled ? "yes" : "no")
+        << " — " << b.description;
+    print_kv(b.name.c_str(), oss.str());
+  }
+  std::cout << '\n';
+
   std::cout << "Interfaces\n";
-  print_kv("IBackend", "declared");
+  print_kv("IBackend", "cpu/cuda/metal/vulkan/webgpu/rocm");
   print_kv("IModelLoader", "GGUF + Safetensors");
   print_kv("IOperator / IOperatorRegistry", "declared");
   print_kv("IStorageProvider", "declared");

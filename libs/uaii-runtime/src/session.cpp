@@ -1,5 +1,6 @@
 #include "uaii/runtime/session.hpp"
 
+#include "uaii/backends/factory.hpp"
 #include "uaii/core/log.hpp"
 #include "uaii/ir/registry.hpp"
 #include "uaii/ir/validator.hpp"
@@ -64,7 +65,16 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
   }
 
   allocator_ = std::make_unique<memory::Allocator>(options_.allocator);
-  backend_ = std::make_unique<backends::CpuBackend>(allocator_.get());
+
+  backends::BackendCreateOptions bopts;
+  bopts.allocator = allocator_.get();
+  bopts.prefer_native = options_.prefer_native;
+  bopts.force_host_fallback = options_.force_host_fallback;
+  err = backends::create_backend(options_.backend_name, bopts, &backend_);
+  if (!err.ok()) {
+    destroy();
+    return err;
+  }
   err = backend_->initialize();
   if (!err.ok()) {
     destroy();
@@ -91,7 +101,8 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
 
   ready_ = true;
   log::info("session") << "created graph='" << graph_.name
-                       << "' ops=" << plan_.ops.size() << " "
+                       << "' backend=" << backend_->name()
+                       << " ops=" << plan_.ops.size() << " "
                        << allocator_->stats();
   return Error::ok();
 }
@@ -391,6 +402,12 @@ std::string Session::debug_stats() const {
   std::ostringstream oss;
   oss << "graph=" << graph_.name << " ops=" << plan_.ops.size()
       << " tensors=" << buffers_.size();
+  if (backend_) {
+    oss << " backend=" << backend_->name();
+    if (backend_->uses_host_fallback()) {
+      oss << "(host-fallback)";
+    }
+  }
   if (allocator_) {
     oss << " " << allocator_->stats();
   }

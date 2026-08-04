@@ -267,7 +267,9 @@ Produces optimized execution plans from validated IR.
 
 Hardware abstraction layer (HAL).
 
-**Status:** Phase 3 `CpuBackend` implemented; GPU backends in Phase 5.
+**Status:** Phase 5 — `CpuBackend` plus CUDA / Metal / Vulkan / WebGPU / ROCm backends.
+GPU backends always support **host-fallback** execution (same CPU kernels); optional
+`UAII_WITH_*` native scaffolds prove the dispatch wiring without requiring vendor SDKs.
 
 Each backend implements common interfaces:
 
@@ -279,8 +281,9 @@ Each backend implements common interfaces:
 | Memory transfer | H2D, D2H, D2D, peer |
 | Capability query | dtypes, op support, limits |
 | Profiling hooks | timestamps, ranges |
+| Parity | `ParityPolicy` + cross-backend compare |
 
-**Backends (planned):** CPU, CUDA, Metal, ROCm, WebGPU, Vulkan, future FPGA/ASIC.
+**Backends:** CPU, CUDA, Metal, ROCm, WebGPU, Vulkan (factory-selectable); future FPGA/ASIC.
 
 ---
 

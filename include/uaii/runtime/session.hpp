@@ -1,8 +1,9 @@
 #pragma once
 
-#include "uaii/backends/cpu_backend.hpp"
+#include "uaii/backends/parity.hpp"
 #include "uaii/core/error.hpp"
 #include "uaii/export.hpp"
+#include "uaii/interfaces/backend.hpp"
 #include "uaii/ir/graph.hpp"
 #include "uaii/ir/plan.hpp"
 #include "uaii/kernels/tensor_view.hpp"
@@ -31,9 +32,13 @@ struct SessionOptions {
   std::string weights_dir;
   bool validate = true;
   bool allow_unknown_ops = false;
+  /// Backend name: cpu, cuda, metal, vulkan, webgpu, rocm.
+  std::string backend_name = "cpu";
+  bool prefer_native = true;
+  bool force_host_fallback = false;
 };
 
-/// End-to-end CPU inference session over a UAII IR graph.
+/// End-to-end inference session over a UAII IR graph (any registered backend).
 class UAII_API Session {
  public:
   Session();
@@ -49,6 +54,7 @@ class UAII_API Session {
   [[nodiscard]] const ir::Graph& graph() const noexcept { return graph_; }
   [[nodiscard]] const ir::ExecutionPlan& plan() const noexcept { return plan_; }
   [[nodiscard]] const memory::Allocator& allocator() const noexcept { return *allocator_; }
+  [[nodiscard]] const IBackend* backend() const noexcept { return backend_.get(); }
 
   [[nodiscard]] Error set_tensor(const std::string& name_or_id,
                                  const void* data,
@@ -82,7 +88,7 @@ class UAII_API Session {
   ir::Graph graph_;
   ir::ExecutionPlan plan_;
   std::unique_ptr<memory::Allocator> allocator_;
-  std::unique_ptr<backends::CpuBackend> backend_;
+  std::unique_ptr<IBackend> backend_;
   CpuScheduler scheduler_;
   std::unordered_map<TensorId, memory::TensorBuffer> buffers_;
   std::unordered_map<std::string, TensorId> name_to_id_;
@@ -103,6 +109,19 @@ class UAII_API Session {
 
 /// Phase 4: MoE router + expert dispatch smoke test.
 [[nodiscard]] UAII_API Error run_moe_smoke_demo(bool* ok);
+
+/// Phase 5: run the same IR graph on two backends and compare under parity policy.
+[[nodiscard]] UAII_API Error run_backend_parity(const ir::Graph& graph,
+                                                const std::string& backend_a,
+                                                const std::string& backend_b,
+                                                const backends::ParityPolicy& policy,
+                                                backends::ParityReport* report,
+                                                const std::vector<float>& input_f32 = {
+                                                    1.f, 2.f, 3.f, 4.f},
+                                                const std::string& input_name = "x");
+
+/// Phase 5 demo: toy MLP on cpu vs cuda (host-fallback) with parity policy.
+[[nodiscard]] UAII_API Error run_parity_demo(backends::ParityReport* report);
 
 }  // namespace runtime
 }  // namespace uaii

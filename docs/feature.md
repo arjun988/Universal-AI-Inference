@@ -197,13 +197,15 @@ Every backend exposes:
 
 | Backend | Key features | Phase |
 |---|---|---|
-| **CPU** | Thread pool, SIMD kernels, NUMA hooks | 3 |
-| **CUDA** | Streams, async copy, GPU kernels | 5 |
-| **Metal** | Apple GPU execution | 5 |
-| **Vulkan** | Cross-vendor compute | 5 |
-| **WebGPU** | Browser / portable GPU via Dawn or wgpu-native | 5 |
-| **ROCm** | AMD HIP path | 5+ |
+| **CPU** | Host kernels, session default | 3 |
+| **CUDA** | Host-fallback + optional native scaffold (`UAII_WITH_CUDA`) | 5 |
+| **Metal** | Host-fallback + optional native scaffold | 5 |
+| **Vulkan** | Host-fallback + optional native scaffold | 5 |
+| **WebGPU** | Host-fallback + optional native scaffold | 5 |
+| **ROCm** | Host-fallback + optional native scaffold | 5 |
 | **FPGA / ASIC** | Vendor plugins | Future |
+
+Parity: `ParityPolicy` (atol/rtol) + `uaii run --demo parity` compares the same IR across backends.
 
 ### 11.3 Capability Query Examples
 

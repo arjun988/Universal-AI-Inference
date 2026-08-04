@@ -253,6 +253,8 @@ Deliverables (priority order):
 
 **Exit criteria:** Same UAII IR graph executes on ≥2 backends with validated numerical parity policy.
 
+See [roadmap/PHASE5.md](./roadmap/PHASE5.md).
+
 ---
 
 ### Phase 6 — Optimization

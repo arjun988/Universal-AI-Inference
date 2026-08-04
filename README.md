@@ -6,7 +6,7 @@ any model → **UAII IR** → any hardware.
 It is designed as an *execution operating system* for inference—not a single-model
 engine. Models, operators, backends, schedulers, and storage providers are plugins.
 
-> Status: **Phase 4 — Model Support** (GGUF/Safetensors loaders, tokenizer, transformer/MoE ops)
+> Status: **Phase 5 — Hardware Expansion** (CPU + CUDA/Metal/Vulkan/WebGPU/ROCm backends, parity)
 
 ## Docs
 
@@ -42,7 +42,7 @@ libs/uaii-memory/      Arena, pool, budget allocator (Phase 3)
 libs/uaii-storage/     Storage engine (Phase 6 stub)
 libs/uaii-planner/     Advanced planner (stub; IR plan used in Phase 3)
 libs/uaii-kernels/     CPU kernels (MatMul, Softmax, Attention, MoE, …)
-libs/uaii-backends/    CPU backend (GPU backends in Phase 5)
+libs/uaii-backends/    CPU + CUDA/Metal/Vulkan/WebGPU/ROCm (host-fallback + optional native)
 libs/uaii-loaders/     GGUF + Safetensors → UAII IR
 libs/uaii-tokenizers/  SimpleTokenizer
 examples/cpu/          CPU run notes
@@ -65,7 +65,8 @@ nothing is auto-installed by the project):
 - Ninja or your platform’s default generator (optional but recommended)
 - Git
 
-Optional later: CUDA / Vulkan / Metal SDKs (Phase 5), Python 3.10+ (Phase 7).
+Optional: enable `UAII_WITH_CUDA|METAL|VULKAN|WEBGPU|ROCM` for native scaffolds (Phase 5).
+Optional later: Python 3.10+ (Phase 7).
 
 ## Build (run these yourself)
 
@@ -90,7 +91,11 @@ cmake --build build --config Release --parallel
 | `UAII_BUILD_TESTS` | `ON` | Build smoke tests |
 | `UAII_BUILD_PLUGINS` | `ON` | Build example plugins |
 | `UAII_WARNINGS_AS_ERRORS` | `OFF` | `-Werror` / `/WX` |
-| `UAII_WITH_CUDA` | `OFF` | Reserved (Phase 5) |
+| `UAII_WITH_CUDA` | `OFF` | CUDA native scaffold (host-fallback always works) |
+| `UAII_WITH_METAL` | `OFF` | Metal native scaffold |
+| `UAII_WITH_VULKAN` | `OFF` | Vulkan native scaffold |
+| `UAII_WITH_WEBGPU` | `OFF` | WebGPU native scaffold |
+| `UAII_WITH_ROCM` | `OFF` | ROCm native scaffold |
 
 ## Run CLI (after you build)
 
@@ -123,10 +128,11 @@ directory next to the CLI when plugins are built.
 | `uaii inspect <path>` | Phase 2 |
 | `uaii graph <path> [--format text\|dot\|json\|plan]` | Phase 2 |
 | `uaii run --demo toy_mlp\|tiny_block` | Phase 3 |
-| `uaii run <ir> --input …` | Phase 3 |
+| `uaii run <ir> --input … [--backend …]` | Phase 3/5 |
 | `uaii convert <gguf\|safetensors> -o …` | Phase 4 |
 | `uaii tokenize encode\|decode` | Phase 4 |
 | `uaii run --demo gguf\|safetensors\|moe` | Phase 4 |
+| `uaii run --demo parity` | Phase 5 |
 
 ### Phase 2 IR examples (run after you build)
 
@@ -164,6 +170,22 @@ uaii tokenize encode hello world
 # after a demo has written a fixture:
 uaii convert examples/models/tiny_demo.gguf -o examples/models/tiny_demo.uaii.json
 ```
+
+### Phase 5 hardware backends (run after you build)
+
+```bash
+uaii doctor   # lists cpu/cuda/metal/vulkan/webgpu/rocm
+
+# Exit criteria: same IR on ≥2 backends with parity policy
+uaii run --demo parity
+
+uaii run examples/ir/toy_mlp.uaii.json \
+  --backend cuda --force-host-fallback \
+  --weight-init ones --input x=1,2,3,4 --output y_prob
+```
+
+Backends always execute via host-fallback without vendor SDKs. Optional native
+scaffolds: `-DUAII_WITH_CUDA=ON` (and peers).
 
 IR formats:
 
@@ -250,6 +272,14 @@ Host rejects plugins whose `abi_version != UAII_PLUGIN_ABI_VERSION`.
 - [x] Transformer ops: Embedding, RoPE, Attention, Reshape/Transpose
 - [x] MoE router + expert dispatch (+ smoke demo)
 - [x] GGUF/Safetensors generate-style demos
+
+**Phase 5**
+
+- [x] CUDA / Metal / Vulkan / WebGPU / ROCm backends (host-fallback)
+- [x] Backend factory + session `--backend` selection
+- [x] Numerical parity policy + `uaii run --demo parity` (cpu vs cuda)
+- [x] Optional `UAII_WITH_*` native scaffolds
+- [x] `uaii doctor` reports backend availability
 
 ## Contributing & community
 

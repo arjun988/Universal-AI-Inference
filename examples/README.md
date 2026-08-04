@@ -1,16 +1,15 @@
 # Examples
 
-Phase 1 ships no end-to-end inference examples yet.
-
-Future examples will demonstrate:
-
-- Loading GGUF / Safetensors into UAII IR
-- CPU inference sessions
-- Plugin authoring
-- Profiling workflows
-
-Until then, use:
+| Path | Contents |
+|---|---|
+| `ir/` | Hand-authored UAII IR graphs |
+| `cpu/` | Run notes for CPU / multi-backend execution |
+| `models/` | Tiny GGUF/Safetensors fixtures (written by Phase 4 demos) |
 
 ```bash
 uaii doctor --load-plugins
+uaii run --demo toy_mlp
+uaii run --demo parity
+uaii run examples/ir/toy_mlp.uaii.json --backend cuda --force-host-fallback \
+  --weight-init ones --input x=1,2,3,4 --output y_prob
 ```

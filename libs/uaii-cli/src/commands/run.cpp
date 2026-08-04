@@ -1,5 +1,6 @@
 #include "commands/run.hpp"
 
+#include "uaii/backends/factory.hpp"
 #include "uaii/core/log.hpp"
 #include "uaii/ir/serialize.hpp"
 #include "uaii/runtime/session.hpp"
@@ -14,9 +15,11 @@ namespace {
 void print_usage() {
   std::cout
       << "Usage:\n"
-      << "  uaii run --demo toy_mlp|tiny_block|gguf|safetensors|moe\n"
+      << "  uaii run --demo toy_mlp|tiny_block|gguf|safetensors|moe|parity\n"
       << "  uaii run <ir-path> --input name=v1,v2,... [options]\n\n"
       << "Options:\n"
+      << "  --backend <name>          cpu|cuda|metal|vulkan|webgpu|rocm (default: cpu)\n"
+      << "  --force-host-fallback     Prefer host kernels even if native compiled\n"
       << "  --output <name>           Tensor to print (default: first graph output)\n"
       << "  --weights-dir <dir>       Directory for weight_ref files\n"
       << "  --weight-init <mode>      zeros|ones|sequence (fallback if file missing)\n"
@@ -147,8 +150,25 @@ int cmd_run(const std::vector<std::string>& args) {
       std::cout << "moe_ok: " << (ok ? "true" : "false") << '\n';
       return ok ? 0 : 2;
     }
+    if (demo == "parity") {
+      backends::ParityReport report;
+      Error err = runtime::run_parity_demo(&report);
+      std::cout << "parity " << report.backend_a << " vs " << report.backend_b
+                << ": " << (report.ok ? "ok" : "fail") << '\n';
+      std::cout << report.message << '\n';
+      for (const auto& d : report.diffs) {
+        std::cout << "  " << d.name << " max_abs=" << d.max_abs_diff
+                  << " max_rel=" << d.max_rel_diff
+                  << " ok=" << (d.ok ? "true" : "false") << '\n';
+      }
+      if (!err.ok()) {
+        std::cerr << err.to_string() << '\n';
+        return 1;
+      }
+      return report.ok ? 0 : 2;
+    }
     std::cerr << "Unknown demo '" << demo
-              << "' (toy_mlp|tiny_block|gguf|safetensors|moe)\n";
+              << "' (toy_mlp|tiny_block|gguf|safetensors|moe|parity)\n";
     return 1;
   }
 
@@ -176,6 +196,13 @@ int cmd_run(const std::vector<std::string>& args) {
   opts.weights_dir = get_opt(args, "--weights-dir");
   opts.weight_init = parse_weight_init(get_opt(args, "--weight-init", "none"));
   opts.allow_unknown_ops = has_flag(args, "--allow-unknown-ops");
+  opts.backend_name = get_opt(args, "--backend", "cpu");
+  opts.force_host_fallback = has_flag(args, "--force-host-fallback");
+  opts.prefer_native = !opts.force_host_fallback;
+  if (!backends::backend_exists(opts.backend_name)) {
+    std::cerr << "unknown --backend '" << opts.backend_name << "'\n";
+    return 1;
+  }
   const std::string budget = get_opt(args, "--budget-mb", "0");
   try {
     const int mb = std::stoi(budget);
