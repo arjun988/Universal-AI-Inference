@@ -18,6 +18,12 @@ if(UAII_WITH_CUDA)
   include(CheckLanguage)
   check_language(CUDA)
   if(CMAKE_CUDA_COMPILER)
+    # Required by CMake 3.18+ when enabling CUDA (empty arch list fails generate).
+    if(NOT CMAKE_CUDA_ARCHITECTURES)
+      # Portable defaults for CI / toolkit builds without a local GPU.
+      set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89" CACHE STRING
+          "CUDA architectures for UAII" FORCE)
+    endif()
     enable_language(CUDA)
   else()
     message(FATAL_ERROR "UAII_WITH_CUDA=ON but no CUDA compiler found")
@@ -34,6 +40,7 @@ if(UAII_WITH_CUDA)
   set_target_properties(uaii_backends PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
     CUDA_STANDARD 17
+    CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
   )
   # Allow .cpp to include cuda_runtime.h / cublas_v2.h
   target_include_directories(uaii_backends PRIVATE ${CUDAToolkit_INCLUDE_DIRS})

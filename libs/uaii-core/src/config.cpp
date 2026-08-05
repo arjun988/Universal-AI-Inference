@@ -11,6 +11,9 @@
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
+#else
+// File-scope POSIX environ (not inside namespace uaii).
+extern char** environ;
 #endif
 
 namespace uaii {
@@ -157,11 +160,13 @@ void Config::apply_env_overlay(const std::string& prefix) {
   }
   FreeEnvironmentStringsA(env_block);
 #else
-  extern char** environ;
-  if (environ == nullptr) {
+  // POSIX environ is a global; must not declare inside namespace uaii
+  // (that would create an undefined uaii::environ symbol).
+  char** envp = ::environ;
+  if (envp == nullptr) {
     return;
   }
-  for (char** ep = environ; *ep != nullptr; ++ep) {
+  for (char** ep = envp; *ep != nullptr; ++ep) {
     std::string entry(*ep);
     const auto pos = entry.find('=');
     if (pos == std::string::npos) {

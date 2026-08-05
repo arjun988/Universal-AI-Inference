@@ -74,7 +74,9 @@ jobs:
       - name: Configure with CUDA if nvcc present
         run: |
           if command -v nvcc >/dev/null 2>&1; then
-            cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release -DUAII_WITH_CUDA=ON -DUAII_BUILD_TESTS=ON
+            cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release \
+              -DUAII_WITH_CUDA=ON -DUAII_BUILD_TESTS=ON \
+              -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89"
             cmake --build build-cuda --parallel
             ctest --test-dir build-cuda -C Release --output-on-failure || true
           else
