@@ -8,76 +8,53 @@ export default function Page() {
     <DocLayout
       title="Benchmarks"
       active="/docs/benchmarks/"
-      lede="Reproducible CPU microbenchmarks from the in-tree uaii_bench harness — not marketing fiction."
+      lede="Absolute, reproducible CPU microbenchmarks — GFLOP/s and median times, with full environment disclosure. Not a bake-off against other runtimes."
     >
       <div className="matrix-wrap" style={{ marginBottom: "1.75rem" }}>
         <table className="matrix">
           <thead>
             <tr>
               <th>Workload</th>
-              <th>Baseline</th>
-              <th>UAII</th>
-              <th>Gain</th>
+              <th>Result</th>
+              <th>Notes</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td>
-                <strong>f32 GEMM 1024³</strong> vs naive ijk
-              </td>
-              <td>6187 ms</td>
-              <td>
-                <strong>452 ms</strong>
+                <strong>f32 GEMM 512³</strong>
               </td>
               <td>
-                <strong>13.7×</strong>
+                <strong>11.4 GFLOP/s</strong> · 23.6 ms
+              </td>
+              <td>
+                <code>ref-tiled</code>, no oneDNN
               </td>
             </tr>
             <tr>
               <td>
-                <strong>f32 GEMM 512³</strong> vs naive ijk
-              </td>
-              <td>146 ms</td>
-              <td>
-                <strong>24 ms</strong>
+                <strong>f32 GEMM 1024³</strong>
               </td>
               <td>
-                <strong>6.2×</strong>
+                <strong>4.7 GFLOP/s</strong> · 452 ms
               </td>
+              <td>Cache/bandwidth limited on ref path</td>
             </tr>
             <tr>
               <td>
-                <strong>Q4_0 weights</strong> vs f32
-              </td>
-              <td>16.0 MiB</td>
-              <td>
-                <strong>2.25 MiB</strong>
+                <strong>Q4_0 weights</strong> 1024×4096
               </td>
               <td>
-                <strong>7.1× smaller</strong>
+                <strong>2.25 MiB</strong> vs 16.0 MiB f32
               </td>
+              <td>7.11× format-defined compression</td>
             </tr>
             <tr>
               <td>
-                <strong>Q4_0 MatMul</strong> vs unpack+f32
+                <strong>Q4_0 MatMul</strong>
               </td>
-              <td>12.1 ms</td>
-              <td>
-                <strong>8.0 ms</strong>
-              </td>
-              <td>
-                <strong>1.5×</strong>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Session MLP</strong> (fused)
-              </td>
-              <td>—</td>
-              <td>
-                <strong>~0.01 ms</strong>/iter
-              </td>
-              <td>—</td>
+              <td>8.0 ms packed · 12.1 ms unpack+f32</td>
+              <td>Two UAII paths, synthetic blocks</td>
             </tr>
           </tbody>
         </table>
@@ -85,37 +62,54 @@ export default function Page() {
 
       <p>
         <strong>Host:</strong> Windows 11 · MinGW g++ 15 · Release ·{" "}
-        <code>GEMM=ref-tiled</code> (no oneDNN / OpenBLAS). Sample JSON:{" "}
-        <code>benchmarks/results/sample_windows_mingw.json</code>.
+        <code>GEMM=ref-tiled</code>. Sample JSON:{" "}
+        <code>benchmarks/results/sample_windows_mingw.json</code>. Regenerate with median of 21
+        trials before citing elsewhere.
       </p>
 
       <h2>Reproduce</h2>
       <pre>{`cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUAII_BUILD_BENCHMARKS=ON
 cmake --build build --target uaii_bench --parallel
-./build/benchmarks/uaii_bench --iters 8 --json`}</pre>
+export UAII_BENCH_CPU="Your Exact CPU Model"
+./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json`}</pre>
+
+      <h2>CI artifacts</h2>
+      <p>
+        GitHub Actions job <code>benchmarks</code> runs the same harness on Ubuntu, Windows, and
+        macOS and uploads <code>uaii-bench-&lt;os&gt;-&lt;sha&gt;</code> JSON artifacts (median of 21
+        trials). Prefer those for public citation when local unsigned builds are blocked.
+      </p>
 
       <h2>What we measure</h2>
       <ul>
         <li>
-          <strong>Naive GEMM</strong> — classic triple-loop baseline (no tiling / threads)
+          <strong>Dense GEMM</strong> — absolute GFLOP/s from median trial time (
+          <code>2·N³</code> FLOPs)
         </li>
         <li>
-          <strong>UAII GEMM</strong> — <code>default_gemm()</code> (tiled ref or vendor BLAS)
+          <strong>Session</strong> — synthetic 8×512 MatMul+ReLU stack;{" "}
+          <code>Session::run</code> only
         </li>
         <li>
-          <strong>Quant path</strong> — packed Q4_0 GEMM vs full unpack then f32
+          <strong>Quant</strong> — GGUF Q4_0 packed GEMM + format memory ratio
         </li>
         <li>
-          <strong>Session</strong> — timed <code>Session::run</code> on a fused MLP
+          <strong>Optional</strong> — <code>--vs-naive</code> appendix only (not a product claim)
         </li>
+      </ul>
+
+      <h2>What we do not claim</h2>
+      <ul>
+        <li>Tokens/s on public LLMs</li>
+        <li>Wins vs llama.cpp / ONNX Runtime / TensorRT</li>
+        <li>GPU numbers unless you build that backend and publish its JSON</li>
       </ul>
 
       <h2>Going faster</h2>
       <p>
         Build with <code>-DUAII_WITH_ONEDNN=ON</code>, <code>UAII_WITH_OPENBLAS=ON</code>, or{" "}
-        <code>UAII_WITH_CUDA=ON</code>, then re-run and quote the provider from{" "}
-        <code>uaii doctor</code>. Absolute LLM tokens/s depends on model and hardware — these
-        benches validate UAII&apos;s own kernels.
+        <code>UAII_WITH_CUDA=ON</code>, then re-run and quote <code>gemm_provider</code> from the
+        JSON / <code>uaii doctor</code>.
       </p>
 
       <p>

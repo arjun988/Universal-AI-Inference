@@ -1,20 +1,58 @@
 {
+  "schema": "uaii_bench/v2",
+  "disclaimer": "Single-host sample for methodology illustration. Cite only after re-running uaii_bench --json on the machine you claim. Not a bake-off vs llama.cpp / ONNX Runtime / TensorRT.",
   "uaii_version": "0.1.0",
-  "host": "Windows 11 · MinGW g++ 15 · Ninja Release · CPU GEMM=ref-tiled",
+  "cpu": "set UAII_BENCH_CPU to your exact model before publishing",
+  "os": "Windows 11",
+  "compiler": "MinGW g++ 15",
+  "threads": 16,
+  "build": "Release (Ninja)",
   "gemm_provider": "ref-tiled (ref)",
   "gemm_name": "ref-tiled",
-  "gemm_512": {"naive_ms": 146.412, "uaii_ms": 23.552, "gflops": 11.398, "speedup_x": 6.217},
-  "gemm_1024": {"naive_ms": 6187.489, "uaii_ms": 452.284, "gflops": 4.748, "speedup_x": 13.681},
-  "session_mlp_ms": 0.011,
+  "scope": "Kernel microbenchmarks of UAII. Not LLM tokens/s.",
+  "warmup": 2,
+  "trials_default": 5,
+  "statistic_note": "This sample used mean of timed iters from an earlier harness revision. Current uaii_bench reports median of --trials (default 21). Regenerate with uaii_bench --json for publication.",
+  "gemm": [
+    {
+      "n": 512,
+      "gflops": 11.398,
+      "uaii_ms": { "ms": 23.552, "trials": 5 },
+      "flops_formula": "2*N*N*N"
+    },
+    {
+      "n": 1024,
+      "gflops": 4.748,
+      "uaii_ms": { "ms": 452.284, "trials": 5 },
+      "flops_formula": "2*N*N*N",
+      "note": "Lower GFLOP/s than 512 reflects cache/bandwidth pressure on ref-tiled; expected without vendor BLAS packing."
+    }
+  ],
+  "appendix_vs_naive_ijk": {
+    "warning": "Engineering sanity only — naive ijk is not a competitive baseline. Do not lead marketing with these ratios.",
+    "gemm_512": { "naive_ms": 146.412, "uaii_ms": 23.552, "ratio": 6.217 },
+    "gemm_1024": { "naive_ms": 6187.489, "uaii_ms": 452.284, "ratio": 13.681 }
+  },
   "quant_q4_0": {
     "rows": 1024,
     "cols": 4096,
-    "unpack_gemm_ms": 12.147,
-    "quant_gemm_ms": 7.958,
-    "speedup_x": 1.526,
     "f32_mib": 16.0,
     "q4_mib": 2.25,
-    "mem_ratio": 7.111
+    "format_mem_ratio": 7.111,
+    "format_mem_note": "GGUF Q4_0 stores 32 values in 18 bytes → (32*4)/18 ≈ 7.11× vs f32. Format-defined.",
+    "quant_gemm_ms": 7.958,
+    "unpack_then_f32_ms": 12.147,
+    "harness_note": "Current uaii_bench defaults to 2048×4096; regenerate for that shape."
   },
-  "notes": "Reproduce with: cmake --build build --target uaii_bench && ./build/benchmarks/uaii_bench --iters 4 --json"
+  "session": {
+    "label": "legacy toy_mlp (MatMul→ReLU→MatMul→Softmax); superseded by 8×512 stack in current harness",
+    "run_ms": 0.011,
+    "status": "stale_shape — do not cite; re-run uaii_bench"
+  },
+  "out_of_scope": [
+    "tokens/s on public LLMs",
+    "cross-runtime comparisons",
+    "GPU FLOP/s",
+    "end-to-end chatbot latency"
+  ]
 }

@@ -1,57 +1,99 @@
 # Benchmarks
 
-Reproducible microbenchmarks for UAII CPU paths. Numbers below were measured with the in-tree `uaii_bench` harness.
+UAII publishes **absolute, reproducible microbenchmarks** of its own kernels — not strawman speedups, and not a bake-off against llama.cpp, ONNX Runtime, or TensorRT.
 
-## How to run
+Primary metrics: **GFLOP/s** and **median wall time**, with full environment disclosure.
+
+## How to run (publication recipe)
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUAII_BUILD_BENCHMARKS=ON
 cmake --build build --config Release --target uaii_bench --parallel
 
-# Human-readable
-./build/benchmarks/uaii_bench --iters 8
-
-# Machine-readable
-./build/benchmarks/uaii_bench --iters 8 --json
+# Recommended: odd trial count → clean median
+./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json
 ```
 
-Windows (Ninja):
+Windows:
 
 ```powershell
-.\build\benchmarks\uaii_bench.exe --iters 8 --json
+$env:UAII_BENCH_CPU = "Your Exact CPU Model"   # e.g. AMD Ryzen 9 7950X
+.\build\benchmarks\uaii_bench.exe --trials 21 --warmup 5 --json
 ```
 
-Also:
+Optional engineering appendix (slow; **not** for marketing headlines):
 
 ```bash
-uaii benchmark --demo --iters 50   # planner fusion / memory path
+./build/benchmarks/uaii_bench --trials 21 --vs-naive --json
 ```
 
-## Sample results (ref-tiled CPU GEMM)
+Also available: `uaii benchmark --demo` (planner fusion / memory-reuse path).
 
-**Host:** Windows 11 · MinGW g++ 15 · Release · `GEMM=ref-tiled` (no oneDNN/OpenBLAS)  
+## CI (GitHub Actions)
+
+The `benchmarks` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds `uaii_bench` on Ubuntu, Windows, and macOS runners, runs `--trials 21 --warmup 5 --json`, and uploads an artifact:
+
+`uaii-bench-<os>-<sha>` → `benchmarks/results/ci_<os>_<sha12>.json`
+
+- Triggered on push / PR / **workflow_dispatch** (Actions → ci → Run workflow)
+- Job summary prints the GEMM table (median ms + GFLOP/s) with CPU and `gemm_provider`
+- Use these JSONs for public citation when local Application Control blocks unsigned builds
+
+## Sample results (one Windows host)
+
 **Artifact:** [`benchmarks/results/sample_windows_mingw.json`](../benchmarks/results/sample_windows_mingw.json)
 
-| Workload | Baseline | UAII | Speedup |
-|---|---:|---:|---:|
-| f32 GEMM **512³** (naive ijk) | 146 ms | **24 ms** | **6.2×** |
-| f32 GEMM **1024³** (naive ijk) | 6187 ms | **452 ms** | **13.7×** |
-| Session MLP (MatMul→ReLU→MatMul→Softmax) | — | **~0.01 ms**/iter | — |
-| Q4_0 MatMul vs unpack+f32 (1×1024 @ 1024×4096) | 12.1 ms | **8.0 ms** | **1.5×** |
-| Q4_0 weight footprint vs f32 | 16.0 MiB | **2.25 MiB** | **7.1× smaller** |
+| Field | Value |
+|---|---|
+| OS / toolchain | Windows 11 · MinGW g++ 15 · Ninja Release |
+| GEMM provider | `ref-tiled` (no oneDNN / OpenBLAS) |
+| Statistic | mean of timed iters (legacy sample; current harness → **median**) |
 
-Peak GEMM throughput in this run: **~11 GFLOP/s** at 512³ on the tiled ref provider.
+### 1. Dense f32 GEMM (headline)
 
-> Linking **oneDNN** or **OpenBLAS** (`-DUAII_WITH_ONEDNN=ON` / `UAII_WITH_OPENBLAS=ON`) and CUDA (`UAII_WITH_CUDA=ON`) typically increases absolute GFLOP/s further. Publish those numbers from your machine with `--json` and cite the provider string from `uaii doctor`.
+Square `C = A @ B`, FLOPs = `2·N³`.
 
-## Methodology
+| N | UAII time | Throughput |
+|---:|---:|---:|
+| 512 | 23.6 ms | **11.4 GFLOP/s** |
+| 1024 | 452 ms | **4.7 GFLOP/s** |
 
-- **Naive GEMM:** classic triple-loop `ijk` MatMul — intentional scalar-ish baseline (no tiling, no threading).
-- **UAII GEMM:** `kernels::default_gemm()` (tiled + threaded ref, or vendor BLAS when built).
-- **Session:** one warm session, timed `Session::run` only (create excluded).
-- **Quant:** synthetic Q4_0 packs; compares full-row unpack + f32 GEMM vs `quant_gemm_f32` packed path.
-- Warmup iterations discarded; reported values are averages over `--iters`.
+Lower GFLOP/s at 1024 is expected on the ref-tiled path under cache/bandwidth pressure. Linking **oneDNN** or **OpenBLAS** and re-running is the fair way to quote higher absolute throughput — always cite `gemm_provider` from the JSON / `uaii doctor`.
 
-## Fairness notes
+### 2. Q4_0 weights (format + kernel)
 
-These benches measure **UAII’s own kernels and session path**, not a bake-off against llama.cpp / ONNX Runtime / TensorRT. Absolute tokens/s on large LLMs depends on model, quant, CPU/GPU SKU, and memory bandwidth. Use `uaii_bench` + your hardware to produce comparable numbers for PRs and release notes.
+| Metric | Value |
+|---|---:|
+| Weight shape | 1024 × 4096 |
+| f32 footprint | 16.0 MiB |
+| Q4_0 packed | **2.25 MiB** |
+| Format compression | **7.11×** (GGUF Q4_0: 32 values / 18 bytes) |
+| Packed quant-GEMM | 8.0 ms |
+| Unpack-all + f32 GEMM | 12.1 ms |
+
+Memory ratio is **format-defined**. Timing compares two UAII paths on a synthetic Q4_0 payload (valid block layout), not a full GGUF model.
+
+### 3. Session graph
+
+Current `uaii_bench` times a synthetic **8 × MatMul(512²)+ReLU + Softmax** IR stack (`Session::run` only). Re-run locally for a citeable median; do not use outdated toy-MLP figures.
+
+## Methodology (what reviewers expect)
+
+| Rule | Practice |
+|---|---|
+| Statistic | Default **median** of `--trials` (21), after `--warmup` (5) |
+| Environment | CPU brand (`UAII_BENCH_CPU` or CPUID), thread count, GEMM provider, build type, UAII version |
+| FLOPs | `2·M·N·K` for dense GEMM |
+| Scope label | Every report states these are kernel microbenchmarks |
+| Naive ijk | Optional `--vs-naive` **appendix only** |
+
+## What we do **not** claim
+
+- Tokens/s on public LLMs
+- Wins vs llama.cpp / ONNX Runtime / TensorRT / PyTorch
+- GPU throughput (unless you build CUDA/Metal/etc. and publish that JSON)
+- Chatbot end-to-end latency
+
+## Fair citation template
+
+> UAII `ref-tiled` CPU GEMM on \<CPU\>, Windows Release, median of 21 trials: \<X\> GFLOP/s at 512³. Provider and JSON: \<link\>. Not an LLM tokens/s result.

@@ -47,22 +47,25 @@ UAII is a modular C++ inference runtime: load a model into a common intermediate
 
 ## Benchmarks (reproducible)
 
-Measured with in-tree `uaii_bench` on Windows 11 / MinGW Release, **CPU GEMM = ref-tiled** (no oneDNN). Full methodology: [docs/benchmarks.md](docs/benchmarks.md).
+Absolute kernel microbenchmarks from in-tree `uaii_bench` — not strawman “vs naive” marketing, and not a bake-off vs other runtimes. Full methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
-| Workload | Baseline | UAII | Gain |
-|---|---:|---:|---:|
-| f32 GEMM **1024³** vs naive ijk | 6187 ms | **452 ms** | **13.7× faster** |
-| f32 GEMM **512³** vs naive ijk | 146 ms | **24 ms** | **6.2× faster** |
-| Q4_0 weight footprint vs f32 | 16.0 MiB | **2.25 MiB** | **7.1× smaller** |
-| Q4_0 MatMul vs unpack+f32 | 12.1 ms | **8.0 ms** | **1.5× faster** |
-| Fused session MLP | — | **~0.01 ms**/iter | — |
+Sample host: Windows 11 · MinGW Release · **GEMM = `ref-tiled`** (no oneDNN). Artifact: [`benchmarks/results/sample_windows_mingw.json`](benchmarks/results/sample_windows_mingw.json).
+
+| Workload | Result |
+|---|---:|
+| f32 GEMM **512³** | **11.4 GFLOP/s** (23.6 ms) |
+| f32 GEMM **1024³** | **4.7 GFLOP/s** (452 ms) |
+| Q4_0 weight footprint (1024×4096) | **2.25 MiB** vs 16.0 MiB f32 (**7.11×** format ratio) |
+| Q4_0 packed MatMul vs unpack+f32 | 8.0 ms vs 12.1 ms (same UAII machine) |
 
 ```bash
 cmake --build build --target uaii_bench --parallel
-./build/benchmarks/uaii_bench --iters 8 --json
+./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json
 ```
 
-With `-DUAII_WITH_ONEDNN=ON` / OpenBLAS / CUDA, re-run and cite the provider from `uaii doctor`.
+Set `UAII_BENCH_CPU` to your exact CPU model before citing. With oneDNN / OpenBLAS / CUDA, re-run and quote `gemm_provider` from the JSON / `uaii doctor`.
+
+CI also runs `uaii_bench` on Ubuntu / Windows / macOS and uploads JSON artifacts (`benchmarks` job in `.github/workflows/ci.yml`).
 
 ---
 

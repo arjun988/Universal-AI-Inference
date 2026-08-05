@@ -2,30 +2,36 @@
 
 ## Microbench harness (`uaii_bench`)
 
-Builds with `-DUAII_BUILD_BENCHMARKS=ON` (default ON).
+Builds with `-DUAII_BUILD_BENCHMARKS=ON`.
 
 ```bash
 cmake --build build --target uaii_bench --parallel
-./build/benchmarks/uaii_bench --iters 8
-./build/benchmarks/uaii_bench --iters 8 --json
+./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json
 ```
 
-Measures:
+Windows:
 
-1. Naive f32 GEMM vs UAII `IGemm` (512³ / 1024³)
-2. Fused session MLP latency
-3. Q4_0 packed GEMM vs unpack-then-f32 (+ memory footprint)
+```powershell
+$env:UAII_BENCH_CPU = "Your Exact CPU Model"
+.\build\benchmarks\uaii_bench.exe --trials 21 --warmup 5 --json
+```
+
+Reports (absolute metrics first):
+
+1. Dense f32 GEMM — median ms + GFLOP/s at 256³ / 512³ / 1024³  
+2. Synthetic session stack — `Session::run` only  
+3. Q4_0 packed MatMul — format memory ratio + packed vs unpack+f32 times  
+
+Optional: `--vs-naive` appendix (engineering only; do not lead product claims with it).
 
 Published sample: [`results/sample_windows_mingw.json`](results/sample_windows_mingw.json)  
-Write-up: [`docs/benchmarks.md`](../docs/benchmarks.md)
+CI uploads `results/ci_<os>_<sha>.json` from the `benchmarks` job (see [`docs/benchmarks.md`](../docs/benchmarks.md)).
 
 ## CLI planner benchmark
 
 ```bash
 uaii benchmark --demo --iters 50
 ```
-
-Compares baseline vs fused / memory-reuse session path.
 
 ## Python
 

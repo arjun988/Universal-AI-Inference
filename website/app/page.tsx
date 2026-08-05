@@ -74,31 +74,31 @@ export default function HomePage() {
       <section className="home-section">
         <div className="rail">
           <p className="section-label">Benchmarks</p>
-          <h2>Measured, not imagined</h2>
+          <h2>Absolute numbers, not strawmen</h2>
           <p className="section-lede">
-            In-tree <code>uaii_bench</code> on Windows Release · CPU GEMM = ref-tiled. Reproduce
-            locally in one command.
+            In-tree <code>uaii_bench</code> reports GFLOP/s and median times with full environment
+            disclosure. Reproduce locally — then cite your JSON.
           </p>
           <div className="flow">
             <div className="flow-step">
-              <b>1024³</b>
-              <h3>13.7×</h3>
-              <p>f32 GEMM vs naive triple-loop (6187 ms → 452 ms).</p>
+              <b>512³</b>
+              <h3>11.4 GFLOP/s</h3>
+              <p>f32 GEMM on Windows Release · <code>ref-tiled</code> (no oneDNN).</p>
             </div>
             <div className="flow-step">
-              <b>512³</b>
-              <h3>6.2×</h3>
-              <p>Same path at mid size — 146 ms → 24 ms.</p>
+              <b>1024³</b>
+              <h3>4.7 GFLOP/s</h3>
+              <p>Same provider — honest drop under cache pressure.</p>
             </div>
             <div className="flow-step">
               <b>Q4_0</b>
-              <h3>7.1×</h3>
-              <p>Smaller weights vs f32 (16 MiB → 2.25 MiB) with packed GEMM.</p>
+              <h3>7.11×</h3>
+              <p>Format-defined weight compression vs f32 (16 MiB → 2.25 MiB).</p>
             </div>
             <div className="flow-step">
-              <b>Session</b>
-              <h3>~0.01 ms</h3>
-              <p>Fused MLP run — MatMul → ReLU → MatMul → Softmax.</p>
+              <b>Method</b>
+              <h3>Median × 21</h3>
+              <p>Warmup discarded · CPU / threads / provider in every report.</p>
             </div>
           </div>
           <div className="hero-cta" style={{ marginTop: "1.5rem" }}>

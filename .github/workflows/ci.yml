@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -115,6 +116,153 @@ jobs:
         run: |
           npm ci
           npm run build
+
+  # Absolute kernel microbenchmarks (uaii_bench). Uploads JSON for citation;
+  # not a bake-off vs other runtimes. See docs/benchmarks.md.
+  benchmarks:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (single-config)
+        if: runner.os != 'Windows'
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DUAII_BUILD_TESTS=OFF
+          -DUAII_BUILD_PLUGINS=OFF
+          -DUAII_BUILD_BENCHMARKS=ON
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: >
+          cmake -S . -B build
+          -DUAII_BUILD_TESTS=OFF
+          -DUAII_BUILD_PLUGINS=OFF
+          -DUAII_BUILD_BENCHMARKS=ON
+
+      - name: Build uaii_bench
+        run: cmake --build build --config Release --target uaii_bench --parallel
+
+      - name: Detect CPU label
+        id: cpu
+        shell: bash
+        run: |
+          set -euo pipefail
+          label=""
+          case "${RUNNER_OS}" in
+            Linux)
+              label="$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^[[:space:]]*//')"
+              ;;
+            macOS)
+              label="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)"
+              ;;
+            Windows)
+              label="$(powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).Name" | tr -d '\r')"
+              ;;
+          esac
+          if [[ -z "${label}" ]]; then
+            label="GitHub Actions ${RUNNER_OS} (${RUNNER_ARCH})"
+          fi
+          echo "label=${label}" >> "$GITHUB_OUTPUT"
+          echo "CPU: ${label}"
+
+      - name: Run microbenchmarks
+        shell: bash
+        env:
+          UAII_BENCH_CPU: ${{ steps.cpu.outputs.label }}
+        run: |
+          set -euo pipefail
+          BIN=""
+          for c in \
+            build/benchmarks/uaii_bench \
+            build/benchmarks/Release/uaii_bench \
+            build/benchmarks/uaii_bench.exe \
+            build/benchmarks/Release/uaii_bench.exe
+          do
+            if [[ -x "$c" || -f "$c" ]]; then
+              BIN="$c"
+              break
+            fi
+          done
+          if [[ -z "$BIN" ]]; then
+            echo "uaii_bench binary not found" >&2
+            find build -name 'uaii_bench*' -type f | head
+            exit 1
+          fi
+          mkdir -p benchmarks/results
+          os_slug="$(echo "${RUNNER_OS}" | tr '[:upper:]' '[:lower:]')"
+          out="benchmarks/results/ci_${os_slug}_${GITHUB_SHA::12}.json"
+          echo "Using $BIN → $out"
+          "$BIN" --trials 21 --warmup 5 --json | tee "$out"
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          # Sanity: schema + at least one GEMM row with positive GFLOP/s
+          "$PY" - "$out" <<'PY'
+          import json, sys
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as f:
+              data = json.load(f)
+          assert data.get("schema") == "uaii_bench/v2", data.get("schema")
+          gemm = data.get("gemm") or []
+          assert gemm, "missing gemm results"
+          for row in gemm:
+              assert float(row.get("gflops_median", 0)) > 0, row
+          print("sanity ok:", path)
+          PY
+          echo "result_path=${out}" >> "$GITHUB_ENV"
+
+      - name: Job summary
+        if: always() && env.result_path != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+          "$PY" - "${{ env.result_path }}" <<'PY'
+          import json, os, sys
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as f:
+              d = json.load(f)
+          lines = [
+              "## UAII microbenchmarks",
+              "",
+              f"- **Runner:** {os.environ.get('RUNNER_OS')} / {os.environ.get('RUNNER_ARCH')}",
+              f"- **CPU:** {d.get('cpu', '?')}",
+              f"- **GEMM provider:** `{d.get('gemm_provider', '?')}`",
+              f"- **Build:** {d.get('build', '?')}",
+              f"- **Trials (default):** {d.get('trials_default', '?')} (median)",
+              "",
+              "| N | Median ms | GFLOP/s |",
+              "|---:|---:|---:|",
+          ]
+          for row in d.get("gemm") or []:
+              ms = (row.get("uaii_ms") or {}).get("median_ms", "?")
+              lines.append(f"| {row.get('n')} | {ms} | **{row.get('gflops_median')}** |")
+          sess = d.get("session") or {}
+          run = sess.get("run_ms") or {}
+          lines += [
+              "",
+              f"**Session** (`{sess.get('label', '?')}`): median **{run.get('median_ms', '?')} ms**",
+              "",
+              f"Artifact JSON: `{path}`",
+              "",
+              "> Kernel microbenchmarks only — not LLM tokens/s, not a bake-off vs other runtimes.",
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("\n".join(lines) + "\n")
+          PY
+
+      - name: Upload JSON artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uaii-bench-${{ matrix.os }}-${{ github.sha }}
+          path: benchmarks/results/ci_*.json
+          if-no-files-found: error
+          retention-days: 90
 
   dependabot:
     # Placeholder job name kept for visibility; Dependabot is configured via .github/dependabot.yml
