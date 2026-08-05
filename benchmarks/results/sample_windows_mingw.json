@@ -1,0 +1,20 @@
+{
+  "uaii_version": "0.1.0",
+  "host": "Windows 11 · MinGW g++ 15 · Ninja Release · CPU GEMM=ref-tiled",
+  "gemm_provider": "ref-tiled (ref)",
+  "gemm_name": "ref-tiled",
+  "gemm_512": {"naive_ms": 146.412, "uaii_ms": 23.552, "gflops": 11.398, "speedup_x": 6.217},
+  "gemm_1024": {"naive_ms": 6187.489, "uaii_ms": 452.284, "gflops": 4.748, "speedup_x": 13.681},
+  "session_mlp_ms": 0.011,
+  "quant_q4_0": {
+    "rows": 1024,
+    "cols": 4096,
+    "unpack_gemm_ms": 12.147,
+    "quant_gemm_ms": 7.958,
+    "speedup_x": 1.526,
+    "f32_mib": 16.0,
+    "q4_mib": 2.25,
+    "mem_ratio": 7.111
+  },
+  "notes": "Reproduce with: cmake --build build --target uaii_bench && ./build/benchmarks/uaii_bench --iters 4 --json"
+}

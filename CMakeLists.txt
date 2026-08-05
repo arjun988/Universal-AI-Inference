@@ -68,6 +68,11 @@ if(UAII_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
+option(UAII_BUILD_BENCHMARKS "Build uaii_bench microbenchmark harness" ON)
+if(UAII_BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
+endif()
+
 # --- Install / find_package(uaii) --------------------------------------------
 include(CMakePackageConfigHelpers)
 

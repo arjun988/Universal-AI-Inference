@@ -73,6 +73,44 @@ export default function HomePage() {
 
       <section className="home-section">
         <div className="rail">
+          <p className="section-label">Benchmarks</p>
+          <h2>Measured, not imagined</h2>
+          <p className="section-lede">
+            In-tree <code>uaii_bench</code> on Windows Release · CPU GEMM = ref-tiled. Reproduce
+            locally in one command.
+          </p>
+          <div className="flow">
+            <div className="flow-step">
+              <b>1024³</b>
+              <h3>13.7×</h3>
+              <p>f32 GEMM vs naive triple-loop (6187 ms → 452 ms).</p>
+            </div>
+            <div className="flow-step">
+              <b>512³</b>
+              <h3>6.2×</h3>
+              <p>Same path at mid size — 146 ms → 24 ms.</p>
+            </div>
+            <div className="flow-step">
+              <b>Q4_0</b>
+              <h3>7.1×</h3>
+              <p>Smaller weights vs f32 (16 MiB → 2.25 MiB) with packed GEMM.</p>
+            </div>
+            <div className="flow-step">
+              <b>Session</b>
+              <h3>~0.01 ms</h3>
+              <p>Fused MLP run — MatMul → ReLU → MatMul → Softmax.</p>
+            </div>
+          </div>
+          <div className="hero-cta" style={{ marginTop: "1.5rem" }}>
+            <Link className="btn btn-secondary" href="/docs/benchmarks/">
+              Full methodology
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="home-section">
+        <div className="rail">
           <p className="section-label">Pipeline</p>
           <h2>What it does</h2>
           <p className="section-lede">
