@@ -33,7 +33,7 @@ Error MetalBackend::initialize() {
       set_native_available(true);
       set_host_fallback(false);
       set_details("Metal backend (native scaffold / device path)");
-      return Error::ok();
+      return Error::success();
     }
     set_details("Metal backend (host-fallback; native init failed: " + err.message() +
                 ")");
@@ -42,7 +42,7 @@ Error MetalBackend::initialize() {
   } else {
     set_details("Metal backend (host-fallback; build with -DUAII_WITH_METAL=ON for native)");
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error MetalBackend::dispatch(const std::string& op_name,

@@ -19,7 +19,7 @@ Error CpuScheduler::schedule(const std::vector<NodeId>& nodes,
     d.reason = "cpu-default";
     out->push_back(std::move(d));
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error CpuScheduler::schedule_plan(const ir::ExecutionPlan& plan,

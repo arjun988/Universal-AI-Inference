@@ -36,6 +36,7 @@ target_include_directories(uaii_headers INTERFACE
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>"
   "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
+install(TARGETS uaii_headers EXPORT uaiiTargets)
 
 # --- Modular libraries -------------------------------------------------------
 add_subdirectory(libs/uaii-core)
@@ -59,6 +60,7 @@ endif()
 
 if(UAII_BUILD_PLUGINS)
   add_subdirectory(plugins/example_probe)
+  add_subdirectory(plugins/example_op)
 endif()
 
 if(UAII_BUILD_TESTS)
@@ -66,12 +68,37 @@ if(UAII_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-# --- Install -----------------------------------------------------------------
+# --- Install / find_package(uaii) --------------------------------------------
+include(CMakePackageConfigHelpers)
+
 install(DIRECTORY "${UAII_INCLUDE_DIR}/uaii"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 )
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/uaii/version_generated.hpp"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/uaii"
+)
+
+# Targets are installed with EXPORT via cmake/UAIIModule.cmake + uaii_core/capi.
+install(EXPORT uaiiTargets
+  FILE uaiiTargets.cmake
+  NAMESPACE uaii::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/uaii
+)
+
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/uaiiConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/uaiiConfig.cmake"
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/uaii
+)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/uaiiConfigVersion.cmake"
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
+)
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/uaiiConfig.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/uaiiConfigVersion.cmake"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/uaii
 )
 
 message(STATUS "UAII Runtime ${PROJECT_VERSION}")

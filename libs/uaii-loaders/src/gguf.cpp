@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 
 namespace uaii {
 namespace loaders {
@@ -48,7 +49,7 @@ Error read_array(detail::ByteReader* r, GgufValue* out) {
       vals.push_back(std::move(s));
     }
     *out = std::move(vals);
-    return Error::ok();
+    return Error::success();
   }
   if (at == GgufValueType::Int32) {
     std::vector<std::int32_t> vals(static_cast<std::size_t>(n));
@@ -57,7 +58,7 @@ Error read_array(detail::ByteReader* r, GgufValue* out) {
       if (!err.ok()) return err;
     }
     *out = std::move(vals);
-    return Error::ok();
+    return Error::success();
   }
   if (at == GgufValueType::Int64) {
     std::vector<std::int64_t> vals(static_cast<std::size_t>(n));
@@ -66,7 +67,7 @@ Error read_array(detail::ByteReader* r, GgufValue* out) {
       if (!err.ok()) return err;
     }
     *out = std::move(vals);
-    return Error::ok();
+    return Error::success();
   }
   if (at == GgufValueType::Float32) {
     std::vector<float> vals(static_cast<std::size_t>(n));
@@ -75,7 +76,7 @@ Error read_array(detail::ByteReader* r, GgufValue* out) {
       if (!err.ok()) return err;
     }
     *out = std::move(vals);
-    return Error::ok();
+    return Error::success();
   }
 
   // Skip unsupported array element types by reading scalars into discard.
@@ -85,7 +86,7 @@ Error read_array(detail::ByteReader* r, GgufValue* out) {
     if (!err.ok()) return err;
   }
   *out = std::monostate{};
-  return Error::ok();
+  return Error::success();
 }
 
 Error read_value(detail::ByteReader* r, GgufValueType type, GgufValue* out) {
@@ -95,63 +96,63 @@ Error read_value(detail::ByteReader* r, GgufValueType type, GgufValue* out) {
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Int8: {
       std::int8_t v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Uint16: {
       std::uint16_t v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Int16: {
       std::int16_t v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Uint32: {
       std::uint32_t v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Int32: {
       std::int32_t v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Float32: {
       float v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Bool: {
       std::int8_t v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = (v != 0);
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::String: {
       std::string s;
       Error err = r->read_string(&s);
       if (!err.ok()) return err;
       *out = std::move(s);
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Array:
       return read_array(r, out);
@@ -160,21 +161,21 @@ Error read_value(detail::ByteReader* r, GgufValueType type, GgufValue* out) {
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Int64: {
       std::int64_t v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
     case GgufValueType::Float64: {
       double v = 0;
       Error err = r->read_pod(&v);
       if (!err.ok()) return err;
       *out = v;
-      return Error::ok();
+      return Error::success();
     }
   }
   return Error::make(ErrorCode::InvalidArgument, "unknown GGUF value type");
@@ -355,7 +356,7 @@ Error gguf_read_header(const std::string& path, GgufFile* out) {
   pos = (pos + align - 1) & ~(align - 1);
   file.data_offset = pos;
   *out = std::move(file);
-  return Error::ok();
+  return Error::success();
 }
 
 Error gguf_load_tensor_f32(const GgufFile& file,
@@ -377,13 +378,6 @@ Error gguf_load_tensor_f32(const GgufFile& file,
   }
 
   const std::size_t n = numel_of(info->dims);
-  const std::size_t elem = gguf_type_nbytes_per_elem(info->type);
-  if (elem == 0 && info->type != GgufType::F32 && info->type != GgufType::F16) {
-    return Error::make(ErrorCode::NotImplemented,
-                       "GGUF type not supported for f32 load: " +
-                           std::string(to_string(info->type)));
-  }
-
   detail::ByteReader r({});
   Error err = detail::ByteReader::from_file(file.path, &r);
   if (!err.ok()) return err;
@@ -400,14 +394,64 @@ Error gguf_load_tensor_f32(const GgufFile& file,
     for (std::size_t i = 0; i < n; ++i) {
       (*out)[i] = f16_to_f32(tmp[i]);
     }
+  } else if (info->type == GgufType::Q8_0) {
+    // Block: f16 scale + 32 int8 values (34 bytes), QK=32
+    constexpr std::size_t QK = 32;
+    if (n % QK != 0) {
+      return Error::make(ErrorCode::InvalidArgument, "Q8_0 numel not multiple of 32");
+    }
+    const std::size_t nblocks = n / QK;
+    for (std::size_t b = 0; b < nblocks; ++b) {
+      std::uint16_t dbits = 0;
+      err = r.read_pod(&dbits);
+      if (!err.ok()) return err;
+      const float d = f16_to_f32(dbits);
+      std::int8_t qs[QK];
+      err = r.read_bytes(qs, QK);
+      if (!err.ok()) return err;
+      for (std::size_t i = 0; i < QK; ++i) {
+        (*out)[b * QK + i] = d * static_cast<float>(qs[i]);
+      }
+    }
+  } else if (info->type == GgufType::Q4_0) {
+    // Block: f16 scale + 16 bytes nibbles (18 bytes), QK=32
+    constexpr std::size_t QK = 32;
+    if (n % QK != 0) {
+      return Error::make(ErrorCode::InvalidArgument, "Q4_0 numel not multiple of 32");
+    }
+    const std::size_t nblocks = n / QK;
+    for (std::size_t b = 0; b < nblocks; ++b) {
+      std::uint16_t dbits = 0;
+      err = r.read_pod(&dbits);
+      if (!err.ok()) return err;
+      const float d = f16_to_f32(dbits);
+      std::uint8_t qs[16];
+      err = r.read_bytes(qs, 16);
+      if (!err.ok()) return err;
+      for (std::size_t i = 0; i < QK; i += 2) {
+        const std::uint8_t byte = qs[i / 2];
+        const int x0 = static_cast<int>(byte & 0x0f) - 8;
+        const int x1 = static_cast<int>(byte >> 4) - 8;
+        (*out)[b * QK + i] = d * static_cast<float>(x0);
+        (*out)[b * QK + i + 1] = d * static_cast<float>(x1);
+      }
+    }
+  } else if (info->type == GgufType::I8) {
+    std::vector<std::int8_t> tmp(n);
+    err = r.read_bytes(tmp.data(), n);
+    if (!err.ok()) return err;
+    for (std::size_t i = 0; i < n; ++i) (*out)[i] = static_cast<float>(tmp[i]);
   } else {
-    return Error::make(ErrorCode::NotImplemented, "unsupported GGUF dtype");
+    return Error::make(ErrorCode::NotImplemented,
+                       "unsupported GGUF dtype for f32 load: " +
+                           std::string(to_string(info->type)) +
+                           " (supported: F32/F16/Q4_0/Q8_0/I8)");
   }
 
   if (out_shape) {
     *out_shape = dims_to_shape(info->dims);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error gguf_write_f32(
@@ -470,6 +514,38 @@ bool GgufLoader::accepts(const std::string& path) const {
   return detail::lower_ext(path) == ".gguf";
 }
 
+namespace {
+
+std::int64_t kv_i64(const GgufFile& file, const char* key, std::int64_t def) {
+  auto it = file.kv.find(key);
+  if (it == file.kv.end()) return def;
+  const auto& v = it->second;
+  if (std::holds_alternative<std::int64_t>(v)) return std::get<std::int64_t>(v);
+  if (std::holds_alternative<std::uint64_t>(v))
+    return static_cast<std::int64_t>(std::get<std::uint64_t>(v));
+  if (std::holds_alternative<std::int32_t>(v)) return std::get<std::int32_t>(v);
+  if (std::holds_alternative<std::uint32_t>(v))
+    return static_cast<std::int64_t>(std::get<std::uint32_t>(v));
+  return def;
+}
+
+const GgufTensorInfo* find_tensor(const GgufFile& file, const std::string& name) {
+  for (const auto& t : file.tensors) {
+    if (t.name == name) return &t;
+  }
+  return nullptr;
+}
+
+const GgufTensorInfo* find_tensor_any(const GgufFile& file,
+                                      std::initializer_list<const char*> names) {
+  for (const char* n : names) {
+    if (auto* t = find_tensor(file, n)) return t;
+  }
+  return nullptr;
+}
+
+}  // namespace
+
 Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
   if (out_graph == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "graph out null");
@@ -478,25 +554,19 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
   Error err = gguf_read_header(path, &file);
   if (!err.ok()) return err;
 
-  const char* emb_names[] = {"token_embd.weight", "embed.weight",
-                             "model.embed_tokens.weight"};
-  const char* out_names[] = {"output.weight", "lm_head.weight"};
-  const char* norm_names[] = {"output_norm.weight", "norm.weight"};
+  const GgufTensorInfo* emb =
+      find_tensor_any(file, {"token_embd.weight", "embed.weight",
+                             "model.embed_tokens.weight"});
+  const GgufTensorInfo* lm =
+      find_tensor_any(file, {"output.weight", "lm_head.weight"});
+  const GgufTensorInfo* norm =
+      find_tensor_any(file, {"output_norm.weight", "norm.weight"});
 
-  auto find_name = [&](const char* const* names, std::size_t n) -> const GgufTensorInfo* {
-    for (std::size_t i = 0; i < n; ++i) {
-      for (const auto& t : file.tensors) {
-        if (t.name == names[i]) return &t;
-      }
-    }
-    return nullptr;
-  };
+  const bool has_blk0 = find_tensor(file, "blk.0.attn_q.weight") != nullptr ||
+                        find_tensor(file, "blk.0.attn_norm.weight") != nullptr;
 
-  const GgufTensorInfo* emb = find_name(emb_names, 3);
-  const GgufTensorInfo* lm = find_name(out_names, 2);
-  const GgufTensorInfo* norm = find_name(norm_names, 2);
-
-  ir::GraphBuilder b(emb && lm ? "gguf_tiny_lm" : "gguf_weights");
+  ir::GraphBuilder b(emb && lm ? (has_blk0 ? "gguf_transformer" : "gguf_tiny_lm")
+                               : "gguf_weights");
   b.set_producer("uaii-gguf-loader");
   b.set_metadata("source_format", "gguf");
   b.set_metadata("source_path", path);
@@ -509,7 +579,27 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     Shape emb_shape = dims_to_shape(emb->dims);
     Shape lm_shape = dims_to_shape(lm->dims);
     const std::int64_t dim = emb_shape.dims.size() > 1 ? emb_shape.dims[1] : 1;
-    const std::int64_t vocab = lm_shape.dims.empty() ? emb_shape.dims[0] : lm_shape.dims[0];
+    const std::int64_t vocab =
+        lm_shape.dims.empty() ? emb_shape.dims[0] : lm_shape.dims[0];
+    const std::int64_t n_heads =
+        kv_i64(file, "llama.attention.head_count",
+               kv_i64(file, "general.attention.head_count", 1));
+    std::int64_t n_layers = kv_i64(file, "llama.block_count",
+                                   kv_i64(file, "general.block_count", 0));
+    if (n_layers <= 0 && has_blk0) {
+      // Infer layer count from tensor names.
+      for (std::int64_t i = 0; i < 512; ++i) {
+        const std::string probe = "blk." + std::to_string(i) + ".attn_norm.weight";
+        if (!find_tensor(file, probe) &&
+            !find_tensor(file, "blk." + std::to_string(i) + ".attn_q.weight")) {
+          n_layers = i;
+          break;
+        }
+      }
+    }
+    // Cap for pathological files; still builds a real multi-layer graph.
+    constexpr std::int64_t kMaxLayers = 64;
+    if (n_layers > kMaxLayers) n_layers = kMaxLayers;
 
     TensorId tokens = b.add_tensor("tokens", DType::F32, Shape{{1, 1}});
     TensorId emb_w =
@@ -518,12 +608,109 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.add_node("embed", "Embedding", "1", {tokens, emb_w}, {hidden});
 
     TensorId features = hidden;
+    auto add_weight_ref = [&](const std::string& name) -> TensorId {
+      const GgufTensorInfo* ti = find_tensor(file, name);
+      if (!ti) return 0;
+      return b.add_weight(name, DType::F32, dims_to_shape(ti->dims),
+                          path + "#" + name);
+    };
+
+    for (std::int64_t li = 0; li < n_layers; ++li) {
+      const std::string pfx = "blk." + std::to_string(li) + ".";
+      TensorId attn_norm = add_weight_ref(pfx + "attn_norm.weight");
+      TensorId wq = add_weight_ref(pfx + "attn_q.weight");
+      TensorId wk = add_weight_ref(pfx + "attn_k.weight");
+      TensorId wv = add_weight_ref(pfx + "attn_v.weight");
+      TensorId wo = add_weight_ref(pfx + "attn_output.weight");
+      TensorId ffn_norm = add_weight_ref(pfx + "ffn_norm.weight");
+      TensorId w_gate = add_weight_ref(pfx + "ffn_gate.weight");
+      TensorId w_up = add_weight_ref(pfx + "ffn_up.weight");
+      TensorId w_down = add_weight_ref(pfx + "ffn_down.weight");
+
+      if (!attn_norm || !wq || !wk || !wv || !wo) {
+        // Incomplete layer — stop stacking further blocks.
+        break;
+      }
+
+      TensorId n1 = b.add_tensor(pfx + "n1", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "rms1", "RMSNorm", "1", {features, attn_norm}, {n1},
+                 {ir::make_float_attr("eps", 1e-5)});
+
+      TensorId q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, dim}});
+      TensorId k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, dim}});
+      TensorId v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "q_proj", "MatMul", "1", {n1, wq}, {q},
+                 {ir::make_bool_attr("transpose_b", true)});
+      b.add_node(pfx + "k_proj", "MatMul", "1", {n1, wk}, {k},
+                 {ir::make_bool_attr("transpose_b", true)});
+      b.add_node(pfx + "v_proj", "MatMul", "1", {n1, wv}, {v},
+                 {ir::make_bool_attr("transpose_b", true)});
+
+      TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "attn", "Attention", "1", {q, k, v}, {attn},
+                 {ir::make_int_attr("num_heads", n_heads),
+                  ir::make_bool_attr("causal", true)});
+
+      TensorId attn_o = b.add_tensor(pfx + "attn_o", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "o_proj", "MatMul", "1", {attn, wo}, {attn_o},
+                 {ir::make_bool_attr("transpose_b", true)});
+
+      TensorId resid1 = b.add_tensor(pfx + "resid1", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "add1", "Add", "1", {features, attn_o}, {resid1});
+
+      TensorId mlp_in = resid1;
+      if (ffn_norm) {
+        TensorId n2 = b.add_tensor(pfx + "n2", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "rms2", "RMSNorm", "1", {resid1, ffn_norm}, {n2},
+                   {ir::make_float_attr("eps", 1e-5)});
+        mlp_in = n2;
+      }
+
+      if (w_gate && w_up && w_down) {
+        // SwiGLU-style: silu(x@gate) * (x@up) @ down  (gate/up rows = intermediate)
+        const GgufTensorInfo* up_info = find_tensor(file, pfx + "ffn_up.weight");
+        const std::int64_t inter =
+            up_info && !up_info->dims.empty()
+                ? static_cast<std::int64_t>(up_info->dims.back() > up_info->dims.front()
+                                                ? up_info->dims.back()
+                                                : up_info->dims.front())
+                : dim * 4;
+        // Prefer [inter, dim] after dims_to_shape for transpose_b MatMul.
+        Shape up_shape = dims_to_shape(up_info->dims);
+        const std::int64_t inter_dim =
+            up_shape.dims.size() == 2
+                ? (up_shape.dims[0] == dim ? up_shape.dims[1] : up_shape.dims[0])
+                : inter;
+
+        TensorId gate = b.add_tensor(pfx + "gate", DType::F32, Shape{{1, inter_dim}});
+        TensorId up = b.add_tensor(pfx + "up", DType::F32, Shape{{1, inter_dim}});
+        b.add_node(pfx + "ffn_gate", "MatMul", "1", {mlp_in, w_gate}, {gate},
+                   {ir::make_bool_attr("transpose_b", true)});
+        b.add_node(pfx + "ffn_up", "MatMul", "1", {mlp_in, w_up}, {up},
+                   {ir::make_bool_attr("transpose_b", true)});
+        TensorId gate_act =
+            b.add_tensor(pfx + "gate_act", DType::F32, Shape{{1, inter_dim}});
+        b.add_node(pfx + "silu", "Silu", "1", {gate}, {gate_act});
+        TensorId ff_hid =
+            b.add_tensor(pfx + "ff_hid", DType::F32, Shape{{1, inter_dim}});
+        b.add_node(pfx + "ff_mul", "Mul", "1", {gate_act, up}, {ff_hid});
+        TensorId ff_out = b.add_tensor(pfx + "ff_out", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "ffn_down", "MatMul", "1", {ff_hid, w_down}, {ff_out},
+                   {ir::make_bool_attr("transpose_b", true)});
+        TensorId resid2 = b.add_tensor(pfx + "resid2", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "add2", "Add", "1", {resid1, ff_out}, {resid2});
+        features = resid2;
+      } else {
+        features = resid1;
+      }
+    }
+
     if (norm) {
       Shape nshape = dims_to_shape(norm->dims);
       TensorId nw =
           b.add_weight(norm->name, DType::F32, nshape, path + "#" + norm->name);
       TensorId nout = b.add_tensor("normed", DType::F32, Shape{{1, dim}});
-      b.add_node("rms", "RMSNorm", "1", {hidden, nw}, {nout},
+      b.add_node("rms_out", "RMSNorm", "1", {features, nw}, {nout},
                  {ir::make_float_attr("eps", 1e-5)});
       features = nout;
     }
@@ -537,7 +724,9 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.add_node("softmax", "Softmax", "1", {logits}, {probs},
                {ir::make_int_attr("axis", -1)});
     b.set_inputs({tokens}).set_outputs({probs});
-    b.set_metadata("architecture", "tiny_lm");
+    b.set_metadata("architecture", has_blk0 ? "transformer" : "tiny_lm");
+    b.set_metadata("n_layers", std::to_string(n_layers));
+    b.set_metadata("n_heads", std::to_string(n_heads));
   } else {
     TensorId x = b.add_tensor("x", DType::F32, Shape{{1, 1}});
     TensorId y = b.add_tensor("y", DType::F32, Shape{{1, 1}});
@@ -553,8 +742,9 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
   }
 
   *out_graph = b.build();
-  log::info("gguf") << "loaded " << file.tensors.size() << " tensors from " << path;
-  return Error::ok();
+  log::info("gguf") << "loaded " << file.tensors.size() << " tensors from " << path
+                    << " graph=" << out_graph->name;
+  return Error::success();
 }
 
 }  // namespace loaders

@@ -23,3 +23,6 @@ Homepage = "https://github.com/arjunshukla/Universal-AI-Inference"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["uaii*"]
+
+[tool.setuptools.package-data]
+uaii = ["_native/*"]

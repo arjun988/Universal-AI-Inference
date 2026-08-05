@@ -58,10 +58,13 @@ typedef enum uaii_weight_init {
 typedef struct uaii_session uaii_session;
 
 typedef struct uaii_session_options {
+  /** Must be set to sizeof(uaii_session_options) by callers (ABI-safe growth). */
+  uint32_t struct_size;
   /** Backend name: "cpu", "cuda", … (default "cpu" if NULL) */
   const char* backend;
   /** Directory for weight_ref resolution (may be NULL) */
   const char* weights_dir;
+  /** Default: UAII_WEIGHT_INIT_NONE (fail closed if weights missing). */
   uaii_weight_init weight_init;
   int enable_fusion;       /* non-zero = on (default 1) */
   int enable_memory_reuse; /* non-zero = on (default 1) */
@@ -71,6 +74,10 @@ typedef struct uaii_session_options {
   /** Memory budget in bytes; 0 = unlimited */
   uint64_t budget_bytes;
   int enable_streaming; /* non-zero enables streaming under budget */
+  /** If non-zero, allow synthetic weight_init when weight_ref load fails. */
+  int allow_missing_weights;
+  /** Optional sandbox root; weight paths must stay under this directory. */
+  const char* weights_sandbox;
 } uaii_session_options;
 
 /** Fill options with safe defaults. */

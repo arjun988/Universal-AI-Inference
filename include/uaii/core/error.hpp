@@ -30,7 +30,8 @@ class UAII_API Error {
   Error(ErrorCode code, std::string message)
       : code_(code), message_(std::move(message)) {}
 
-  [[nodiscard]] static Error ok() { return Error{}; }
+  /// Factory for a success result (named distinctly from member `ok()` for GCC).
+  [[nodiscard]] static Error success() { return Error{}; }
 
   [[nodiscard]] static Error make(ErrorCode code, std::string message) {
     return Error{code, std::move(message)};

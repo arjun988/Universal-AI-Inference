@@ -1,4 +1,5 @@
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/kernels/view_util.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -19,32 +20,57 @@ Error embedding_f32(const TensorView& tokens,
       out->dtype != DType::F32) {
     return Error::make(ErrorCode::InvalidArgument, "embedding requires f32");
   }
-  if (weight.rank != 2 || tokens.rank != 2 || out->rank != 2) {
-    return Error::make(ErrorCode::InvalidArgument, "embedding rank");
+  if (weight.rank != 2 || tokens.rank != 2) {
+    return Error::make(ErrorCode::InvalidArgument, "embedding rank (tokens/weight)");
   }
+  Error err = check_view_bytes(tokens, "tokens");
+  if (!err.ok()) return err;
+  err = check_view_bytes(weight, "weight");
+  if (!err.ok()) return err;
+
   const std::int64_t vocab = weight.dim(0);
   const std::int64_t dim = weight.dim(1);
   const std::int64_t batch = tokens.dim(0);
   const std::int64_t seq = tokens.dim(1);
-  if (seq != 1) {
-    return Error::make(ErrorCode::NotImplemented,
-                       "Embedding Phase 4 supports seq length 1 (use loop for generate)");
+  // out: [batch, seq, dim] or flattened [batch*seq, dim]
+  const bool out_3d = out->rank == 3;
+  const bool out_2d = out->rank == 2;
+  if (!out_3d && !out_2d) {
+    return Error::make(ErrorCode::InvalidArgument, "embedding out rank must be 2 or 3");
   }
-  if (out->dim(0) != batch || out->dim(1) != dim) {
-    return Error::make(ErrorCode::InvalidArgument, "embedding out shape");
+  if (out_3d) {
+    if (out->dim(0) != batch || out->dim(1) != seq || out->dim(2) != dim) {
+      return Error::make(ErrorCode::InvalidArgument, "embedding out shape [B,S,D]");
+    }
+  } else if (seq == 1) {
+    if (out->dim(0) != batch || out->dim(1) != dim) {
+      return Error::make(ErrorCode::InvalidArgument, "embedding out shape [B,D]");
+    }
+  } else {
+    if (out->dim(0) != batch * seq || out->dim(1) != dim) {
+      return Error::make(ErrorCode::InvalidArgument, "embedding out shape [B*S,D]");
+    }
   }
+  err = check_view_bytes(*out, "embedding_out");
+  if (!err.ok()) return err;
 
   const float* ids = tokens.f32();
   const float* w = weight.f32();
   float* y = out->f32();
   for (std::int64_t b = 0; b < batch; ++b) {
-    int id = static_cast<int>(ids[b]);
-    if (id < 0 || id >= static_cast<int>(vocab)) {
-      id = 0;
+    for (std::int64_t s = 0; s < seq; ++s) {
+      const int id = static_cast<int>(ids[b * seq + s]);
+      if (id < 0 || id >= static_cast<int>(vocab)) {
+        return Error::make(ErrorCode::InvalidArgument,
+                           "embedding token id out of range: " + std::to_string(id) +
+                               " vocab=" + std::to_string(vocab));
+      }
+      const std::int64_t row = b * seq + s;
+      std::memcpy(y + row * dim, w + static_cast<std::int64_t>(id) * dim,
+                  static_cast<std::size_t>(dim) * sizeof(float));
     }
-    std::memcpy(y + b * dim, w + id * dim, static_cast<std::size_t>(dim) * sizeof(float));
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error rope_f32(const TensorView& in,
@@ -86,7 +112,7 @@ Error rope_f32(const TensorView& in,
       out_row[i + 1] = a * s + b * c;
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error attention_f32(const TensorView& q,
@@ -99,19 +125,37 @@ Error attention_f32(const TensorView& q,
   if (out == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "attention out null");
   }
-  if (q.rank != 3 || k.rank != 3 || v.rank != 3 || out->rank != 3) {
+  // Rank-3: [batch, seq, dim]. Rank-2: [batch, dim] treated as seq=1.
+  const bool rank2 = (q.rank == 2 && k.rank == 2 && v.rank == 2 && out->rank == 2);
+  const bool rank3 = (q.rank == 3 && k.rank == 3 && v.rank == 3 && out->rank == 3);
+  if (!rank2 && !rank3) {
     return Error::make(ErrorCode::InvalidArgument,
-                       "Attention expects rank-3 [batch, seq, dim]");
+                       "Attention expects [batch,seq,dim] or [batch,dim]");
+  }
+  {
+    Error err = check_view_bytes(q, "attn_q");
+    if (!err.ok()) return err;
+    err = check_view_bytes(k, "attn_k");
+    if (!err.ok()) return err;
+    err = check_view_bytes(v, "attn_v");
+    if (!err.ok()) return err;
+    err = check_view_bytes(*out, "attn_out");
+    if (!err.ok()) return err;
   }
   const std::int64_t batch = q.dim(0);
-  const std::int64_t seq = q.dim(1);
-  const std::int64_t dim = q.dim(2);
+  const std::int64_t seq = rank2 ? 1 : q.dim(1);
+  const std::int64_t dim = rank2 ? q.dim(1) : q.dim(2);
   if (num_heads <= 0 || dim % num_heads != 0) {
     return Error::make(ErrorCode::InvalidArgument, "invalid num_heads");
   }
-  if (k.dim(0) != batch || k.dim(1) != seq || k.dim(2) != dim ||
-      v.dim(0) != batch || v.dim(1) != seq || v.dim(2) != dim ||
-      out->dim(0) != batch || out->dim(1) != seq || out->dim(2) != dim) {
+  if (rank2) {
+    if (k.dim(0) != batch || k.dim(1) != dim || v.dim(0) != batch || v.dim(1) != dim ||
+        out->dim(0) != batch || out->dim(1) != dim) {
+      return Error::make(ErrorCode::InvalidArgument, "attention shape mismatch");
+    }
+  } else if (k.dim(0) != batch || k.dim(1) != seq || k.dim(2) != dim ||
+             v.dim(0) != batch || v.dim(1) != seq || v.dim(2) != dim ||
+             out->dim(0) != batch || out->dim(1) != seq || out->dim(2) != dim) {
     return Error::make(ErrorCode::InvalidArgument, "attention shape mismatch");
   }
   if (scale <= 0) {
@@ -173,7 +217,7 @@ Error attention_f32(const TensorView& q,
       }
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error moe_router_f32(const TensorView& x,
@@ -210,7 +254,7 @@ Error moe_router_f32(const TensorView& x,
     }
     top_expert->f32()[static_cast<std::size_t>(b)] = static_cast<float>(best);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error moe_experts_f32(const TensorView& x,
@@ -249,7 +293,7 @@ Error moe_experts_f32(const TensorView& x,
       Y[static_cast<std::size_t>(b * D + o)] = sum;
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error reshape_f32(const TensorView& in, TensorView* out) {
@@ -262,7 +306,7 @@ Error reshape_f32(const TensorView& in, TensorView* out) {
   if (in.data != out->data) {
     std::memcpy(out->data, in.data, in.nbytes);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error transpose_f32(const TensorView& in,
@@ -293,7 +337,7 @@ Error transpose_f32(const TensorView& in,
       y[j * rows + i] = x[i * cols + j];
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace kernels

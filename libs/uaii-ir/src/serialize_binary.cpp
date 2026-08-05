@@ -52,7 +52,7 @@ class Reader {
       return eof();
     }
     *v = static_cast<std::uint8_t>(data_[pos_++]);
-    return Error::ok();
+    return Error::success();
   }
   Error u32(std::uint32_t* v) {
     if (pos_ + 4 > data_.size()) {
@@ -63,7 +63,7 @@ class Reader {
       x |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(data_[pos_++])) << (8 * i);
     }
     *v = x;
-    return Error::ok();
+    return Error::success();
   }
   Error u64(std::uint64_t* v) {
     if (pos_ + 8 > data_.size()) {
@@ -74,7 +74,7 @@ class Reader {
       x |= static_cast<std::uint64_t>(static_cast<std::uint8_t>(data_[pos_++])) << (8 * i);
     }
     *v = x;
-    return Error::ok();
+    return Error::success();
   }
   Error i64(std::int64_t* v) {
     std::uint64_t x = 0;
@@ -83,7 +83,7 @@ class Reader {
       return err;
     }
     *v = static_cast<std::int64_t>(x);
-    return Error::ok();
+    return Error::success();
   }
   Error f64(double* v) {
     std::uint64_t bits = 0;
@@ -92,7 +92,7 @@ class Reader {
       return err;
     }
     std::memcpy(v, &bits, sizeof(bits));
-    return Error::ok();
+    return Error::success();
   }
   Error str(std::string* out) {
     std::uint32_t n = 0;
@@ -105,7 +105,7 @@ class Reader {
     }
     out->assign(data_.data() + pos_, n);
     pos_ += n;
-    return Error::ok();
+    return Error::success();
   }
 
  private:
@@ -218,7 +218,7 @@ Error read_attr(Reader* r, Attribute* a) {
     default:
       return Error::make(ErrorCode::InvalidArgument, "unknown attribute type in binary IR");
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace
@@ -286,7 +286,7 @@ Error graph_to_binary(const Graph& graph, std::string* out) {
   }
 
   *out = std::move(w.data());
-  return Error::ok();
+  return Error::success();
 }
 
 Error graph_from_binary(const std::string& bytes, Graph* out) {
@@ -440,7 +440,7 @@ Error graph_from_binary(const std::string& bytes, Graph* out) {
   }
 
   *out = std::move(g);
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace ir

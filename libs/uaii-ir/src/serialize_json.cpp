@@ -30,7 +30,7 @@ Error shape_from_json(const json::Value& v, Shape* out) {
     }
     out->dims.push_back(static_cast<std::int64_t>(item.number));
   }
-  return Error::ok();
+  return Error::success();
 }
 
 json::Value attr_to_json(const Attribute& attr) {
@@ -144,7 +144,7 @@ Error attr_from_json(const json::Value& v, Attribute* out) {
   } else {
     return Error::make(ErrorCode::InvalidArgument, "unknown attribute type " + t);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace
@@ -221,7 +221,7 @@ Error graph_to_json(const Graph& graph, std::string* out) {
   root["metadata"] = json::Value::object(std::move(meta));
 
   *out = json::stringify(json::Value::object(std::move(root)), true);
-  return Error::ok();
+  return Error::success();
 }
 
 Error graph_from_json(const std::string& text, Graph* out) {
@@ -389,7 +389,7 @@ Error graph_from_json(const std::string& text, Graph* out) {
   auto read_id_array = [&](const char* key, std::vector<TensorId>* dest) -> Error {
     const json::Value* v = json::get(*root, key);
     if (v == nullptr) {
-      return Error::ok();
+      return Error::success();
     }
     const json::Array* a = nullptr;
     Error e = json::require_array(*v, &a, key);
@@ -402,7 +402,7 @@ Error graph_from_json(const std::string& text, Graph* out) {
       }
       dest->push_back(static_cast<TensorId>(x.number));
     }
-    return Error::ok();
+    return Error::success();
   };
 
   err = read_id_array("inputs", &g.inputs);
@@ -423,7 +423,7 @@ Error graph_from_json(const std::string& text, Graph* out) {
   }
 
   *out = std::move(g);
-  return Error::ok();
+  return Error::success();
 }
 
 std::string plan_to_json(const ExecutionPlan& plan) {

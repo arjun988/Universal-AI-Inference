@@ -3,7 +3,7 @@
 #include "uaii/export.hpp"
 #include "uaii/interfaces/storage.hpp"
 
-#include <fstream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -11,11 +11,15 @@
 namespace uaii {
 namespace storage {
 
-/// Disk-backed storage provider with optional mmap-style whole-file staging.
-/// Cross-platform: uses buffered file IO (mmap semantics via tier hint).
+/// Disk-backed storage with real OS mmap (Windows MapViewOfFile / POSIX mmap)
+/// when prefer_mmap=true; otherwise buffered fread.
 class UAII_API FileStorageProvider : public IStorageProvider {
  public:
   explicit FileStorageProvider(bool prefer_mmap = true);
+  ~FileStorageProvider() override;
+
+  FileStorageProvider(const FileStorageProvider&) = delete;
+  FileStorageProvider& operator=(const FileStorageProvider&) = delete;
 
   [[nodiscard]] std::string name() const override { return "file"; }
   [[nodiscard]] StorageTier tier() const override {
@@ -33,11 +37,13 @@ class UAII_API FileStorageProvider : public IStorageProvider {
   void reset_stats() noexcept { bytes_read_ = 0; }
 
  private:
+  struct Impl;
   bool prefer_mmap_ = true;
   std::uint64_t next_id_ = 1;
   std::uint64_t bytes_read_ = 0;
   mutable std::mutex mu_;
   std::unordered_map<std::uint64_t, std::string> paths_;
+  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace storage

@@ -29,7 +29,7 @@ HostExecutableBackend::~HostExecutableBackend() {
 
 Error HostExecutableBackend::initialize() {
   initialized_ = true;
-  return Error::ok();
+  return Error::success();
 }
 
 void HostExecutableBackend::shutdown() noexcept {
@@ -59,25 +59,25 @@ Error HostExecutableBackend::allocate(std::size_t bytes, void** out_ptr) {
     return err;
   }
   orphan_allocs_.emplace_back(*out_ptr, bytes);
-  return Error::ok();
+  return Error::success();
 }
 
 Error HostExecutableBackend::free(void* ptr) noexcept {
   if (ptr == nullptr) {
-    return Error::ok();
+    return Error::success();
   }
   for (auto it = orphan_allocs_.begin(); it != orphan_allocs_.end(); ++it) {
     if (it->first == ptr) {
       allocator_->deallocate_bytes(it->first, it->second);
       orphan_allocs_.erase(it);
-      return Error::ok();
+      return Error::success();
     }
   }
   return Error::make(ErrorCode::NotFound, "pointer not owned by backend");
 }
 
 Error HostExecutableBackend::synchronize() {
-  return Error::ok();
+  return Error::success();
 }
 
 Error HostExecutableBackend::dispatch(const std::string& op_name,

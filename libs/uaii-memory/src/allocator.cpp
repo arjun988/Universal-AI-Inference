@@ -51,7 +51,7 @@ Error Allocator::allocate_tensor(const ir::Tensor& tensor, TensorBuffer* out) {
   out->data = ptr;
   out->nbytes = nbytes;
   out->owned = true;
-  return Error::ok();
+  return Error::success();
 }
 
 void Allocator::deallocate_tensor(TensorBuffer* buffer) noexcept {

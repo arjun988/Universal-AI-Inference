@@ -24,10 +24,10 @@ class UAII_API SimpleTokenizer : public ITokenizer {
   [[nodiscard]] std::string name() const override { return "simple"; }
 
   [[nodiscard]] Error encode(const std::string& text,
-                             std::vector<std::int64_t>* out_tokens) override;
+                             std::vector<std::int64_t>* out_tokens) const override;
 
   [[nodiscard]] Error decode(const std::vector<std::int64_t>& tokens,
-                             std::string* out_text) override;
+                             std::string* out_text) const override;
 
   [[nodiscard]] std::size_t vocab_size() const noexcept { return id_to_token_.size(); }
 

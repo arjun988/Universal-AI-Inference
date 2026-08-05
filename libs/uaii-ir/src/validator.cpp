@@ -210,6 +210,78 @@ ValidationResult validate_graph(const Graph& graph,
     }
   }
 
+  // Shape / dtype inference checks for core ops (fail closed on mismatches).
+  if (options.require_shapes) {
+    std::unordered_map<TensorId, const Tensor*> by_id;
+    for (const auto& t : graph.tensors) by_id[t.id] = &t;
+    for (const auto& n : graph.nodes) {
+      auto T = [&](TensorId id) -> const Tensor* {
+        auto it = by_id.find(id);
+        return it == by_id.end() ? nullptr : it->second;
+      };
+      if (n.op_name == "MatMul" || n.op_name == "MatMulRelu") {
+        if (n.inputs.size() == 2 && n.outputs.size() == 1) {
+          const Tensor* a = T(n.inputs[0]);
+          const Tensor* b = T(n.inputs[1]);
+          const Tensor* c = T(n.outputs[0]);
+          bool ta = false, tb = false;
+          for (const auto& at : n.attributes) {
+            if (at.key == "transpose_a" && at.type == AttributeType::Bool) {
+              ta = std::get<bool>(at.value);
+            }
+            if (at.key == "transpose_b" && at.type == AttributeType::Bool) {
+              tb = std::get<bool>(at.value);
+            }
+          }
+          if (a && b && c && a->shape.dims.size() == 2 && b->shape.dims.size() == 2 &&
+              c->shape.dims.size() == 2) {
+            const std::int64_t a0 = ta ? a->shape.dims[1] : a->shape.dims[0];
+            const std::int64_t a1 = ta ? a->shape.dims[0] : a->shape.dims[1];
+            const std::int64_t b0 = tb ? b->shape.dims[1] : b->shape.dims[0];
+            const std::int64_t b1 = tb ? b->shape.dims[0] : b->shape.dims[1];
+            if (a1 != b0) {
+              add_issue(&result, ValidationSeverity::Error, "shape.matmul",
+                        "MatMul inner dims mismatch", n.id);
+            }
+            if (c->shape.dims[0] != a0 || c->shape.dims[1] != b1) {
+              add_issue(&result, ValidationSeverity::Error, "shape.matmul_out",
+                        "MatMul output shape mismatch", n.id);
+            }
+          }
+        }
+      }
+      if (n.op_name == "Attention" && n.inputs.size() >= 3) {
+        // num_heads must divide last dim of Q when present
+        std::int64_t heads = 0;
+        for (const auto& a : n.attributes) {
+          if (a.key == "num_heads" && a.type == AttributeType::Int) {
+            heads = std::get<std::int64_t>(a.value);
+          }
+        }
+        const Tensor* q = T(n.inputs[0]);
+        if (heads > 0 && q && !q->shape.dims.empty()) {
+          const std::int64_t dim = q->shape.dims.back();
+          if (dim % heads != 0) {
+            add_issue(&result, ValidationSeverity::Error, "shape.attention_heads",
+                      "Attention dim not divisible by num_heads", n.id);
+          }
+        }
+      }
+      if (n.op_name == "Add" || n.op_name == "Mul") {
+        if (n.inputs.size() == 2 && n.outputs.size() == 1) {
+          const Tensor* a = T(n.inputs[0]);
+          const Tensor* b = T(n.inputs[1]);
+          const Tensor* c = T(n.outputs[0]);
+          if (a && b && c && a->shape.dims == b->shape.dims &&
+              a->shape.dims != c->shape.dims) {
+            add_issue(&result, ValidationSeverity::Error, "shape.elementwise",
+                      n.op_name + " output shape mismatch", n.id);
+          }
+        }
+      }
+    }
+  }
+
   return result;
 }
 
@@ -218,7 +290,7 @@ Error validate_graph_error(const Graph& graph,
                            const ValidationOptions& options) {
   const ValidationResult result = validate_graph(graph, registry, options);
   if (result.ok()) {
-    return Error::ok();
+    return Error::success();
   }
   std::ostringstream oss;
   oss << "graph validation failed with " << result.error_count() << " error(s):";

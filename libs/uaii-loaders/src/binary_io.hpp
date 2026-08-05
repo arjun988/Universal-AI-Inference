@@ -31,7 +31,7 @@ class ByteReader {
       return Error::make(ErrorCode::IoError, "failed reading " + path);
     }
     *out = ByteReader(std::move(buf));
-    return Error::ok();
+    return Error::success();
   }
 
   [[nodiscard]] std::size_t tell() const noexcept { return pos_; }
@@ -46,7 +46,7 @@ class ByteReader {
     }
     std::memcpy(out, data_.data() + pos_, sizeof(T));
     pos_ += sizeof(T);
-    return Error::ok();
+    return Error::success();
   }
 
   Error read_bytes(void* dst, std::size_t n) {
@@ -55,7 +55,7 @@ class ByteReader {
     }
     std::memcpy(dst, data_.data() + pos_, n);
     pos_ += n;
-    return Error::ok();
+    return Error::success();
   }
 
   Error read_string(std::string* out) {
@@ -68,7 +68,7 @@ class ByteReader {
     out->assign(reinterpret_cast<const char*>(data_.data() + pos_),
                 static_cast<std::size_t>(n));
     pos_ += static_cast<std::size_t>(n);
-    return Error::ok();
+    return Error::success();
   }
 
  private:
@@ -114,7 +114,7 @@ class ByteWriter {
     if (!out) {
       return Error::make(ErrorCode::IoError, "failed writing " + path);
     }
-    return Error::ok();
+    return Error::success();
   }
 
   [[nodiscard]] std::vector<std::uint8_t>& bytes() { return data_; }

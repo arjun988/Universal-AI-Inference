@@ -57,7 +57,7 @@ class _NativeSession:
             path,
             backend=kw.get("backend", "cpu"),
             weights_dir=kw.get("weights_dir", ""),
-            weight_init=kw.get("weight_init", "ones"),
+            weight_init=kw.get("weight_init", "none"),
             profile=kw.get("profile", False),
             trace_path=kw.get("trace_path", ""),
             fusion=kw.get("fusion", True),
@@ -84,6 +84,7 @@ class _NativeSession:
 
 class _CTypesOpts(ctypes.Structure):
     _fields_ = [
+        ("struct_size", ctypes.c_uint32),
         ("backend", c_char_p),
         ("weights_dir", c_char_p),
         ("weight_init", c_int),
@@ -93,6 +94,8 @@ class _CTypesOpts(ctypes.Structure):
         ("profile_trace_path", c_char_p),
         ("budget_bytes", c_uint64),
         ("enable_streaming", c_int),
+        ("allow_missing_weights", c_int),
+        ("weights_sandbox", c_char_p),
     ]
 
 
@@ -112,6 +115,9 @@ def _find_capi() -> Optional[Path]:
             return p
     here = Path(__file__).resolve()
     candidates: list[Path] = []
+    # Packaged wheel / sdist: native lib shipped under uaii/_native/
+    for name in _lib_names():
+        candidates.append(here.parent / "_native" / name)
     # Walk up to repo root and common build dirs
     for parent in [here.parent, *here.parents]:
         for name in _lib_names():
@@ -211,7 +217,8 @@ class _CTypesSession:
         self._keep = [b_backend, b_weights, b_trace]
         opts.backend = b_backend
         opts.weights_dir = b_weights if b_weights else None
-        opts.weight_init = _WEIGHT.get(kw.get("weight_init", "ones"), 2)
+        opts.weight_init = _WEIGHT.get(kw.get("weight_init", "none"), 0)
+        opts.struct_size = ctypes.sizeof(_CTypesOpts)
         opts.enable_fusion = 1 if kw.get("fusion", True) else 0
         opts.enable_memory_reuse = 1
         opts.enable_profiler = 1 if kw.get("profile", False) else 0

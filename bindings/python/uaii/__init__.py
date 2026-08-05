@@ -50,7 +50,7 @@ class Session:
         *,
         backend: str = "cpu",
         weights_dir: str = "",
-        weight_init: str = "ones",
+        weight_init: str = "none",
         profile: bool = False,
         trace_path: str = "",
         fusion: bool = True,

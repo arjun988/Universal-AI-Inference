@@ -1,4 +1,5 @@
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/kernels/view_util.hpp"
 
 #include <cmath>
 
@@ -16,7 +17,11 @@ Error check_same_f32(const TensorView& a, const TensorView& b, const TensorView*
   if (a.numel() != b.numel() || a.numel() != out->numel()) {
     return Error::make(ErrorCode::InvalidArgument, "elementwise numel mismatch");
   }
-  return Error::ok();
+  Error err = check_view_bytes(a, "elem_a");
+  if (!err.ok()) return err;
+  err = check_view_bytes(b, "elem_b");
+  if (!err.ok()) return err;
+  return check_view_bytes(*out, "elem_out");
 }
 
 Error check_unary_f32(const TensorView& in, const TensorView* out) {
@@ -29,7 +34,9 @@ Error check_unary_f32(const TensorView& in, const TensorView* out) {
   if (in.numel() != out->numel()) {
     return Error::make(ErrorCode::InvalidArgument, "unary numel mismatch");
   }
-  return Error::ok();
+  Error err = check_view_bytes(in, "unary_in");
+  if (!err.ok()) return err;
+  return check_view_bytes(*out, "unary_out");
 }
 
 }  // namespace
@@ -43,7 +50,7 @@ Error relu_f32(const TensorView& in, TensorView* out) {
   for (std::size_t i = 0; i < n; ++i) {
     y[i] = x[i] > 0.0f ? x[i] : 0.0f;
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error gelu_f32(const TensorView& in, TensorView* out) {
@@ -60,7 +67,7 @@ Error gelu_f32(const TensorView& in, TensorView* out) {
     const float u = k0 * (v + k1 * v * v * v);
     y[i] = 0.5f * v * (1.0f + std::tanh(u));
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error silu_f32(const TensorView& in, TensorView* out) {
@@ -73,7 +80,7 @@ Error silu_f32(const TensorView& in, TensorView* out) {
     const float v = x[i];
     y[i] = v / (1.0f + std::exp(-v));
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error add_f32(const TensorView& a, const TensorView& b, TensorView* out) {
@@ -86,7 +93,7 @@ Error add_f32(const TensorView& a, const TensorView& b, TensorView* out) {
   for (std::size_t i = 0; i < n; ++i) {
     z[i] = x[i] + y[i];
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error mul_f32(const TensorView& a, const TensorView& b, TensorView* out) {
@@ -99,14 +106,14 @@ Error mul_f32(const TensorView& a, const TensorView& b, TensorView* out) {
   for (std::size_t i = 0; i < n; ++i) {
     z[i] = x[i] * y[i];
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error identity_f32(const TensorView& in, TensorView* out) {
   Error err = check_unary_f32(in, out);
   if (!err.ok()) return err;
   if (in.data == out->data) {
-    return Error::ok();
+    return Error::success();
   }
   const float* x = in.f32();
   float* y = out->f32();
@@ -114,7 +121,7 @@ Error identity_f32(const TensorView& in, TensorView* out) {
   for (std::size_t i = 0; i < n; ++i) {
     y[i] = x[i];
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace kernels

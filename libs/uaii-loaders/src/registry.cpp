@@ -133,7 +133,7 @@ Error load_weight_ref_f32(const std::string& weight_ref,
                          "weight byte size mismatch for " + weight_ref);
     }
     std::memcpy(dst, values.data(), nbytes);
-    return Error::ok();
+    return Error::success();
   }
 
   // Raw binary blob
@@ -146,7 +146,7 @@ Error load_weight_ref_f32(const std::string& weight_ref,
   if (static_cast<std::size_t>(in.gcount()) != nbytes) {
     return Error::make(ErrorCode::IoError, "short read for weight " + path);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace loaders

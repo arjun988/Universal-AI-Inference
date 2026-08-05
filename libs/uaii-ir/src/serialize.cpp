@@ -58,7 +58,7 @@ Error save_graph(const Graph& graph, const std::string& path, IrFormat format) {
   if (!out) {
     return Error::make(ErrorCode::IoError, "failed while writing " + path);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error load_graph(const std::string& path, Graph* out, IrFormat format) {

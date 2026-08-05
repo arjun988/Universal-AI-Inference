@@ -12,7 +12,7 @@ bool is_compatible(const IrVersion& file_version) noexcept {
 
 Error check_compatible(const IrVersion& file_version) {
   if (is_compatible(file_version)) {
-    return Error::ok();
+    return Error::success();
   }
   return Error::make(ErrorCode::InvalidArgument,
                      "unsupported UAII IR version " + to_string(file_version) +

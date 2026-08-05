@@ -26,7 +26,7 @@ class UAII_API PlanCache {
 
  private:
   mutable std::mutex mu_;
-  std::unordered_map<std::string, ir::ExecutionPlan> entries_;
+  mutable std::unordered_map<std::string, ir::ExecutionPlan> entries_;
 };
 
 }  // namespace planner

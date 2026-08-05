@@ -16,7 +16,7 @@ namespace native {
 
 [[nodiscard]] bool cuda_compiled() noexcept;
 [[nodiscard]] Error cuda_init();
-[[nodiscard]] void cuda_shutdown() noexcept;
+void cuda_shutdown() noexcept;
 [[nodiscard]] Error cuda_dispatch(const std::string& op_name,
                                   const std::string& op_version,
                                   const std::vector<kernels::TensorView>& inputs,
@@ -25,7 +25,7 @@ namespace native {
 
 [[nodiscard]] bool metal_compiled() noexcept;
 [[nodiscard]] Error metal_init();
-[[nodiscard]] void metal_shutdown() noexcept;
+void metal_shutdown() noexcept;
 [[nodiscard]] Error metal_dispatch(const std::string& op_name,
                                    const std::string& op_version,
                                    const std::vector<kernels::TensorView>& inputs,
@@ -34,7 +34,7 @@ namespace native {
 
 [[nodiscard]] bool vulkan_compiled() noexcept;
 [[nodiscard]] Error vulkan_init();
-[[nodiscard]] void vulkan_shutdown() noexcept;
+void vulkan_shutdown() noexcept;
 [[nodiscard]] Error vulkan_dispatch(const std::string& op_name,
                                     const std::string& op_version,
                                     const std::vector<kernels::TensorView>& inputs,
@@ -43,7 +43,7 @@ namespace native {
 
 [[nodiscard]] bool webgpu_compiled() noexcept;
 [[nodiscard]] Error webgpu_init();
-[[nodiscard]] void webgpu_shutdown() noexcept;
+void webgpu_shutdown() noexcept;
 [[nodiscard]] Error webgpu_dispatch(const std::string& op_name,
                                     const std::string& op_version,
                                     const std::vector<kernels::TensorView>& inputs,
@@ -52,7 +52,7 @@ namespace native {
 
 [[nodiscard]] bool rocm_compiled() noexcept;
 [[nodiscard]] Error rocm_init();
-[[nodiscard]] void rocm_shutdown() noexcept;
+void rocm_shutdown() noexcept;
 [[nodiscard]] Error rocm_dispatch(const std::string& op_name,
                                   const std::string& op_version,
                                   const std::vector<kernels::TensorView>& inputs,

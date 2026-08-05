@@ -5,9 +5,12 @@
 #include "uaii/c_api/version.h"
 #include "uaii/core/log.hpp"
 #include "uaii/core/plugin.hpp"
+#include "uaii/interfaces/types.hpp"
+#include "uaii/plugins/operator_host.hpp"
 #include "uaii/version.hpp"
 
 #include <iostream>
+#include <memory>
 #include <sstream>
 
 namespace uaii {
@@ -40,7 +43,7 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
 
   std::cout << "Version\n";
   print_kv("uaii", version_string());
-  print_kv("c_api", UAII_C_API_VERSION_STRING);
+  print_kv("c_api", std::string(UAII_C_API_VERSION_STRING) + " (struct_size required)");
   print_kv("plugin_abi", std::to_string(UAII_PLUGIN_ABI_VERSION));
 #if defined(_WIN32)
   print_kv("platform", "windows");
@@ -76,31 +79,50 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   print_kv("plugin.dirs", join_dirs(dirs));
   std::cout << '\n';
 
-  std::cout << "Modules (Phase 1)\n";
+  std::cout << "Modules (probed)\n";
   print_kv("uaii-core", "active");
-  print_kv("uaii-ir", "active (Phase 2)");
-  print_kv("uaii-runtime", "active (Phase 3 CPU session)");
-  print_kv("uaii-memory", "active (Phase 3)");
-  print_kv("uaii-storage", "active (file provider + streaming)");
-  print_kv("uaii-planner", "active (fusion, memory/storage plan, cache)");
-  print_kv("uaii-kernels", "active (Phase 3 CPU + MatMulRelu)");
-  print_kv("uaii-backends", "active (CPU + CUDA/Metal/Vulkan/WebGPU/ROCm)");
-  print_kv("uaii-loaders", "active (GGUF + Safetensors)");
-  print_kv("uaii-tokenizers", "active (SimpleTokenizer)");
-  print_kv("uaii-quant", "active (F16/BF16/INT8/INT4/NF4/MXFP4)");
-  print_kv("uaii-profiler", "active (chrome-trace timelines)");
-  print_kv("uaii-capi", "active (C API 1.0.0 shared lib)");
-  print_kv("python SDK", "bindings/python (ctypes + optional pybind11)");
+  print_kv("uaii-ir", "active");
+  print_kv("uaii-runtime", "active (CPU session; f32 compute)");
+  print_kv("uaii-memory", "active");
+  print_kv("uaii-storage", "active (OS mmap + double-buffer streaming)");
+  print_kv("uaii-planner", "active (fusion, memory/storage plan, disk cache)");
+  print_kv("uaii-kernels", "active (threaded MatMul + plugin ops)");
+  print_kv("uaii-backends", "CPU real; GPU names = host-fallback unless native ON");
+  print_kv("uaii-loaders", "GGUF (Q4_0/Q8_0/F16→f32) + Safetensors");
+  print_kv("uaii-tokenizers", "SimpleTokenizer (whitespace; not BPE/SP)");
+  print_kv("uaii-quant", "pack/unpack helpers; session compute remains f32");
+  print_kv("uaii-profiler", "chrome-trace timelines");
+  print_kv("uaii-capi",
+           std::string("shared lib ") + UAII_C_API_VERSION_STRING +
+               " (struct_size required)");
+  print_kv("python SDK", "bindings/python (ctypes; bundle native via UAII_CAPI_PATH)");
   std::cout << '\n';
 
-  std::cout << "Backends (Phase 5)\n";
+  std::cout << "Backends (probed)\n";
   for (const auto& b : backends::list_backends()) {
+    std::unique_ptr<IBackend> be;
+    backends::BackendCreateOptions bo;
+    // Probe real create path; GPU backends still report host_fallback in caps.
+    bo.force_host_fallback = (b.device_type != DeviceType::Cpu);
+    Error cerr = backends::create_backend(b.name, bo, &be);
     std::ostringstream oss;
     oss << to_string(b.device_type)
-        << " available=" << (b.always_available ? "yes" : "no")
+        << " create=" << (cerr.ok() ? "ok" : "fail")
         << " native_compiled=" << (b.native_compiled ? "yes" : "no")
+        << (b.device_type == DeviceType::Cpu ? " host_fallback=n/a"
+                                             : " host_fallback=default")
         << " — " << b.description;
+    if (cerr.ok() && be) {
+      (void)be->initialize();
+      const auto caps = be->capabilities();
+      oss << " | " << caps.details;
+      be->shutdown();
+    }
     print_kv(b.name.c_str(), oss.str());
+  }
+  {
+    const auto ops = plugins::OperatorHostRegistry::instance().names();
+    print_kv("plugin_ops_registered", ops.empty() ? "(none)" : std::to_string(ops.size()));
   }
   std::cout << '\n';
 

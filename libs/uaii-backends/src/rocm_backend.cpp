@@ -33,7 +33,7 @@ Error RocmBackend::initialize() {
       set_native_available(true);
       set_host_fallback(false);
       set_details("ROCm backend (native scaffold / device path)");
-      return Error::ok();
+      return Error::success();
     }
     set_details("ROCm backend (host-fallback; native init failed: " + err.message() +
                 ")");
@@ -42,7 +42,7 @@ Error RocmBackend::initialize() {
   } else {
     set_details("ROCm backend (host-fallback; build with -DUAII_WITH_ROCM=ON for native)");
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error RocmBackend::dispatch(const std::string& op_name,

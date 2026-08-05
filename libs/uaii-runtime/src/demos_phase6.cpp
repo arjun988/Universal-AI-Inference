@@ -59,7 +59,7 @@ Error write_f32_bin(const std::string& path, const std::vector<float>& v) {
   if (!out) return Error::make(ErrorCode::IoError, "write failed " + path);
   out.write(reinterpret_cast<const char*>(v.data()),
             static_cast<std::streamsize>(v.size() * sizeof(float)));
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace
@@ -132,7 +132,7 @@ Error run_optimize_demo(OptimizeDemoReport* report) {
   if (!report->ok) {
     return Error::make(ErrorCode::Internal, report->message);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error run_streaming_demo(StreamingDemoReport* report) {
@@ -204,7 +204,7 @@ Error run_streaming_demo(StreamingDemoReport* report) {
   if (!report->ok) {
     return Error::make(ErrorCode::Internal, report->message);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error run_profile_demo(const std::string& trace_path, ProfileDemoReport* report) {
@@ -234,7 +234,7 @@ Error run_profile_demo(const std::string& trace_path, ProfileDemoReport* report)
   if (!report->ok) {
     return Error::make(ErrorCode::Internal, "no profiler events");
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error run_quant_demo(quant::QuantFormat format, QuantDemoReport* report) {
@@ -281,7 +281,7 @@ Error run_quant_demo(quant::QuantFormat format, QuantDemoReport* report) {
   if (!report->ok) {
     return Error::make(ErrorCode::Internal, report->message);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace runtime

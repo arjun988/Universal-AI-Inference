@@ -34,6 +34,10 @@ struct SessionOptions {
   memory::AllocatorConfig allocator;
   WeightInit weight_init = WeightInit::None;
   std::string weights_dir;
+  /// If false (default), a failed weight_ref load is an error (no silent Ones fill).
+  bool allow_missing_weights = false;
+  /// If set, weight paths must resolve under this directory (path sandbox).
+  std::string weights_sandbox;
   bool validate = true;
   bool allow_unknown_ops = false;
   /// Backend name: cpu, cuda, metal, vulkan, webgpu, rocm.

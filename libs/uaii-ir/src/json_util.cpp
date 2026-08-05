@@ -23,7 +23,7 @@ class Parser {
     if (pos_ != text_.size()) {
       return fail("trailing characters after JSON value");
     }
-    return Error::ok();
+    return Error::success();
   }
 
  private:
@@ -74,19 +74,19 @@ class Parser {
     }
     pos_ += 4;
     *out = Value::null();
-    return Error::ok();
+    return Error::success();
   }
 
   Error parse_bool(Value* out) {
     if (text_.compare(pos_, 4, "true") == 0) {
       pos_ += 4;
       *out = Value::boolean(true);
-      return Error::ok();
+      return Error::success();
     }
     if (text_.compare(pos_, 5, "false") == 0) {
       pos_ += 5;
       *out = Value::boolean(false);
-      return Error::ok();
+      return Error::success();
     }
     return fail("expected boolean");
   }
@@ -137,7 +137,7 @@ class Parser {
     } catch (...) {
       return fail("number parse failed");
     }
-    return Error::ok();
+    return Error::success();
   }
 
   Error parse_string(Value* out) {
@@ -149,7 +149,7 @@ class Parser {
       char c = text_[pos_++];
       if (c == '"') {
         *out = Value::string(std::move(s));
-        return Error::ok();
+        return Error::success();
       }
       if (c == '\\') {
         if (pos_ >= text_.size()) {
@@ -212,7 +212,7 @@ class Parser {
     skip_ws();
     if (consume(']')) {
       *out = Value::array(std::move(arr));
-      return Error::ok();
+      return Error::success();
     }
     while (true) {
       Value item;
@@ -224,7 +224,7 @@ class Parser {
       skip_ws();
       if (consume(']')) {
         *out = Value::array(std::move(arr));
-        return Error::ok();
+        return Error::success();
       }
       if (!consume(',')) {
         return fail("expected ',' or ']' in array");
@@ -240,7 +240,7 @@ class Parser {
     skip_ws();
     if (consume('}')) {
       *out = Value::object(std::move(obj));
-      return Error::ok();
+      return Error::success();
     }
     while (true) {
       Value key_v;
@@ -263,7 +263,7 @@ class Parser {
       skip_ws();
       if (consume('}')) {
         *out = Value::object(std::move(obj));
-        return Error::ok();
+        return Error::success();
       }
       if (!consume(',')) {
         return fail("expected ',' or '}' in object");
@@ -386,7 +386,7 @@ Error require_object(const Value& v, const Object** out, const char* ctx) {
                        std::string(ctx) + ": expected object");
   }
   *out = &v.obj;
-  return Error::ok();
+  return Error::success();
 }
 
 Error require_array(const Value& v, const Array** out, const char* ctx) {
@@ -395,7 +395,7 @@ Error require_array(const Value& v, const Array** out, const char* ctx) {
                        std::string(ctx) + ": expected array");
   }
   *out = &v.arr;
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace json

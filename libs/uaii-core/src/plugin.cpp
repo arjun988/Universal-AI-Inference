@@ -3,6 +3,7 @@
 #include "uaii/core/log.hpp"
 
 #include <filesystem>
+#include <string>
 
 #if defined(_WIN32)
 #  ifndef NOMINMAX
@@ -17,10 +18,23 @@ namespace uaii {
 namespace fs = std::filesystem;
 
 namespace {
+PluginHostOfferFn g_host_offer = nullptr;
+}  // namespace
+
+void set_plugin_host_offer(PluginHostOfferFn fn) { g_host_offer = fn; }
+
+namespace {
 
 void* load_library(const std::string& path) {
 #if defined(_WIN32)
-  return reinterpret_cast<void*>(LoadLibraryA(path.c_str()));
+  // Prefer wide API for Unicode paths.
+  int n = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+  if (n <= 0) {
+    return reinterpret_cast<void*>(LoadLibraryA(path.c_str()));
+  }
+  std::wstring wpath(static_cast<std::size_t>(n), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath.data(), n);
+  return reinterpret_cast<void*>(LoadLibraryW(wpath.c_str()));
 #else
   return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -176,10 +190,20 @@ Error Plugin::load(const std::string& path) {
   descriptor_ = make_descriptor_from_info(path, info);
   descriptor_.loaded = true;
 
+  // Host offer (installed by uaii_kernels) may call optional uaii_plugin_register
+  // and/or bind OPERATOR plugins into the CPU dispatch table.
+  if (g_host_offer != nullptr) {
+    Error herr = g_host_offer(handle, descriptor_);
+    if (!herr.ok()) {
+      unload();
+      return herr;
+    }
+  }
+
   log::info("plugin") << "loaded " << descriptor_.name << " v"
                       << descriptor_.version << " (" << to_string(descriptor_.kind)
                       << ") from " << path;
-  return Error::ok();
+  return Error::success();
 }
 
 void Plugin::unload() noexcept {
@@ -244,7 +268,7 @@ Error PluginRegistry::discover(const std::vector<std::string>& directories) {
   }
 
   log::info("plugin") << "discovered " << discovered_.size() << " plugin candidate(s)";
-  return Error::ok();
+  return Error::success();
 }
 
 Error PluginRegistry::load_all() {
@@ -255,7 +279,7 @@ Error PluginRegistry::load_all() {
       // Continue loading others; doctor reports failures.
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error PluginRegistry::load_path(const std::string& path) {
@@ -265,7 +289,7 @@ Error PluginRegistry::load_path(const std::string& path) {
     return err;
   }
   plugins_.push_back(std::move(plugin));
-  return Error::ok();
+  return Error::success();
 }
 
 void PluginRegistry::clear() noexcept {

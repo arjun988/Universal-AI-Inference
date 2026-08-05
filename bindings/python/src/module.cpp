@@ -98,7 +98,7 @@ PYBIND11_MODULE(_uaii, m) {
            py::arg("path"),
            py::arg("backend") = "cpu",
            py::arg("weights_dir") = "",
-           py::arg("weight_init") = "ones",
+           py::arg("weight_init") = "none",
            py::arg("profile") = false,
            py::arg("trace_path") = "",
            py::arg("fusion") = true)

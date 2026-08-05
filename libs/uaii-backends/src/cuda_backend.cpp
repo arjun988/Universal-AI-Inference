@@ -33,7 +33,7 @@ Error CudaBackend::initialize() {
       set_native_available(true);
       set_host_fallback(false);
       set_details("CUDA backend (native scaffold / device path)");
-      return Error::ok();
+      return Error::success();
     }
     set_details("CUDA backend (host-fallback; native init failed: " + err.message() +
                 ")");
@@ -42,7 +42,7 @@ Error CudaBackend::initialize() {
   } else {
     set_details("CUDA backend (host-fallback; build with -DUAII_WITH_CUDA=ON for native)");
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error CudaBackend::dispatch(const std::string& op_name,

@@ -71,7 +71,7 @@ class MiniJson {
     if (text_.compare(pos_, 4, "null") == 0) {
       pos_ += 4;
       *out = Value{};
-      return Error::ok();
+      return Error::success();
     }
     return fail("bad token");
   }
@@ -85,7 +85,7 @@ class MiniJson {
       if (c == '"') {
         out->kind = Value::String;
         out->str = std::move(s);
-        return Error::ok();
+        return Error::success();
       }
       if (c == '\\' && pos_ < text_.size()) {
         s.push_back(text_[pos_++]);
@@ -105,7 +105,7 @@ class MiniJson {
     }
     out->kind = Value::Number;
     out->number = std::stod(text_.substr(start, pos_ - start));
-    return Error::ok();
+    return Error::success();
   }
 
   Error parse_array(Value* out) {
@@ -115,7 +115,7 @@ class MiniJson {
     skip();
     if (pos_ < text_.size() && text_[pos_] == ']') {
       ++pos_;
-      return Error::ok();
+      return Error::success();
     }
     while (true) {
       Value item;
@@ -125,7 +125,7 @@ class MiniJson {
       skip();
       if (pos_ < text_.size() && text_[pos_] == ']') {
         ++pos_;
-        return Error::ok();
+        return Error::success();
       }
       if (pos_ >= text_.size() || text_[pos_] != ',') return fail("array comma");
       ++pos_;
@@ -139,7 +139,7 @@ class MiniJson {
     skip();
     if (pos_ < text_.size() && text_[pos_] == '}') {
       ++pos_;
-      return Error::ok();
+      return Error::success();
     }
     while (true) {
       Value key;
@@ -156,7 +156,7 @@ class MiniJson {
       skip();
       if (pos_ < text_.size() && text_[pos_] == '}') {
         ++pos_;
-        return Error::ok();
+        return Error::success();
       }
       if (pos_ >= text_.size() || text_[pos_] != ',') return fail("object comma");
       ++pos_;
@@ -253,7 +253,7 @@ Error safetensors_read_header(const std::string& path, SafetensorsFile* out) {
   }
 
   *out = std::move(file);
-  return Error::ok();
+  return Error::success();
 }
 
 Error safetensors_load_tensor_f32(const SafetensorsFile& file,
@@ -323,7 +323,7 @@ Error safetensors_load_tensor_f32(const SafetensorsFile& file,
   if (out_shape) {
     out_shape->dims = info->shape;
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error safetensors_write_f32(
@@ -424,7 +424,17 @@ Error SafetensorsLoader::load(const std::string& path, ir::Graph* out_graph) {
     }
   }
 
-  ir::GraphBuilder b(emb && lm ? "safetensors_tiny_lm" : "safetensors_weights");
+  auto find_st = [&](const std::string& name) -> const SafetensorsTensorInfo* {
+    for (const auto& t : file.tensors) {
+      if (t.name == name) return &t;
+    }
+    return nullptr;
+  };
+  const bool has_blk0 = find_st("blk.0.attn_q.weight") != nullptr ||
+                        find_st("model.layers.0.self_attn.q_proj.weight") != nullptr;
+
+  ir::GraphBuilder b(emb && lm ? (has_blk0 ? "safetensors_transformer" : "safetensors_tiny_lm")
+                               : "safetensors_weights");
   b.set_producer("uaii-safetensors-loader");
   b.set_metadata("source_format", "safetensors");
   b.set_metadata("source_path", path);
@@ -435,6 +445,23 @@ Error SafetensorsLoader::load(const std::string& path, ir::Graph* out_graph) {
   if (emb && lm) {
     const std::int64_t dim = emb->shape.size() > 1 ? emb->shape[1] : 1;
     const std::int64_t vocab = lm->shape.empty() ? emb->shape[0] : lm->shape[0];
+    std::int64_t n_heads = 1;
+    if (auto it = file.metadata.find("num_attention_heads"); it != file.metadata.end()) {
+      try {
+        n_heads = std::stoll(it->second);
+      } catch (...) {
+      }
+    }
+    std::int64_t n_layers = 0;
+    for (std::int64_t i = 0; i < 64; ++i) {
+      if (find_st("blk." + std::to_string(i) + ".attn_q.weight") ||
+          find_st("model.layers." + std::to_string(i) + ".self_attn.q_proj.weight")) {
+        n_layers = i + 1;
+      } else {
+        break;
+      }
+    }
+
     TensorId tokens = b.add_tensor("tokens", DType::F32, Shape{{1, 1}});
     TensorId emb_w =
         b.add_weight(emb->name, DType::F32, Shape{emb->shape}, path + "#" + emb->name);
@@ -442,11 +469,97 @@ Error SafetensorsLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.add_node("embed", "Embedding", "1", {tokens, emb_w}, {hidden});
 
     TensorId features = hidden;
+    auto add_w = [&](const std::string& name) -> TensorId {
+      const auto* ti = find_st(name);
+      if (!ti) return 0;
+      return b.add_weight(name, DType::F32, Shape{ti->shape}, path + "#" + name);
+    };
+
+    for (std::int64_t li = 0; li < n_layers; ++li) {
+      const std::string blk = "blk." + std::to_string(li) + ".";
+      const std::string hf = "model.layers." + std::to_string(li) + ".";
+      TensorId attn_norm = add_w(blk + "attn_norm.weight");
+      if (!attn_norm) attn_norm = add_w(hf + "input_layernorm.weight");
+      TensorId wq = add_w(blk + "attn_q.weight");
+      if (!wq) wq = add_w(hf + "self_attn.q_proj.weight");
+      TensorId wk = add_w(blk + "attn_k.weight");
+      if (!wk) wk = add_w(hf + "self_attn.k_proj.weight");
+      TensorId wv = add_w(blk + "attn_v.weight");
+      if (!wv) wv = add_w(hf + "self_attn.v_proj.weight");
+      TensorId wo = add_w(blk + "attn_output.weight");
+      if (!wo) wo = add_w(hf + "self_attn.o_proj.weight");
+      TensorId ffn_norm = add_w(blk + "ffn_norm.weight");
+      if (!ffn_norm) ffn_norm = add_w(hf + "post_attention_layernorm.weight");
+      TensorId w_gate = add_w(blk + "ffn_gate.weight");
+      if (!w_gate) w_gate = add_w(hf + "mlp.gate_proj.weight");
+      TensorId w_up = add_w(blk + "ffn_up.weight");
+      if (!w_up) w_up = add_w(hf + "mlp.up_proj.weight");
+      TensorId w_down = add_w(blk + "ffn_down.weight");
+      if (!w_down) w_down = add_w(hf + "mlp.down_proj.weight");
+      if (!attn_norm || !wq || !wk || !wv || !wo) break;
+
+      const std::string pfx = "l" + std::to_string(li) + ".";
+      TensorId n1 = b.add_tensor(pfx + "n1", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "rms1", "RMSNorm", "1", {features, attn_norm}, {n1},
+                 {ir::make_float_attr("eps", 1e-5)});
+      TensorId q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, dim}});
+      TensorId k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, dim}});
+      TensorId v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "q_proj", "MatMul", "1", {n1, wq}, {q},
+                 {ir::make_bool_attr("transpose_b", true)});
+      b.add_node(pfx + "k_proj", "MatMul", "1", {n1, wk}, {k},
+                 {ir::make_bool_attr("transpose_b", true)});
+      b.add_node(pfx + "v_proj", "MatMul", "1", {n1, wv}, {v},
+                 {ir::make_bool_attr("transpose_b", true)});
+      TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "attn", "Attention", "1", {q, k, v}, {attn},
+                 {ir::make_int_attr("num_heads", n_heads),
+                  ir::make_bool_attr("causal", true)});
+      TensorId attn_o = b.add_tensor(pfx + "attn_o", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "o_proj", "MatMul", "1", {attn, wo}, {attn_o},
+                 {ir::make_bool_attr("transpose_b", true)});
+      TensorId resid1 = b.add_tensor(pfx + "resid1", DType::F32, Shape{{1, dim}});
+      b.add_node(pfx + "add1", "Add", "1", {features, attn_o}, {resid1});
+      if (w_gate && w_up && w_down) {
+        TensorId mlp_in = resid1;
+        if (ffn_norm) {
+          TensorId n2 = b.add_tensor(pfx + "n2", DType::F32, Shape{{1, dim}});
+          b.add_node(pfx + "rms2", "RMSNorm", "1", {resid1, ffn_norm}, {n2},
+                     {ir::make_float_attr("eps", 1e-5)});
+          mlp_in = n2;
+        }
+        const auto* up_info = find_st(blk + "ffn_up.weight");
+        if (!up_info) up_info = find_st(hf + "mlp.up_proj.weight");
+        const std::int64_t inter =
+            up_info && up_info->shape.size() == 2
+                ? (up_info->shape[0] == dim ? up_info->shape[1] : up_info->shape[0])
+                : dim * 4;
+        TensorId gate = b.add_tensor(pfx + "gate", DType::F32, Shape{{1, inter}});
+        TensorId up = b.add_tensor(pfx + "up", DType::F32, Shape{{1, inter}});
+        b.add_node(pfx + "ffn_gate", "MatMul", "1", {mlp_in, w_gate}, {gate},
+                   {ir::make_bool_attr("transpose_b", true)});
+        b.add_node(pfx + "ffn_up", "MatMul", "1", {mlp_in, w_up}, {up},
+                   {ir::make_bool_attr("transpose_b", true)});
+        TensorId gate_act = b.add_tensor(pfx + "gate_act", DType::F32, Shape{{1, inter}});
+        b.add_node(pfx + "silu", "Silu", "1", {gate}, {gate_act});
+        TensorId ff_hid = b.add_tensor(pfx + "ff_hid", DType::F32, Shape{{1, inter}});
+        b.add_node(pfx + "ff_mul", "Mul", "1", {gate_act, up}, {ff_hid});
+        TensorId ff_out = b.add_tensor(pfx + "ff_out", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "ffn_down", "MatMul", "1", {ff_hid, w_down}, {ff_out},
+                   {ir::make_bool_attr("transpose_b", true)});
+        TensorId resid2 = b.add_tensor(pfx + "resid2", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "add2", "Add", "1", {resid1, ff_out}, {resid2});
+        features = resid2;
+      } else {
+        features = resid1;
+      }
+    }
+
     if (norm) {
       TensorId nw =
           b.add_weight(norm->name, DType::F32, Shape{norm->shape}, path + "#" + norm->name);
       TensorId nout = b.add_tensor("normed", DType::F32, Shape{{1, dim}});
-      b.add_node("rms", "RMSNorm", "1", {hidden, nw}, {nout},
+      b.add_node("rms_out", "RMSNorm", "1", {features, nw}, {nout},
                  {ir::make_float_attr("eps", 1e-5)});
       features = nout;
     }
@@ -460,7 +573,8 @@ Error SafetensorsLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.add_node("softmax", "Softmax", "1", {logits}, {probs},
                {ir::make_int_attr("axis", -1)});
     b.set_inputs({tokens}).set_outputs({probs});
-    b.set_metadata("architecture", "tiny_lm");
+    b.set_metadata("architecture", n_layers > 0 ? "transformer" : "tiny_lm");
+    b.set_metadata("n_layers", std::to_string(n_layers));
   } else {
     TensorId x = b.add_tensor("x", DType::F32, Shape{{1, 1}});
     TensorId y = b.add_tensor("y", DType::F32, Shape{{1, 1}});
@@ -475,7 +589,7 @@ Error SafetensorsLoader::load(const std::string& path, ir::Graph* out_graph) {
 
   *out_graph = b.build();
   log::info("safetensors") << "loaded " << file.tensors.size() << " tensors from " << path;
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace loaders

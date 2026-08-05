@@ -38,6 +38,7 @@ void OperatorRegistry::register_builtin_schemas() {
 
   // Activations / norms
   (void)register_schema(schema("Relu", 1, 1, 1, 1, {}, "ReLU"));
+  (void)register_schema(schema("Neg", 1, 1, 1, 1, {}, "Negate (plugin or builtin)"));
   (void)register_schema(schema("Gelu", 1, 1, 1, 1, {"approximate"}, "GELU"));
   (void)register_schema(schema("Silu", 1, 1, 1, 1, {}, "SiLU / Swish"));
   (void)register_schema(schema("Softmax", 1, 1, 1, 1, {"axis"}, "Softmax"));

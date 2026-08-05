@@ -61,13 +61,16 @@ extern "C" {
 void uaii_session_options_init(uaii_session_options* opts) {
   if (opts == nullptr) return;
   std::memset(opts, 0, sizeof(*opts));
+  opts->struct_size = static_cast<uint32_t>(sizeof(uaii_session_options));
   opts->backend = "cpu";
-  opts->weight_init = UAII_WEIGHT_INIT_ONES;
+  opts->weight_init = UAII_WEIGHT_INIT_NONE;  // fail closed
   opts->enable_fusion = 1;
   opts->enable_memory_reuse = 1;
   opts->enable_profiler = 0;
   opts->budget_bytes = 0;
   opts->enable_streaming = 0;
+  opts->allow_missing_weights = 0;
+  opts->weights_sandbox = nullptr;
 }
 
 uaii_status uaii_get_version(int* major, int* minor, int* patch) {
@@ -122,7 +125,14 @@ uaii_status uaii_session_create(const char* path,
 
   uaii_session_options local;
   uaii_session_options_init(&local);
-  if (opts != nullptr) local = *opts;
+  if (opts != nullptr) {
+    if (opts->struct_size == 0 || opts->struct_size > sizeof(uaii_session_options)) {
+      set_error_msg("uaii_session_options.struct_size invalid");
+      return UAII_ERR_ABI;
+    }
+    std::memcpy(&local, opts, static_cast<std::size_t>(opts->struct_size));
+    local.struct_size = static_cast<uint32_t>(sizeof(uaii_session_options));
+  }
 
   uaii::ir::Graph graph;
   uaii::Error err;
@@ -150,6 +160,8 @@ uaii_status uaii_session_create(const char* path,
   if (local.profile_trace_path) sopts.profile_trace_path = local.profile_trace_path;
   sopts.allocator.budget_bytes = local.budget_bytes;
   sopts.enable_streaming = local.enable_streaming != 0;
+  sopts.allow_missing_weights = local.allow_missing_weights != 0;
+  if (local.weights_sandbox) sopts.weights_sandbox = local.weights_sandbox;
 
   err = handle->session.create(std::move(graph), sopts);
   if (!err.ok()) return from_error(err);

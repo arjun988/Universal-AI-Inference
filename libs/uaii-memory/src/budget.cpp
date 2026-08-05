@@ -15,7 +15,7 @@ Error MemoryBudget::reserve(std::size_t bytes) {
   if (used_bytes_ > peak_bytes_) {
     peak_bytes_ = used_bytes_;
   }
-  return Error::ok();
+  return Error::success();
 }
 
 void MemoryBudget::release(std::size_t bytes) noexcept {

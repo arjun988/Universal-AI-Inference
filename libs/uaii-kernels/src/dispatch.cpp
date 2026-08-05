@@ -1,4 +1,5 @@
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/plugins/operator_host.hpp"
 
 namespace uaii {
 namespace kernels {
@@ -48,12 +49,16 @@ std::vector<std::int64_t> attr_int_array(const std::vector<ir::Attribute>& attrs
 }  // namespace
 
 bool supports_cpu_op(const std::string& op_name, const std::string& /*op_version*/) noexcept {
+  if (plugins::OperatorHostRegistry::instance().has(op_name)) {
+    return true;
+  }
   return op_name == "MatMul" || op_name == "MatMulRelu" || op_name == "Softmax" ||
          op_name == "LayerNorm" || op_name == "RMSNorm" || op_name == "Relu" ||
          op_name == "Gelu" || op_name == "Silu" || op_name == "Add" || op_name == "Mul" ||
-         op_name == "Identity" || op_name == "Embedding" || op_name == "RoPE" ||
-         op_name == "Attention" || op_name == "MoERouter" || op_name == "MoEExperts" ||
-         op_name == "Reshape" || op_name == "Transpose" || op_name == "MLP";
+         op_name == "Neg" || op_name == "Identity" || op_name == "Embedding" ||
+         op_name == "RoPE" || op_name == "Attention" || op_name == "MoERouter" ||
+         op_name == "MoEExperts" || op_name == "Reshape" || op_name == "Transpose" ||
+         op_name == "MLP";
 }
 
 Error dispatch_cpu(const std::string& op_name,
@@ -63,6 +68,12 @@ Error dispatch_cpu(const std::string& op_name,
                    const std::vector<ir::Attribute>& attrs) {
   if (outputs == nullptr || outputs->empty()) {
     return Error::make(ErrorCode::InvalidArgument, "dispatch outputs empty");
+  }
+
+  // Plugin-registered operators take precedence over builtins.
+  if (plugins::OperatorHostRegistry::instance().has(op_name)) {
+    return plugins::OperatorHostRegistry::instance().dispatch(op_name, inputs, outputs,
+                                                              attrs);
   }
 
   if (op_name == "MatMul" || op_name == "MatMulRelu") {
@@ -76,7 +87,7 @@ Error dispatch_cpu(const std::string& op_name,
     if (op_name == "MatMulRelu") {
       return relu_f32((*outputs)[0], &(*outputs)[0]);
     }
-    return Error::ok();
+    return Error::success();
   }
   if (op_name == "Softmax") {
     if (inputs.size() != 1 || outputs->size() != 1) {
@@ -106,6 +117,21 @@ Error dispatch_cpu(const std::string& op_name,
       return Error::make(ErrorCode::InvalidArgument, "Relu arity");
     }
     return relu_f32(inputs[0], &(*outputs)[0]);
+  }
+  if (op_name == "Neg") {
+    if (inputs.size() != 1 || outputs->size() != 1) {
+      return Error::make(ErrorCode::InvalidArgument, "Neg arity");
+    }
+    const auto& in = inputs[0];
+    auto& out = (*outputs)[0];
+    if (in.dtype != DType::F32 || out.dtype != DType::F32 || in.data == nullptr ||
+        out.data == nullptr || in.numel() != out.numel()) {
+      return Error::make(ErrorCode::InvalidArgument, "Neg f32");
+    }
+    const float* x = in.f32();
+    float* y = out.f32();
+    for (std::size_t i = 0; i < in.numel(); ++i) y[i] = -x[i];
+    return Error::success();
   }
   if (op_name == "Gelu") {
     if (inputs.size() != 1 || outputs->size() != 1) {

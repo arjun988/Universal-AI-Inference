@@ -72,7 +72,7 @@ Error run_once(const ir::Graph& graph,
     }
     (*outs)[name] = std::move(values);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace
@@ -160,7 +160,7 @@ Error run_backend_parity(const ir::Graph& graph,
 
   log::info("parity") << report->backend_a << " vs " << report->backend_b << ": "
                       << report->message;
-  return Error::ok();
+  return Error::success();
 }
 
 Error run_parity_demo(backends::ParityReport* report) {
@@ -181,7 +181,7 @@ Error run_parity_demo(backends::ParityReport* report) {
   if (!out->ok) {
     return Error::make(ErrorCode::Internal, out->message);
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace runtime

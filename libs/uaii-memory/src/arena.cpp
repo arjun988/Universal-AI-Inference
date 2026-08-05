@@ -31,7 +31,7 @@ Error ArenaAllocator::new_chunk(std::size_t min_bytes) {
   chunk.capacity = cap;
   chunk.offset = 0;
   chunks_.push_back(std::move(chunk));
-  return Error::ok();
+  return Error::success();
 }
 
 Error ArenaAllocator::allocate(std::size_t bytes, std::size_t alignment, void** out) {
@@ -57,7 +57,7 @@ Error ArenaAllocator::allocate(std::size_t bytes, std::size_t alignment, void** 
       chunk.offset = aligned + bytes;
       allocated_ += bytes;
       *out = ptr;
-      return Error::ok();
+      return Error::success();
     }
     if (pass == 0) {
       Error err = new_chunk(bytes + alignment);

@@ -6,7 +6,9 @@ any model → **UAII IR** → any hardware.
 It is designed as an *execution operating system* for inference—not a single-model
 engine. Models, operators, backends, schedulers, and storage providers are plugins.
 
-> Status: **Phase 7 — Ecosystem** (C API, Python SDK, Next.js docs site, examples)
+> Status: **Product hardening in progress** — full CPU IR→session→CLI/SDK path works;
+> GPU backends are host-fallback scaffolds; GGUF quantized load covers Q4_0/Q8_0→f32;
+> treat Phases 5–7 as **capability milestones**, not “production GPU/LLM complete.”
 
 ## Docs
 
@@ -283,28 +285,26 @@ Host rejects plugins whose `abi_version != UAII_PLUGIN_ABI_VERSION`.
 - [x] MoE router + expert dispatch (+ smoke demo)
 - [x] GGUF/Safetensors generate-style demos
 
-**Phase 5**
+**Phase 5** (scaffold — CPU kernels under GPU names until real device paths land)
 
-- [x] CUDA / Metal / Vulkan / WebGPU / ROCm backends (host-fallback)
-- [x] Backend factory + session `--backend` selection
-- [x] Numerical parity policy + `uaii run --demo parity` (cpu vs cuda)
-- [x] Optional `UAII_WITH_*` native scaffolds
-- [x] `uaii doctor` reports backend availability
+- [x] Backend factory + host-fallback CUDA/Metal/Vulkan/WebGPU/ROCm modules
+- [x] Parity policy API (honest host-fallback comparisons)
+- [ ] Real device kernels (CUDA/Metal/…) — not yet
 
 **Phase 6**
 
-- [x] Graph fusion (Identity, MatMulRelu) + plan cache
-- [x] Memory planner (lifetime reuse) + storage planner (tiering/streaming)
-- [x] Quantization pipeline (F16/BF16/INT8/INT4/NF4/MXFP4 + `IQuantizer`)
-- [x] Streaming weights under RAM budget (controlled fixture)
-- [x] Profiler chrome-trace + `uaii profile` / `uaii benchmark`
+- [x] Fusion, memory reuse, storage plan, streaming fixture, profiler
+- [x] Threaded MatMul + shape/nbytes guards
+- [x] GGUF Q4_0 / Q8_0 dequant-to-f32 load
+- [ ] Competitive SIMD kernels / async IO-compute overlap — partial
 
 **Phase 7**
 
-- [x] Stable C API 1.0.0 + `uaii_capi` shared library + semver policy
-- [x] Python SDK (`Session.from_path` / run / profile) via ctypes + optional pybind11
-- [x] Next.js documentation site (`website/`, static export, no backend)
-- [x] Examples + benchmarks harness + marketplace design notes
+- [x] C API **0.2.0** (`struct_size`, fail-closed weights) + `uaii_capi`
+- [x] Python SDK load/run/profile (ctypes; optional pybind11)
+- [x] Next.js static docs site + CI website build
+- [x] `find_package(uaii)` install export
+- [ ] Pip wheels bundling native libs by default — use `bundle_native.py` or `UAII_CAPI_PATH`
 
 ### Phase 6 optimization (run after you build)
 
@@ -321,12 +321,13 @@ uaii cache status
 ### Phase 7 ecosystem (run after you build)
 
 ```bash
-# Python: load → run → profile
+# Bundle native C API into the Python package, then install
+python bindings/python/scripts/bundle_native.py --build-dir build
 pip install -e bindings/python
 python examples/python/load_run_profile.py
 
 # Docs site (static; no backend)
-cd website && npm install && npm run build
+cd website && npm ci && npm run build
 ```
 
 See [docs/roadmap/PHASE7.md](docs/roadmap/PHASE7.md), [docs/c_api_stability.md](docs/c_api_stability.md),

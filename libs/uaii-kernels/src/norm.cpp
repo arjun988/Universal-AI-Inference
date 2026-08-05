@@ -1,4 +1,5 @@
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/kernels/view_util.hpp"
 
 #include <cmath>
 
@@ -21,7 +22,9 @@ Error check_last_axis_norm(const TensorView& in, const TensorView* out) {
       return Error::make(ErrorCode::InvalidArgument, "norm shape mismatch");
     }
   }
-  return Error::ok();
+  Error err = check_view_bytes(in, "norm_in");
+  if (!err.ok()) return err;
+  return check_view_bytes(*out, "norm_out");
 }
 
 }  // namespace
@@ -80,7 +83,7 @@ Error layernorm_f32(const TensorView& in,
       out_row[i] = v;
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error rmsnorm_f32(const TensorView& in,
@@ -123,7 +126,7 @@ Error rmsnorm_f32(const TensorView& in,
       out_row[i] = v;
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace kernels

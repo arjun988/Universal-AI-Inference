@@ -140,7 +140,7 @@ Error apply_fusion_passes(ir::Graph* graph, FusionStats* stats) {
   }
 
   s->nodes_after = static_cast<int>(graph->nodes.size());
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace planner

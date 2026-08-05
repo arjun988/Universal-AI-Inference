@@ -86,7 +86,7 @@ Error run_toy_mlp_demo(std::vector<float>* out_values, bool* matched_expected) {
   }
   log::info("demo") << "toy_mlp OK y_prob=[" << out[0] << ", " << out[1] << ", "
                     << out[2] << ", " << out[3] << "]";
-  return Error::ok();
+  return Error::success();
 }
 
 Error run_tiny_block_demo(std::vector<float>* out_values) {
@@ -156,7 +156,7 @@ Error run_tiny_block_demo(std::vector<float>* out_values) {
   }
   log::info("demo") << "tiny_block OK y=[" << out[0] << ", " << out[1] << ", "
                     << out[2] << ", " << out[3] << "]";
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace runtime

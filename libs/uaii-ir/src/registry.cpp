@@ -12,7 +12,7 @@ Error OperatorRegistry::register_schema(OpSchema schema) {
   }
   const std::string key = op_key(schema.name, schema.version);
   schemas_[key] = std::move(schema);
-  return Error::ok();
+  return Error::success();
 }
 
 const OpSchema* OperatorRegistry::find_schema(const std::string& name,
@@ -40,7 +40,7 @@ Error OperatorRegistry::register_operator(std::unique_ptr<IOperator> op) {
   const auto sig = op->signature();
   const std::string key = op_key(sig.name, sig.version);
   operators_[key] = std::move(op);
-  return Error::ok();
+  return Error::success();
 }
 
 IOperator* OperatorRegistry::find(const std::string& name,

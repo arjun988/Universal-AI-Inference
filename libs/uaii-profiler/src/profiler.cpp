@@ -113,7 +113,7 @@ Error write_chrome_trace(const Profiler& profiler, const std::string& path) {
         << ",\"pid\":1,\"tid\":1,\"args\":{\"detail\":\"" << esc(e.detail) << "\"}}";
   }
   out << "\n],\"displayTimeUnit\":\"us\"}\n";
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace profiler

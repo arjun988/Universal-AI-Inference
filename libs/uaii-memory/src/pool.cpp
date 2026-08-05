@@ -51,7 +51,7 @@ Error TensorPool::allocate(std::size_t bytes, void** out) {
   live_[ptr] = rounded;
   live_bytes_ += rounded;
   *out = ptr;
-  return Error::ok();
+  return Error::success();
 }
 
 void TensorPool::deallocate(void* ptr, std::size_t /*bytes*/) noexcept {

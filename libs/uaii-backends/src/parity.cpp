@@ -28,7 +28,7 @@ Error compare_f32_buffers(const float* a,
     if (policy.require_finite && (!std::isfinite(x) || !std::isfinite(y))) {
       out->ok = false;
       out->max_abs_diff = std::numeric_limits<float>::infinity();
-      return Error::ok();
+      return Error::success();
     }
     const float abs_diff = std::fabs(x - y);
     const float denom = std::fmax(std::fabs(x), std::fabs(y));
@@ -44,7 +44,7 @@ Error compare_f32_buffers(const float* a,
       out->ok = false;
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace backends

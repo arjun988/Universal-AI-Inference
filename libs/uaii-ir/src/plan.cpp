@@ -40,7 +40,7 @@ Error build_execution_plan(const Graph& graph, ExecutionPlan* out) {
   }
 
   if (graph.nodes.empty()) {
-    return Error::ok();
+    return Error::success();
   }
 
   std::unordered_map<TensorId, NodeId> producer;
@@ -115,7 +115,7 @@ Error build_execution_plan(const Graph& graph, ExecutionPlan* out) {
     out->ops.push_back(std::move(op));
   }
 
-  return Error::ok();
+  return Error::success();
 }
 
 std::string plan_to_text(const ExecutionPlan& plan) {

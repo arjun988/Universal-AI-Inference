@@ -26,7 +26,7 @@ Error scaffold_dispatch(const std::string& op_name,
 
 #ifdef UAII_WITH_CUDA
 bool cuda_compiled() noexcept { return true; }
-Error cuda_init() { return Error::ok(); }
+Error cuda_init() { return Error::success(); }
 void cuda_shutdown() noexcept {}
 Error cuda_dispatch(const std::string& op_name, const std::string& op_version,
                     const std::vector<kernels::TensorView>& inputs,
@@ -38,7 +38,7 @@ Error cuda_dispatch(const std::string& op_name, const std::string& op_version,
 
 #ifdef UAII_WITH_METAL
 bool metal_compiled() noexcept { return true; }
-Error metal_init() { return Error::ok(); }
+Error metal_init() { return Error::success(); }
 void metal_shutdown() noexcept {}
 Error metal_dispatch(const std::string& op_name, const std::string& op_version,
                      const std::vector<kernels::TensorView>& inputs,
@@ -50,7 +50,7 @@ Error metal_dispatch(const std::string& op_name, const std::string& op_version,
 
 #ifdef UAII_WITH_VULKAN
 bool vulkan_compiled() noexcept { return true; }
-Error vulkan_init() { return Error::ok(); }
+Error vulkan_init() { return Error::success(); }
 void vulkan_shutdown() noexcept {}
 Error vulkan_dispatch(const std::string& op_name, const std::string& op_version,
                       const std::vector<kernels::TensorView>& inputs,
@@ -62,7 +62,7 @@ Error vulkan_dispatch(const std::string& op_name, const std::string& op_version,
 
 #ifdef UAII_WITH_WEBGPU
 bool webgpu_compiled() noexcept { return true; }
-Error webgpu_init() { return Error::ok(); }
+Error webgpu_init() { return Error::success(); }
 void webgpu_shutdown() noexcept {}
 Error webgpu_dispatch(const std::string& op_name, const std::string& op_version,
                       const std::vector<kernels::TensorView>& inputs,
@@ -74,7 +74,7 @@ Error webgpu_dispatch(const std::string& op_name, const std::string& op_version,
 
 #ifdef UAII_WITH_ROCM
 bool rocm_compiled() noexcept { return true; }
-Error rocm_init() { return Error::ok(); }
+Error rocm_init() { return Error::success(); }
 void rocm_shutdown() noexcept {}
 Error rocm_dispatch(const std::string& op_name, const std::string& op_version,
                     const std::vector<kernels::TensorView>& inputs,

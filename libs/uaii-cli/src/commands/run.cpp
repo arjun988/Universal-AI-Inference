@@ -71,7 +71,7 @@ Error parse_f32_list(const std::string& text, std::vector<float>* out) {
       return Error::make(ErrorCode::InvalidArgument, "bad float list: " + text);
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 runtime::WeightInit parse_weight_init(const std::string& s) {

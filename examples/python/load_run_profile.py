@@ -24,7 +24,7 @@ def main() -> int:
     session = uaii.Session.from_path(
         str(ir),
         backend="cpu",
-        weight_init="ones",
+        weight_init="ones",  # explicit synthetic weights for demo IR refs
         profile=True,
         trace_path=str(trace),
         fusion=True,

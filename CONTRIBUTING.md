@@ -29,10 +29,14 @@ Recommended before opening a PR:
 |---|---|
 | `include/uaii/` | Public headers / interfaces |
 | `libs/uaii-core/` | Errors, logging, config, plugins |
-| `libs/uaii-*/` | Modular libraries (many Phase 1 stubs) |
+| `libs/uaii-*/` | Modular libraries (core, ir, runtime, backends, capi, …) |
+| `bindings/python/` | Python SDK |
+| `website/` | Next.js static docs |
 | `plugins/` | Example / reference plugins |
 | `docs/` | Vision, plan, architecture, features |
-| `tests/` | Unit / smoke tests |
+| `tests/` | Smoke + runtime integration tests |
+
+Be honest in docs: host-fallback GPU backends and demo loaders are scaffolds until real device/model paths land.
 
 ## Coding standards
 

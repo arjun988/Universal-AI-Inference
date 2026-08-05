@@ -1,4 +1,5 @@
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/kernels/view_util.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -13,6 +14,12 @@ Error softmax_f32(const TensorView& in, TensorView* out, int axis) {
   }
   if (in.dtype != DType::F32 || out->dtype != DType::F32) {
     return Error::make(ErrorCode::InvalidArgument, "softmax requires f32");
+  }
+  {
+    Error err = check_view_bytes(in, "softmax_in");
+    if (!err.ok()) return err;
+    err = check_view_bytes(*out, "softmax_out");
+    if (!err.ok()) return err;
   }
   if (in.rank == 0 || in.rank != out->rank) {
     return Error::make(ErrorCode::InvalidArgument, "softmax rank mismatch");
@@ -66,7 +73,7 @@ Error softmax_f32(const TensorView& in, TensorView* out, int axis) {
       }
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace kernels

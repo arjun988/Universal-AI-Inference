@@ -93,19 +93,19 @@ Error pack_f32(const float* src,
     case QuantFormat::F32: {
       packed->resize(n * 4);
       std::memcpy(packed->data(), src, n * 4);
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::F16: {
       packed->resize(n * 2);
       auto* dst = reinterpret_cast<std::uint16_t*>(packed->data());
       for (std::size_t i = 0; i < n; ++i) dst[i] = f32_to_f16_bits(src[i]);
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::BF16: {
       packed->resize(n * 2);
       auto* dst = reinterpret_cast<std::uint16_t*>(packed->data());
       for (std::size_t i = 0; i < n; ++i) dst[i] = f32_to_bf16_bits(src[i]);
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::INT8: {
       float scale = params.scale;
@@ -121,7 +121,7 @@ Error pack_f32(const float* src,
         q = std::max(-128.f, std::min(127.f, std::nearbyintf(q)));
         (*packed)[i] = static_cast<std::uint8_t>(static_cast<std::int8_t>(q));
       }
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::INT4: {
       float scale = params.scale;
@@ -139,7 +139,7 @@ Error pack_f32(const float* src,
         if ((i & 1u) == 0) (*packed)[i / 2] = nibble;
         else (*packed)[i / 2] |= static_cast<std::uint8_t>(nibble << 4);
       }
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::NF4:
     case QuantFormat::MXFP4: {
@@ -170,7 +170,7 @@ Error pack_f32(const float* src,
         if ((i & 1u) == 0) (*packed)[i / 2] = nibble;
         else (*packed)[i / 2] |= static_cast<std::uint8_t>(nibble << 4);
       }
-      return Error::ok();
+      return Error::success();
     }
     default:
       return Error::make(ErrorCode::NotImplemented, "unsupported quant format");
@@ -193,16 +193,16 @@ Error unpack_to_f32(const std::uint8_t* packed,
   switch (format) {
     case QuantFormat::F32:
       std::memcpy(dst, packed, n * 4);
-      return Error::ok();
+      return Error::success();
     case QuantFormat::F16: {
       const auto* src = reinterpret_cast<const std::uint16_t*>(packed);
       for (std::size_t i = 0; i < n; ++i) dst[i] = f16_bits_to_f32(src[i]);
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::BF16: {
       const auto* src = reinterpret_cast<const std::uint16_t*>(packed);
       for (std::size_t i = 0; i < n; ++i) dst[i] = bf16_bits_to_f32(src[i]);
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::INT8: {
       const float scale = (scales && n_scales > 0) ? scales[0] : (params.scale != 0.f ? params.scale : 1.f);
@@ -210,7 +210,7 @@ Error unpack_to_f32(const std::uint8_t* packed,
         const auto q = static_cast<std::int8_t>(packed[i]);
         dst[i] = (static_cast<float>(q) - params.zero_point) * scale;
       }
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::INT4: {
       const float scale = (scales && n_scales > 0) ? scales[0] : (params.scale != 0.f ? params.scale : 1.f);
@@ -221,7 +221,7 @@ Error unpack_to_f32(const std::uint8_t* packed,
         if (v >= 8) v -= 16;
         dst[i] = static_cast<float>(v) * scale;
       }
-      return Error::ok();
+      return Error::success();
     }
     case QuantFormat::NF4:
     case QuantFormat::MXFP4: {
@@ -235,7 +235,7 @@ Error unpack_to_f32(const std::uint8_t* packed,
                 : 1.f;
         dst[i] = kNf4[nibble & 0xf] * scale;
       }
-      return Error::ok();
+      return Error::success();
     }
     default:
       return Error::make(ErrorCode::NotImplemented, "unsupported quant format");

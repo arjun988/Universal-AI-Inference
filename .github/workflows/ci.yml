@@ -31,7 +31,7 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Doctor
+      - name: CLI demos
         shell: bash
         run: |
           set -e
@@ -56,3 +56,28 @@ jobs:
           echo "Using $BIN"
           "$BIN" version
           "$BIN" doctor --load-plugins
+          "$BIN" validate examples/ir/toy_mlp.uaii.json
+          "$BIN" run --demo toy_mlp
+          "$BIN" run --demo optimize || true
+          "$BIN" run --demo parity || true
+
+  docs-site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install & build static site
+        working-directory: website
+        run: |
+          npm ci
+          npm run build
+
+  dependabot:
+    # Placeholder job name kept for visibility; Dependabot is configured via .github/dependabot.yml
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Dependabot config present"

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "uaii/c_api/plugin_abi.h"
+#include "uaii/c_api/plugin_host.h"
 #include "uaii/core/error.hpp"
 #include "uaii/export.hpp"
 
@@ -22,6 +23,11 @@ struct PluginDescriptor {
   std::string description;
   bool loaded = false;
 };
+
+/// Optional hook invoked after plugin init so OPERATOR/LOADER plugins can
+/// register into host tables without linking uaii_core → uaii_kernels.
+using PluginHostOfferFn = Error (*)(void* library_handle, const PluginDescriptor& desc);
+UAII_API void set_plugin_host_offer(PluginHostOfferFn fn);
 
 /// Owns a loaded dynamic library and its lifecycle hooks.
 class UAII_API Plugin {

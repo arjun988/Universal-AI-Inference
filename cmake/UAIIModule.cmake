@@ -22,6 +22,7 @@ function(uaii_add_module short_name)
   endif()
 
   install(TARGETS ${target_name}
+    EXPORT uaiiTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

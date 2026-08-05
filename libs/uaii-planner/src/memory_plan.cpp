@@ -128,7 +128,7 @@ Error build_memory_reuse_plan(const ir::Graph& graph,
       << "B weights=" << out->weight_bytes << "B slots=" << out->slots.size()
       << "/" << lives.size();
   out->summary = oss.str();
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace planner

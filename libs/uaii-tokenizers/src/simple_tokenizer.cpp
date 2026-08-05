@@ -28,7 +28,7 @@ Error SimpleTokenizer::load_vocab_file(const std::string& path) {
   unk_id_ = token_to_id_.count("<unk>") ? token_to_id_["<unk>"] : 0;
   bos_id_ = token_to_id_.count("<bos>") ? token_to_id_["<bos>"] : unk_id_;
   eos_id_ = token_to_id_.count("<eos>") ? token_to_id_["<eos>"] : unk_id_;
-  return Error::ok();
+  return Error::success();
 }
 
 void SimpleTokenizer::set_vocab(std::unordered_map<std::string, std::int64_t> token_to_id) {
@@ -66,7 +66,7 @@ SimpleTokenizer SimpleTokenizer::demo_vocab() {
 }
 
 Error SimpleTokenizer::encode(const std::string& text,
-                              std::vector<std::int64_t>* out_tokens) {
+                              std::vector<std::int64_t>* out_tokens) const {
   if (out_tokens == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "tokens out null");
   }
@@ -90,11 +90,11 @@ Error SimpleTokenizer::encode(const std::string& text,
   }
   flush();
   out_tokens->push_back(eos_id_);
-  return Error::ok();
+  return Error::success();
 }
 
 Error SimpleTokenizer::decode(const std::vector<std::int64_t>& tokens,
-                              std::string* out_text) {
+                              std::string* out_text) const {
   if (out_text == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "text out null");
   }
@@ -111,7 +111,7 @@ Error SimpleTokenizer::decode(const std::vector<std::int64_t>& tokens,
     oss << piece;
   }
   *out_text = oss.str();
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace tokenizers

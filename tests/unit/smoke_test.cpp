@@ -21,7 +21,7 @@ void expect(bool cond, const char* msg) {
 
 int main() {
   expect(uaii::version().major == 0, "version major");
-  expect(uaii::Error::ok().ok(), "Error::ok");
+  expect(uaii::Error::success().ok(), "Error::ok");
   expect(!uaii::Error::make(uaii::ErrorCode::Internal, "x").ok(), "Error failure");
 
   uaii::Config cfg;

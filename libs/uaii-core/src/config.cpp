@@ -130,7 +130,7 @@ Error Config::parse(const std::string& text, const std::string& source_name) {
     entries_[full_key] = std::move(value);
   }
 
-  return Error::ok();
+  return Error::success();
 }
 
 void Config::apply_env_overlay(const std::string& prefix) {
@@ -263,7 +263,7 @@ Error load_default_config(Config* out) {
     Error err = out->load_file(path);
     if (err.ok()) {
       out->apply_env_overlay();
-      return Error::ok();
+      return Error::success();
     }
     if (err.code() != ErrorCode::NotFound) {
       return err;
@@ -274,7 +274,7 @@ Error load_default_config(Config* out) {
   // No file is acceptable; env-only config still applies.
   out->apply_env_overlay();
   (void)last;
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace uaii

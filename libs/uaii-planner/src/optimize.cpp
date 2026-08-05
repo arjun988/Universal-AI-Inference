@@ -57,7 +57,7 @@ Error optimize_graph(ir::Graph graph,
       << "; " << out->memory.summary << "; " << out->storage.summary
       << "; cache=" << (out->cache_hit ? "hit" : "miss");
   out->summary = oss.str();
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace planner

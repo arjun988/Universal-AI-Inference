@@ -2,7 +2,7 @@
 
 **Surface:** [`include/uaii/c_api/uaii.h`](../include/uaii/c_api/uaii.h)  
 **API version macros:** [`include/uaii/c_api/version.h`](../include/uaii/c_api/version.h)  
-**Current C API:** `UAII_C_API_VERSION` = **1.0.0**
+**Current C API:** `UAII_C_API_VERSION` = **0.2.0** (pre-1.0; `struct_size` required)
 
 ## Semantic versioning
 
@@ -19,7 +19,8 @@ Package version (`uaii_get_version` / CMake `PROJECT_VERSION`) may advance indep
 1. Opaque handles (`uaii_session*`) — never dereference fields from client code.
 2. All functions return `uaii_status`; details via `uaii_last_error()`.
 3. String arguments are UTF-8 paths / names; ownership stays with the caller.
-4. `uaii_session_options` may grow at the end in minor releases; always call `uaii_session_options_init` before setting fields.
+4. `uaii_session_options` may grow at the end in minor releases; always call `uaii_session_options_init` and set/keep `struct_size = sizeof(uaii_session_options)`.
+5. Defaults are **fail-closed**: `weight_init = NONE` (no silent Ones fill).
 5. Plugin ABI (`UAII_PLUGIN_ABI_VERSION`) is **separate** from the C API version.
 
 ## Shared library

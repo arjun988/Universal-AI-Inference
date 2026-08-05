@@ -121,7 +121,7 @@ Error run_loaded_generate(ir::Graph graph,
   if (!good) {
     return Error::make(ErrorCode::Internal, "generate demo failed probability check");
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace
@@ -207,7 +207,7 @@ Error run_moe_smoke_demo(bool* ok) {
   if (!good) {
     return Error::make(ErrorCode::Internal, "moe smoke failed");
   }
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace runtime

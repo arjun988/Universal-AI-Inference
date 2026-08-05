@@ -22,7 +22,7 @@ Let third parties publish loaders, operators, backends, quantizers, and profiler
   "kind": "backend",
   "version": "1.2.0",
   "uaii_plugin_abi": 1,
-  "uaii_c_api_min": "1.0.0",
+  "uaii_c_api_min": "0.2.0",
   "license": "Apache-2.0",
   "artifact": {
     "url": "https://example.com/acme-cuda-flash-1.2.0.zip",

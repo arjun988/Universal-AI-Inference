@@ -11,26 +11,33 @@ cmake -S ../.. -B ../../build -DUAII_BUILD_TESTS=ON
 cmake --build ../../build --config Release --parallel
 ```
 
-2. Optional native extension (pybind11):
+2. Bundle the native library into the package (recommended for `pip install`):
+
+```bash
+python scripts/bundle_native.py --build-dir ../../build
+```
+
+3. Optional native extension (pybind11):
 
 ```bash
 cmake -S ../.. -B ../../build -DUAII_BUILD_PYTHON=ON
 cmake --build ../../build --config Release --parallel
 ```
 
-3. Install this package editable:
+4. Install this package editable:
 
 ```bash
 pip install -e .
-# or: PYTHONPATH=bindings/python
 ```
 
-If the shared library is not on the default search path:
+If the shared library is not found under `uaii/_native/` or the build tree:
 
 ```bash
 # Windows PowerShell
 $env:UAII_CAPI_PATH = "C:\path\to\uaii_capi.dll"
 ```
+
+Defaults are **fail-closed** (`weight_init="none"`). GPU backend names use host-fallback unless real device kernels exist.
 
 ## Quick start
 
@@ -39,16 +46,11 @@ import uaii
 
 print(uaii.version(), "c_api", uaii.c_api_version())
 
-session = uaii.Session.from_path(
-    "../../examples/ir/toy_mlp.uaii.json",
-    weight_init="ones",
-    profile=True,
-    trace_path="uaii_py_profile.json",
-)
-session.set_tensor("x", [1.0, 2.0, 3.0, 4.0])
-session.run()
-print(session.get_tensor("y_prob"))
-print(session.profile_summary())
+s = uaii.Session()
+s.load("path/to/model.uaii.json", backend="cpu", weight_init="ones")
+s.set("x", [1.0, 2.0, 3.0, 4.0])
+s.run()
+print(s.get("y_prob"))
 ```
 
-See `examples/python/` in the repo root.
+See `examples/python/load_run_profile.py` in the repo root.

@@ -59,7 +59,7 @@ Error build_storage_plan(const ir::Graph& graph,
       << "B streaming=" << (out->streaming_required ? "yes" : "no")
       << " windows=" << out->windows.size();
   out->summary = oss.str();
-  return Error::ok();
+  return Error::success();
 }
 
 }  // namespace planner

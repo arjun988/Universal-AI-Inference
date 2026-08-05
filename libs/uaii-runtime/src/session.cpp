@@ -10,6 +10,7 @@
 #include "uaii/quant/quantizer.hpp"
 
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -30,6 +31,23 @@ std::string join_path(const std::string& dir, const std::string& file) {
     return dir + file;
   }
   return dir + sep + file;
+}
+
+bool path_under_root(const std::string& root, const std::string& path) {
+  if (root.empty()) return true;
+  try {
+    namespace fs = std::filesystem;
+    const fs::path r = fs::weakly_canonical(fs::absolute(root));
+    const fs::path p = fs::weakly_canonical(fs::absolute(path));
+    auto rit = r.begin();
+    auto pit = p.begin();
+    for (; rit != r.end() && pit != p.end(); ++rit, ++pit) {
+      if (*rit != *pit) return false;
+    }
+    return rit == r.end();
+  } catch (...) {
+    return false;
+  }
 }
 
 }  // namespace
@@ -155,7 +173,7 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
                        << "' backend=" << backend_->name()
                        << " ops=" << plan_.ops.size() << " " << report_.summary
                        << " " << allocator_->stats();
-  return Error::ok();
+  return Error::success();
 }
 
 void Session::destroy() noexcept {
@@ -215,15 +233,26 @@ Error Session::allocate_all_tensors() {
     }
 
     for (const auto& t : graph_.tensors) {
-      if (t.dtype != DType::F32) {
+      // Compute path is f32; F16/BF16/INT* graph dtypes are coerced to f32 buffers
+      // (weights dequantized on load). Reject unknown/unsupported types.
+      if (t.dtype != DType::F32 && t.dtype != DType::F16 && t.dtype != DType::BF16 &&
+          t.dtype != DType::I8 && t.dtype != DType::I32 && t.dtype != DType::U8) {
         return Error::make(ErrorCode::NotImplemented,
-                           "session supports f32 activations (tensor " + t.name + ")");
+                           "session cannot coerce dtype for tensor " + t.name);
       }
       memory::TensorBuffer view;
       view.id = t.id;
-      view.dtype = t.dtype;
+      view.dtype = DType::F32;
       view.shape = t.shape;
-      view.nbytes = static_cast<std::size_t>(ir::estimate_tensor_bytes(t));
+      {
+        const std::size_t n = ir::shape_numel(t.shape);
+        view.nbytes = n > 0 ? n * sizeof(float)
+                            : static_cast<std::size_t>(ir::estimate_tensor_bytes(t));
+        if (n == 0 && t.dtype != DType::F32 && view.nbytes > 0) {
+          const std::size_t elem = ir::dtype_size_bytes(t.dtype);
+          if (elem > 0) view.nbytes = (view.nbytes / elem) * sizeof(float);
+        }
+      }
       view.owned = false;
 
       if (streaming_ && streaming_->is_streamed(t.id)) {
@@ -243,32 +272,35 @@ Error Session::allocate_all_tensors() {
       view.data = bit->second.data;
       buffers_.emplace(t.id, std::move(view));
     }
-    return Error::ok();
+    return Error::success();
   }
 
-  // Naive path: one buffer per tensor (skip streamed weights)
+  // Naive path: one buffer per tensor (skip streamed weights); always f32 storage.
   for (const auto& t : graph_.tensors) {
-    if (t.dtype != DType::F32) {
+    if (t.dtype != DType::F32 && t.dtype != DType::F16 && t.dtype != DType::BF16 &&
+        t.dtype != DType::I8 && t.dtype != DType::I32 && t.dtype != DType::U8) {
       return Error::make(ErrorCode::NotImplemented,
-                         "session supports f32 only (tensor " + t.name + ")");
+                         "session cannot coerce dtype for tensor " + t.name);
     }
     memory::TensorBuffer buf;
     if (streaming_ && streaming_->is_streamed(t.id)) {
       buf.id = t.id;
-      buf.dtype = t.dtype;
+      buf.dtype = DType::F32;
       buf.shape = t.shape;
-      buf.nbytes = static_cast<std::size_t>(ir::estimate_tensor_bytes(t));
+      buf.nbytes = ir::shape_numel(t.shape) * sizeof(float);
       buf.data = nullptr;
       buf.owned = false;
       buffers_.emplace(t.id, std::move(buf));
       continue;
     }
-    Error err = allocator_->allocate_tensor(t, &buf);
+    ir::Tensor coerced = t;
+    coerced.dtype = DType::F32;
+    Error err = allocator_->allocate_tensor(coerced, &buf);
     if (!err.ok()) return err;
     std::memset(buf.data, 0, buf.nbytes);
     buffers_.emplace(t.id, std::move(buf));
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error Session::load_or_init_weights() {
@@ -286,13 +318,22 @@ Error Session::load_or_init_weights() {
     const std::size_t n = buf.nbytes / sizeof(float);
 
     bool loaded = false;
+    Error load_err = Error::success();
     if (!t.weight_ref.empty()) {
-      Error werr = loaders::load_weight_ref_f32(t.weight_ref, options_.weights_dir,
-                                               t.shape, data, buf.nbytes);
-      if (werr.ok()) {
+      load_err = loaders::load_weight_ref_f32(t.weight_ref, options_.weights_dir,
+                                              t.shape, data, buf.nbytes);
+      if (load_err.ok()) {
         loaded = true;
       } else {
-        const std::string path = join_path(options_.weights_dir, t.weight_ref);
+        std::string path = join_path(options_.weights_dir, t.weight_ref);
+        const auto hash = path.find('#');
+        if (hash != std::string::npos) path = path.substr(0, hash);
+        if (!path_under_root(options_.weights_sandbox.empty() ? options_.weights_dir
+                                                              : options_.weights_sandbox,
+                             path)) {
+          return Error::make(ErrorCode::InvalidArgument,
+                             "weight path escapes sandbox: " + path);
+        }
         std::ifstream in(path, std::ios::binary);
         if (in) {
           if (options_.weight_quant != quant::QuantFormat::F32) {
@@ -309,11 +350,14 @@ Error Session::load_or_init_weights() {
                 q->unpack(packed.data(), packed.size(), n, options_.weight_quant, qp,
                           nullptr, 0, data);
             if (uerr.ok()) loaded = true;
+            else load_err = uerr;
           } else {
             in.read(reinterpret_cast<char*>(data),
                     static_cast<std::streamsize>(buf.nbytes));
             if (static_cast<std::size_t>(in.gcount()) == buf.nbytes) {
               loaded = true;
+            } else {
+              load_err = Error::make(ErrorCode::IoError, "short weight read: " + path);
             }
           }
         }
@@ -321,6 +365,15 @@ Error Session::load_or_init_weights() {
     }
 
     if (loaded) continue;
+
+    // Fail closed: missing weight_ref with weight_init=None is an error.
+    // Explicit weight_init (zeros/ones/sequence) is an opt-in synthetic fill.
+    if (!t.weight_ref.empty() && options_.weight_init == WeightInit::None &&
+        !options_.allow_missing_weights) {
+      return Error::make(ErrorCode::NotFound,
+                         "failed to load required weight '" + t.name + "' from '" +
+                             t.weight_ref + "': " + load_err.to_string());
+    }
 
     switch (options_.weight_init) {
       case WeightInit::Zeros:
@@ -343,7 +396,7 @@ Error Session::load_or_init_weights() {
                                t.weight_ref + "'");
     }
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error Session::resolve_tensor(const std::string& name_or_id, TensorId* out) const {
@@ -353,7 +406,7 @@ Error Session::resolve_tensor(const std::string& name_or_id, TensorId* out) cons
   if (!name_or_id.empty() && name_or_id[0] == '#') {
     try {
       *out = static_cast<TensorId>(std::stoull(name_or_id.substr(1)));
-      return Error::ok();
+      return Error::success();
     } catch (...) {
       return Error::make(ErrorCode::InvalidArgument, "bad tensor id " + name_or_id);
     }
@@ -361,12 +414,12 @@ Error Session::resolve_tensor(const std::string& name_or_id, TensorId* out) cons
   auto it = name_to_id_.find(name_or_id);
   if (it != name_to_id_.end()) {
     *out = it->second;
-    return Error::ok();
+    return Error::success();
   }
   try {
     *out = static_cast<TensorId>(std::stoull(name_or_id));
     if (buffers_.count(*out) != 0) {
-      return Error::ok();
+      return Error::success();
     }
   } catch (...) {
   }
@@ -396,7 +449,7 @@ kernels::TensorView Session::view_of(memory::TensorBuffer& buf) const {
 }
 
 Error Session::stage_streamed_inputs(const ir::Node& node) {
-  if (!streaming_) return Error::ok();
+  if (!streaming_) return Error::success();
   for (TensorId tid : node.inputs) {
     if (!streaming_->is_streamed(tid)) continue;
     const void* data = nullptr;
@@ -413,7 +466,7 @@ Error Session::stage_streamed_inputs(const ir::Node& node) {
     it->second.data = const_cast<void*>(data);
     it->second.nbytes = nbytes;
   }
-  return Error::ok();
+  return Error::success();
 }
 
 Error Session::set_tensor(const std::string& name_or_id,
@@ -435,7 +488,7 @@ Error Session::set_tensor(const std::string& name_or_id,
                        "set_tensor size mismatch for " + name_or_id);
   }
   std::memcpy(buf.data, data, nbytes);
-  return Error::ok();
+  return Error::success();
 }
 
 Error Session::set_tensor_f32(const std::string& name_or_id,
@@ -460,7 +513,7 @@ Error Session::get_tensor(const std::string& name_or_id,
     return Error::make(ErrorCode::InvalidArgument, "get_tensor size mismatch");
   }
   std::memcpy(data, buf->data, nbytes);
-  return Error::ok();
+  return Error::success();
 }
 
 Error Session::get_tensor_f32(const std::string& name_or_id,
@@ -478,7 +531,7 @@ Error Session::get_tensor_f32(const std::string& name_or_id,
   const std::size_t n = buf->nbytes / sizeof(float);
   values->resize(n);
   std::memcpy(values->data(), buf->data, buf->nbytes);
-  return Error::ok();
+  return Error::success();
 }
 
 Error Session::run() {
@@ -489,17 +542,40 @@ Error Session::run() {
   std::vector<ScheduleDecision> decisions;
   Error err = scheduler_.schedule_plan(plan_, &decisions);
   if (!err.ok()) return err;
-  (void)decisions;
 
-  for (const auto& planned : plan_.ops) {
+  for (std::size_t oi = 0; oi < plan_.ops.size(); ++oi) {
+    const auto& planned = plan_.ops[oi];
     const ir::Node* node = graph_.find_node(planned.node_id);
     if (node == nullptr) {
       return Error::make(ErrorCode::Internal,
                          "missing node " + std::to_string(planned.node_id));
     }
 
+    // Apply scheduler placement: reject ops scheduled away from the active backend
+    // unless the backend reports host-fallback (CPU kernels).
+    if (oi < decisions.size() && backend_) {
+      const auto& d = decisions[oi];
+      if (d.device != DeviceType::Cpu && d.device != backend_->device_type() &&
+          !backend_->uses_host_fallback()) {
+        return Error::make(ErrorCode::NotImplemented,
+                           "scheduler selected device " +
+                               std::string(to_string(d.device)) +
+                               " unavailable on backend " + backend_->name());
+      }
+    }
+
     err = stage_streamed_inputs(*node);
     if (!err.ok()) return err;
+
+    // Prefetch streamed weights for the next op into the inactive staging buffer.
+    if (streaming_ && oi + 1 < plan_.ops.size()) {
+      const ir::Node* next = graph_.find_node(plan_.ops[oi + 1].node_id);
+      if (next) {
+        for (TensorId tid : next->inputs) {
+          if (streaming_->is_streamed(tid)) streaming_->prefetch(tid);
+        }
+      }
+    }
 
     std::vector<kernels::TensorView> inputs;
     inputs.reserve(node->inputs.size());
@@ -544,7 +620,7 @@ Error Session::run() {
     Error terr = profiler::write_chrome_trace(profiler_, options_.profile_trace_path);
     if (!terr.ok()) return terr;
   }
-  return Error::ok();
+  return Error::success();
 }
 
 std::string Session::debug_stats() const {

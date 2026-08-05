@@ -76,7 +76,7 @@ Error create_backend(const std::string& name,
     return Error::make(ErrorCode::NotFound, "unknown backend '" + name +
                                                 "' (cpu|cuda|metal|vulkan|webgpu|rocm)");
   }
-  return Error::ok();
+  return Error::success();
 }
 
 const char* device_type_backend_name(DeviceType type) noexcept {
