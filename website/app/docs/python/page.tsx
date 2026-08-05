@@ -4,17 +4,25 @@ export const metadata = { title: "Python SDK" };
 
 export default function Page() {
   return (
-    <DocLayout title="Python SDK" active="/docs/python/">
-      <p>
-        The Phase 7 exit criterion: an external developer can <strong>load</strong> a model or
-        IR, <strong>run</strong> inference, and <strong>profile</strong> without reading library
-        internals.
-      </p>
-
+    <DocLayout
+      title="Python SDK"
+      active="/docs/python/"
+      lede="Load a model or UAII IR, run inference, and capture profiles without reading C++ internals."
+    >
       <h2>Install</h2>
-      <pre>{`cmake -S . -B build && cmake --build build --config Release
-pip install -e bindings/python
-# optional: -DUAII_BUILD_PYTHON=ON for pybind11 module`}</pre>
+      <pre>{`cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
+
+python bindings/python/scripts/bundle_native.py --build-dir build
+pip install -e bindings/python`}</pre>
+      <p>
+        Optional native extension: configure with <code>-DUAII_BUILD_PYTHON=ON</code> (pybind11
+        via FetchContent). Otherwise the package uses ctypes against <code>uaii_capi</code>.
+      </p>
+      <p>
+        If the shared library is not found, set <code>UAII_CAPI_PATH</code> to the full path of{" "}
+        <code>uaii_capi</code>.
+      </p>
 
       <h2>Load → run → profile</h2>
       <pre>{`import uaii
@@ -33,18 +41,16 @@ print(session.profile_summary())`}</pre>
       <h2>Convert models</h2>
       <pre>{`uaii.convert_model("model.gguf", "model.uaii.json")`}</pre>
 
-      <h2>Backends</h2>
+      <h2>Defaults</h2>
       <ul>
         <li>
-          <code>uaii._uaii</code> — pybind11 native module when built
+          <code>weight_init=&quot;none&quot;</code> — fail closed (no silent Ones fill)
         </li>
         <li>
-          ctypes over <code>uaii_capi</code> shared library (default after CMake build)
+          GPU backend names require a native build + device for real device kernels; otherwise
+          host-fallback applies and is reported by doctor / capabilities
         </li>
       </ul>
-      <p>
-        Set <code>UAII_CAPI_PATH</code> if the loader cannot find the shared library.
-      </p>
     </DocLayout>
   );
 }

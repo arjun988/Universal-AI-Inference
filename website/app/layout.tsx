@@ -1,15 +1,19 @@
 import type { Metadata } from "next";
-import { Figtree, Fraunces, IBM_Plex_Mono } from "next/font/google";
+import { IBM_Plex_Mono, Plus_Jakarta_Sans, Syne } from "next/font/google";
 import "./globals.css";
+import { SiteFooter } from "@/components/SiteFooter";
 import { SiteNav } from "@/components/SiteNav";
+import { ThemeProvider } from "@/components/ThemeProvider";
 
-const body = Figtree({
+const body = Plus_Jakarta_Sans({
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-body-loaded",
 });
 
-const display = Fraunces({
+const display = Syne({
   subsets: ["latin"],
+  weight: ["600", "700", "800"],
   variable: "--font-display-loaded",
 });
 
@@ -21,32 +25,45 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "UAII Runtime Docs",
-    template: "%s · UAII Runtime",
+    default: "UAII — Universal AI Inference Runtime",
+    template: "%s · UAII",
   },
   description:
-    "Documentation for Universal AI Inference Runtime — any model to any hardware.",
+    "Open-source inference runtime: load models into UAII IR and run on CPU or GPU through one session API, CLI, C ABI, and Python SDK.",
 };
+
+const themeBoot = `(function(){try{var k='uaii-theme';var t=localStorage.getItem(k);if(t!=='dark'&&t!=='light'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${body.variable} ${display.variable} ${mono.variable}`}>
+    <html
+      lang="en"
+      data-theme="dark"
+      suppressHydrationWarning
+      className={`${body.variable} ${display.variable} ${mono.variable}`}
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
+      </head>
       <body
         style={
           {
-            ["--font-body" as string]: "var(--font-body-loaded), system-ui, sans-serif",
-            ["--font-display" as string]: "var(--font-display-loaded), Georgia, serif",
-            ["--font-mono" as string]: "var(--font-mono-loaded), ui-monospace, monospace",
+            ["--font-body" as string]:
+              "var(--font-body-loaded), 'Segoe UI', system-ui, sans-serif",
+            ["--font-display" as string]:
+              "var(--font-display-loaded), 'Segoe UI', system-ui, sans-serif",
+            ["--font-mono" as string]:
+              "var(--font-mono-loaded), ui-monospace, monospace",
           } as React.CSSProperties
         }
       >
-        <div className="shell">
-          <SiteNav />
-          {children}
-          <footer className="footer">
-            Universal AI Inference Runtime · MIT · Static docs (Next.js export, no backend)
-          </footer>
-        </div>
+        <ThemeProvider>
+          <div className="app">
+            <SiteNav />
+            {children}
+            <SiteFooter />
+          </div>
+        </ThemeProvider>
       </body>
     </html>
   );

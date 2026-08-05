@@ -1,12 +1,23 @@
-# UAII Documentation Site
+# UAII documentation site
 
-Static Next.js documentation (no backend, no API routes).
+Static Next.js export for Universal AI Inference Runtime docs.
+
+## Develop
 
 ```bash
 cd website
-npm install
-npm run dev      # local preview
-npm run build    # writes static files to out/
+npm ci
+npm run dev
 ```
 
-Serve the export with any static host (`npm start` uses `serve` on `out/`).
+## Build
+
+```bash
+npm run build
+# output in out/
+npm start   # serves out/ via serve
+```
+
+## Theme
+
+Light / dark themes are client-controlled (`localStorage` key `uaii-theme`). Dark defaults to a Cursor-inspired matte black / gray / white palette; light uses cool paper and charcoal ink. Toggle lives in the site nav.
