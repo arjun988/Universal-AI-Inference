@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { GITHUB_REPO_URL } from "@/lib/site";
 
 export default function HomePage() {
   return (
@@ -19,9 +20,14 @@ export default function HomePage() {
               <Link className="btn btn-primary" href="/docs/getting-started/">
                 Get started
               </Link>
-              <Link className="btn btn-secondary" href="/docs/examples/">
-                View examples
-              </Link>
+              <a
+                className="btn btn-secondary"
+                href={GITHUB_REPO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                View on GitHub
+              </a>
             </div>
             <div className="hero-meta">
               <span>C++17 · CMake</span>
@@ -243,9 +249,14 @@ uaii tokenize encode hello`}</pre>
             <Link className="btn btn-primary" href="/docs/getting-started/">
               Read the quick start
             </Link>
-            <Link className="btn btn-secondary" href="/docs/architecture/">
-              Architecture
-            </Link>
+            <a
+              className="btn btn-secondary"
+              href={GITHUB_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Star on GitHub
+            </a>
           </div>
         </div>
       </section>

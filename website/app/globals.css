@@ -272,6 +272,25 @@ pre {
   font-size: 0.8125rem;
 }
 
+.github-link svg {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .github-link {
+    padding-inline: 0.65rem;
+  }
+
+  .github-link {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .github-link svg {
+    margin: 0;
+  }
+}
+
 /* —— Landing hero (full viewport) —— */
 .home-hero {
   position: relative;

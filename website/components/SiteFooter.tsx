@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { GITHUB_REPO_URL } from "@/lib/site";
 
 export function SiteFooter() {
   return (
@@ -8,6 +9,11 @@ export function SiteFooter() {
           <div className="foot-brand">UAII</div>
           <p className="foot-note">
             Universal AI Inference Runtime — any model to any hardware. MIT licensed.
+          </p>
+          <p className="foot-note" style={{ marginTop: "0.85rem" }}>
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
+              github.com/arjun988/Universal-AI-Inference
+            </a>
           </p>
         </div>
         <div>
@@ -23,7 +29,9 @@ export function SiteFooter() {
           <Link href="/docs/cli/">CLI</Link>
           <Link href="/docs/python/">Python SDK</Link>
           <Link href="/docs/c-api/">C API</Link>
-          <Link href="/docs/architecture/">Architecture</Link>
+          <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
+            GitHub
+          </a>
         </div>
       </div>
     </footer>
