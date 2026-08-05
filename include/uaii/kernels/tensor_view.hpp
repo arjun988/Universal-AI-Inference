@@ -1,6 +1,7 @@
 #pragma once
 
 #include "uaii/interfaces/types.hpp"
+#include "uaii/quant/formats.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,17 @@ struct TensorView {
   std::size_t rank = 0;
   void* data = nullptr;
   std::size_t nbytes = 0;
+
+  /// When set, `data` holds packed quantized weights (GGUF block layout).
+  quant::QuantFormat quant_format = quant::QuantFormat::F32;
+  std::int64_t quant_rows = 0;  // logical rows (e.g. out_features)
+  std::int64_t quant_cols = 0;  // logical cols (e.g. in_features)
+
+  [[nodiscard]] bool is_quantized() const noexcept {
+    return quant::is_gguf_block_quant(quant_format) ||
+           (quant_format != quant::QuantFormat::F32 && quant_format != quant::QuantFormat::F16 &&
+            quant_format != quant::QuantFormat::BF16 && dtype != DType::F32);
+  }
 
   [[nodiscard]] std::int64_t dim(std::size_t i) const {
     return i < rank ? shape[i] : 1;

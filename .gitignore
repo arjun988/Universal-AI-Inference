@@ -1,11 +1,28 @@
-# Build
+# Build trees (any local cmake/ninja out-of-source dir)
 build/
+build-*/
 cmake-build-*/
 out/
 install/
+prefix/
+_deps/
+CMakeFiles/
+CMakeCache.txt
+CMakeUserPresets.json
 compile_commands.json
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+.ninja_deps
+.ninja_log
+build.ninja
+install_manifest.txt
+*.ninja
 
-# IDE
+# Generated version header (only under build trees; keep sources)
+**/generated/uaii/
+
+# IDE / editor
 .vs/
 .vscode/
 .idea/
@@ -13,8 +30,12 @@ compile_commands.json
 *.swo
 *~
 .DS_Store
+*.user
+*.suo
+*.VC.db
+*.opendb
 
-# Compiler / linker
+# Compiler / linker artifacts
 *.o
 *.obj
 *.a
@@ -26,30 +47,81 @@ compile_commands.json
 *.pdb
 *.ilk
 *.exp
+*.idb
+*.iobj
+*.ipdb
+*.dSYM/
+*.gcda
+*.gcno
+*.gcov
 
-# Python (future bindings)
+# CUDA / HIP intermediates
+*.cubin
+*.fatbin
+*.ptx
+*.cu.o
+*.hip.o
+
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
 .venv/
 venv/
+.env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
 dist/
+wheelhouse/
+wheels/
 *.egg-info/
+*.egg
+*.whl
+.Python
+pip-wheel-metadata/
 
-# Caches / coverage
+# Website (Next.js) — also listed in website/.gitignore
+website/node_modules/
+website/.next/
+website/out/
+website/.turbo/
+website/.vercel/
+
+# Caches / coverage / profiling
 .cache/
 .coverage
 coverage/
-*.gcda
-*.gcno
+htmlcov/
+*.profraw
+*.profdata
+chrome_trace*.json
+uaii_profile*.json
+*.trace.json
 
-# Local config overrides
+# Local config / secrets
 uaii.local.toml
 .env
 .env.*
+!.env.example
+
+# Session / plan cache leftovers
+.uaii_cache/
+*.uaii.bin
+*.uaii.tmp
 
 # Model fixtures / large artifacts (use Git LFS later)
 *.gguf
 *.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
 uaii_phase4_models/
 !tests/fixtures/.gitkeep
 !examples/models/README.md
+
+# OS junk
+Thumbs.db
+Desktop.ini

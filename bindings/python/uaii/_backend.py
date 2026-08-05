@@ -96,6 +96,9 @@ class _CTypesOpts(ctypes.Structure):
         ("enable_streaming", c_int),
         ("allow_missing_weights", c_int),
         ("weights_sandbox", c_char_p),
+        ("compute_dtype", c_int),
+        ("keep_quantized_weights", c_int),
+        ("max_context", ctypes.c_int64),
     ]
 
 

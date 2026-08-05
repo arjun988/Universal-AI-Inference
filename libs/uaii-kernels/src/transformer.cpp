@@ -1,13 +1,60 @@
 #include "uaii/kernels/kernels.hpp"
 #include "uaii/kernels/view_util.hpp"
+#include "uaii/runtime/kv_cache.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <string>
 
 namespace uaii {
 namespace kernels {
+namespace {
+
+thread_local runtime::KvCache* g_active_kv_cache = nullptr;
+
+struct AttnShape {
+  std::int64_t batch = 0;
+  std::int64_t seq = 0;
+  std::int64_t dim = 0;
+  bool rank2 = false;
+};
+
+Error parse_attn_shape(const TensorView& t, AttnShape* out, const char* name) {
+  if (out == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "attn shape null");
+  }
+  if (t.dtype != DType::F32 || t.data == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, std::string(name) + " f32 required");
+  }
+  if (t.rank == 2) {
+    out->batch = t.dim(0);
+    out->seq = 1;
+    out->dim = t.dim(1);
+    out->rank2 = true;
+    return Error::success();
+  }
+  if (t.rank == 3) {
+    out->batch = t.dim(0);
+    out->seq = t.dim(1);
+    out->dim = t.dim(2);
+    out->rank2 = false;
+    return Error::success();
+  }
+  return Error::make(ErrorCode::InvalidArgument,
+                     std::string(name) + " expects [batch,seq,dim] or [batch,dim]");
+}
+
+}  // namespace
+
+void set_active_kv_cache(runtime::KvCache* cache) noexcept {
+  g_active_kv_cache = cache;
+}
+
+runtime::KvCache* active_kv_cache() noexcept {
+  return g_active_kv_cache;
+}
 
 Error embedding_f32(const TensorView& tokens,
                     const TensorView& weight,
@@ -115,49 +162,80 @@ Error rope_f32(const TensorView& in,
   return Error::success();
 }
 
-Error attention_f32(const TensorView& q,
-                    const TensorView& k,
-                    const TensorView& v,
-                    TensorView* out,
-                    int num_heads,
-                    float scale,
-                    bool causal) {
+Error attention_kv_f32(const TensorView& q,
+                       const TensorView& k,
+                       const TensorView& v,
+                       TensorView* out,
+                       int num_heads,
+                       float scale,
+                       bool causal,
+                       const TensorView* past_k,
+                       const TensorView* past_v,
+                       TensorView* present_k,
+                       TensorView* present_v) {
   if (out == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "attention out null");
   }
-  // Rank-3: [batch, seq, dim]. Rank-2: [batch, dim] treated as seq=1.
-  const bool rank2 = (q.rank == 2 && k.rank == 2 && v.rank == 2 && out->rank == 2);
-  const bool rank3 = (q.rank == 3 && k.rank == 3 && v.rank == 3 && out->rank == 3);
-  if (!rank2 && !rank3) {
-    return Error::make(ErrorCode::InvalidArgument,
-                       "Attention expects [batch,seq,dim] or [batch,dim]");
+  AttnShape qs, ks, vs, os;
+  Error err = parse_attn_shape(q, &qs, "attn_q");
+  if (!err.ok()) return err;
+  err = parse_attn_shape(k, &ks, "attn_k");
+  if (!err.ok()) return err;
+  err = parse_attn_shape(v, &vs, "attn_v");
+  if (!err.ok()) return err;
+  err = parse_attn_shape(*out, &os, "attn_out");
+  if (!err.ok()) return err;
+
+  err = check_view_bytes(q, "attn_q");
+  if (!err.ok()) return err;
+  err = check_view_bytes(k, "attn_k");
+  if (!err.ok()) return err;
+  err = check_view_bytes(v, "attn_v");
+  if (!err.ok()) return err;
+  err = check_view_bytes(*out, "attn_out");
+  if (!err.ok()) return err;
+
+  if (qs.batch != ks.batch || qs.batch != vs.batch || qs.batch != os.batch ||
+      qs.dim != ks.dim || qs.dim != vs.dim || qs.dim != os.dim ||
+      qs.seq != os.seq || ks.seq != vs.seq || qs.seq != ks.seq) {
+    return Error::make(ErrorCode::InvalidArgument, "attention shape mismatch");
   }
-  {
-    Error err = check_view_bytes(q, "attn_q");
-    if (!err.ok()) return err;
-    err = check_view_bytes(k, "attn_k");
-    if (!err.ok()) return err;
-    err = check_view_bytes(v, "attn_v");
-    if (!err.ok()) return err;
-    err = check_view_bytes(*out, "attn_out");
-    if (!err.ok()) return err;
-  }
-  const std::int64_t batch = q.dim(0);
-  const std::int64_t seq = rank2 ? 1 : q.dim(1);
-  const std::int64_t dim = rank2 ? q.dim(1) : q.dim(2);
+
+  const std::int64_t batch = qs.batch;
+  const std::int64_t q_seq = qs.seq;
+  const std::int64_t new_kv_seq = ks.seq;
+  const std::int64_t dim = qs.dim;
   if (num_heads <= 0 || dim % num_heads != 0) {
     return Error::make(ErrorCode::InvalidArgument, "invalid num_heads");
   }
-  if (rank2) {
-    if (k.dim(0) != batch || k.dim(1) != dim || v.dim(0) != batch || v.dim(1) != dim ||
-        out->dim(0) != batch || out->dim(1) != dim) {
-      return Error::make(ErrorCode::InvalidArgument, "attention shape mismatch");
+
+  std::int64_t past_seq = 0;
+  const float* PK = nullptr;
+  const float* PV = nullptr;
+  if (past_k != nullptr || past_v != nullptr) {
+    if (past_k == nullptr || past_v == nullptr || past_k->data == nullptr ||
+        past_v->data == nullptr) {
+      return Error::make(ErrorCode::InvalidArgument, "attention past_k/past_v incomplete");
     }
-  } else if (k.dim(0) != batch || k.dim(1) != seq || k.dim(2) != dim ||
-             v.dim(0) != batch || v.dim(1) != seq || v.dim(2) != dim ||
-             out->dim(0) != batch || out->dim(1) != seq || out->dim(2) != dim) {
-    return Error::make(ErrorCode::InvalidArgument, "attention shape mismatch");
+    AttnShape pks, pvs;
+    err = parse_attn_shape(*past_k, &pks, "past_k");
+    if (!err.ok()) return err;
+    err = parse_attn_shape(*past_v, &pvs, "past_v");
+    if (!err.ok()) return err;
+    if (pks.batch != batch || pvs.batch != batch || pks.dim != dim || pvs.dim != dim ||
+        pks.seq != pvs.seq) {
+      return Error::make(ErrorCode::InvalidArgument, "attention past shape mismatch");
+    }
+    err = check_view_bytes(*past_k, "past_k");
+    if (!err.ok()) return err;
+    err = check_view_bytes(*past_v, "past_v");
+    if (!err.ok()) return err;
+    past_seq = pks.seq;
+    PK = past_k->f32();
+    PV = past_v->f32();
   }
+
+  const std::int64_t kv_seq = past_seq + new_kv_seq;
   if (scale <= 0) {
     scale = 1.0f / std::sqrt(static_cast<float>(dim / num_heads));
   }
@@ -167,57 +245,134 @@ Error attention_f32(const TensorView& q,
   const float* K = k.f32();
   const float* V = v.f32();
   float* O = out->f32();
-  std::vector<float> scores(static_cast<std::size_t>(seq * seq));
+  std::vector<float> scores(static_cast<std::size_t>(q_seq * kv_seq));
+
+  auto k_at = [&](std::int64_t b, std::int64_t j, int h, std::int64_t d) -> float {
+    if (j < past_seq) {
+      return PK[static_cast<std::size_t>(((b * past_seq + j) * dim) + h * head_dim + d)];
+    }
+    const std::int64_t jj = j - past_seq;
+    return K[static_cast<std::size_t>(((b * new_kv_seq + jj) * dim) + h * head_dim + d)];
+  };
+  auto v_at = [&](std::int64_t b, std::int64_t j, int h, std::int64_t d) -> float {
+    if (j < past_seq) {
+      return PV[static_cast<std::size_t>(((b * past_seq + j) * dim) + h * head_dim + d)];
+    }
+    const std::int64_t jj = j - past_seq;
+    return V[static_cast<std::size_t>(((b * new_kv_seq + jj) * dim) + h * head_dim + d)];
+  };
 
   for (std::int64_t b = 0; b < batch; ++b) {
     for (int h = 0; h < num_heads; ++h) {
-      // scores = softmax(QK^T * scale)
-      for (std::int64_t i = 0; i < seq; ++i) {
+      for (std::int64_t i = 0; i < q_seq; ++i) {
+        const std::int64_t abs_i = past_seq + i;
         float max_v = -std::numeric_limits<float>::infinity();
-        for (std::int64_t j = 0; j < seq; ++j) {
-          if (causal && j > i) {
-            scores[static_cast<std::size_t>(i * seq + j)] = -1e9f;
+        for (std::int64_t j = 0; j < kv_seq; ++j) {
+          if (causal && j > abs_i) {
+            scores[static_cast<std::size_t>(i * kv_seq + j)] = -1e9f;
             continue;
           }
           float dot = 0;
           for (std::int64_t d = 0; d < head_dim; ++d) {
             const std::size_t qi =
-                static_cast<std::size_t>(((b * seq + i) * dim) + h * head_dim + d);
-            const std::size_t kj =
-                static_cast<std::size_t>(((b * seq + j) * dim) + h * head_dim + d);
-            dot += Q[qi] * K[kj];
+                static_cast<std::size_t>(((b * q_seq + i) * dim) + h * head_dim + d);
+            dot += Q[qi] * k_at(b, j, h, d);
           }
           dot *= scale;
-          scores[static_cast<std::size_t>(i * seq + j)] = dot;
+          scores[static_cast<std::size_t>(i * kv_seq + j)] = dot;
           max_v = std::max(max_v, dot);
         }
         float sum = 0;
-        for (std::int64_t j = 0; j < seq; ++j) {
-          float e = std::exp(scores[static_cast<std::size_t>(i * seq + j)] - max_v);
-          scores[static_cast<std::size_t>(i * seq + j)] = e;
+        for (std::int64_t j = 0; j < kv_seq; ++j) {
+          float e = std::exp(scores[static_cast<std::size_t>(i * kv_seq + j)] - max_v);
+          scores[static_cast<std::size_t>(i * kv_seq + j)] = e;
           sum += e;
         }
         const float inv = sum > 0 ? 1.0f / sum : 0.0f;
-        for (std::int64_t j = 0; j < seq; ++j) {
-          scores[static_cast<std::size_t>(i * seq + j)] *= inv;
+        for (std::int64_t j = 0; j < kv_seq; ++j) {
+          scores[static_cast<std::size_t>(i * kv_seq + j)] *= inv;
         }
       }
-      for (std::int64_t i = 0; i < seq; ++i) {
+      for (std::int64_t i = 0; i < q_seq; ++i) {
         for (std::int64_t d = 0; d < head_dim; ++d) {
           float acc = 0;
-          for (std::int64_t j = 0; j < seq; ++j) {
-            const std::size_t vj =
-                static_cast<std::size_t>(((b * seq + j) * dim) + h * head_dim + d);
-            acc += scores[static_cast<std::size_t>(i * seq + j)] * V[vj];
+          for (std::int64_t j = 0; j < kv_seq; ++j) {
+            acc += scores[static_cast<std::size_t>(i * kv_seq + j)] * v_at(b, j, h, d);
           }
           const std::size_t oi =
-              static_cast<std::size_t>(((b * seq + i) * dim) + h * head_dim + d);
+              static_cast<std::size_t>(((b * q_seq + i) * dim) + h * head_dim + d);
           O[oi] = acc;
         }
       }
     }
   }
+
+  // Write present K/V = concat(past, new). Same data pointer as past ⇒ append in-place.
+  if (present_k != nullptr || present_v != nullptr) {
+    if (present_k == nullptr || present_v == nullptr) {
+      return Error::make(ErrorCode::InvalidArgument, "attention present_k/v incomplete");
+    }
+    const bool inplace =
+        past_k != nullptr && past_v != nullptr && present_k->data == past_k->data &&
+        present_v->data == past_v->data;
+    const std::size_t need =
+        static_cast<std::size_t>(batch * kv_seq * dim) * sizeof(float);
+    if (present_k->nbytes < need || present_v->nbytes < need) {
+      return Error::make(ErrorCode::InvalidArgument, "present buffer too small");
+    }
+    float* pk = present_k->f32();
+    float* pv = present_v->f32();
+    // Stride for in-place capacity buffers uses max capacity inferred from nbytes.
+    const std::int64_t stride_seq =
+        inplace ? static_cast<std::int64_t>(present_k->nbytes /
+                                           (static_cast<std::size_t>(batch * dim) *
+                                            sizeof(float)))
+                : kv_seq;
+    if (stride_seq < kv_seq) {
+      return Error::make(ErrorCode::InvalidArgument, "present stride < kv_seq");
+    }
+    if (!inplace) {
+      for (std::int64_t b = 0; b < batch; ++b) {
+        if (past_seq > 0) {
+          std::memcpy(pk + static_cast<std::size_t>(b * kv_seq * dim),
+                      PK + static_cast<std::size_t>(b * past_seq * dim),
+                      static_cast<std::size_t>(past_seq * dim) * sizeof(float));
+          std::memcpy(pv + static_cast<std::size_t>(b * kv_seq * dim),
+                      PV + static_cast<std::size_t>(b * past_seq * dim),
+                      static_cast<std::size_t>(past_seq * dim) * sizeof(float));
+        }
+        std::memcpy(pk + static_cast<std::size_t>((b * kv_seq + past_seq) * dim),
+                    K + static_cast<std::size_t>(b * new_kv_seq * dim),
+                    static_cast<std::size_t>(new_kv_seq * dim) * sizeof(float));
+        std::memcpy(pv + static_cast<std::size_t>((b * kv_seq + past_seq) * dim),
+                    V + static_cast<std::size_t>(b * new_kv_seq * dim),
+                    static_cast<std::size_t>(new_kv_seq * dim) * sizeof(float));
+      }
+    } else {
+      for (std::int64_t b = 0; b < batch; ++b) {
+        for (std::int64_t s = 0; s < new_kv_seq; ++s) {
+          const std::size_t src =
+              static_cast<std::size_t>((b * new_kv_seq + s) * dim);
+          const std::size_t dst =
+              static_cast<std::size_t>((b * stride_seq + past_seq + s) * dim);
+          std::memcpy(pk + dst, K + src, static_cast<std::size_t>(dim) * sizeof(float));
+          std::memcpy(pv + dst, V + src, static_cast<std::size_t>(dim) * sizeof(float));
+        }
+      }
+    }
+  }
   return Error::success();
+}
+
+Error attention_f32(const TensorView& q,
+                    const TensorView& k,
+                    const TensorView& v,
+                    TensorView* out,
+                    int num_heads,
+                    float scale,
+                    bool causal) {
+  return attention_kv_f32(q, k, v, out, num_heads, scale, causal, nullptr, nullptr,
+                          nullptr, nullptr);
 }
 
 Error moe_router_f32(const TensorView& x,

@@ -26,6 +26,9 @@ class UAII_API HostExecutableBackend : public IBackend {
   [[nodiscard]] std::string name() const override { return name_; }
   [[nodiscard]] DeviceType device_type() const override { return device_type_; }
   [[nodiscard]] bool uses_host_fallback() const noexcept override { return host_fallback_; }
+  [[nodiscard]] bool attention_host_fallback() const noexcept override {
+    return attention_host_fallback_;
+  }
 
   [[nodiscard]] Error initialize() override;
   void shutdown() noexcept override;
@@ -34,6 +37,13 @@ class UAII_API HostExecutableBackend : public IBackend {
 
   [[nodiscard]] Error allocate(std::size_t bytes, void** out_ptr) override;
   [[nodiscard]] Error free(void* ptr) noexcept override;
+
+  [[nodiscard]] Error copy_h2d(const void* host, void* device, std::size_t bytes) override;
+  [[nodiscard]] Error copy_h2d_async(const void* host, void* device,
+                                     std::size_t bytes) override;
+  [[nodiscard]] Error copy_d2h(const void* device, void* host, std::size_t bytes) override;
+  [[nodiscard]] Error copy_d2d(const void* src, void* dst, std::size_t bytes) override;
+
   [[nodiscard]] Error synchronize() override;
 
   [[nodiscard]] Error dispatch(const std::string& op_name,
@@ -47,14 +57,32 @@ class UAII_API HostExecutableBackend : public IBackend {
   void set_details(std::string details) { details_ = std::move(details); }
   void set_native_available(bool v) noexcept { native_available_ = v; }
   void set_host_fallback(bool v) noexcept { host_fallback_ = v; }
+  void set_attention_host_fallback(bool v) noexcept { attention_host_fallback_ = v; }
+
+  /// CPU-kernel path with device-buffer staging (for scheduler host placements).
+  [[nodiscard]] Error dispatch_on_host_path(
+      const std::string& op_name,
+      const std::string& op_version,
+      const std::vector<kernels::TensorView>& inputs,
+      std::vector<kernels::TensorView>* outputs,
+      const std::vector<ir::Attribute>& attrs);
 
  protected:
   [[nodiscard]] bool initialized() const noexcept { return initialized_; }
+
+  /// D2H inputs → CPU kernels → H2D outputs (for device buffers + host op path).
+  [[nodiscard]] Error dispatch_via_host_staging(
+      const std::string& op_name,
+      const std::string& op_version,
+      const std::vector<kernels::TensorView>& inputs,
+      std::vector<kernels::TensorView>* outputs,
+      const std::vector<ir::Attribute>& attrs);
 
  private:
   std::string name_;
   DeviceType device_type_ = DeviceType::Unknown;
   bool host_fallback_ = false;
+  bool attention_host_fallback_ = false;
   bool native_available_ = false;
   std::string details_;
   memory::Allocator* allocator_ = nullptr;

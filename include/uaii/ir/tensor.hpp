@@ -1,6 +1,7 @@
 #pragma once
 
 #include "uaii/interfaces/types.hpp"
+#include "uaii/quant/formats.hpp"
 
 #include <cstddef>
 #include <string>
@@ -25,6 +26,8 @@ struct Tensor {
   bool is_weight = false;
   /// Optional external weight locator (file URI, pack key, …).
   std::string weight_ref;
+  /// Packed weight format for in-memory quant GEMM (F32 = dense).
+  quant::QuantFormat quant_format = quant::QuantFormat::F32;
 };
 
 [[nodiscard]] inline const char* to_string(StorageHint hint) noexcept {

@@ -2,6 +2,7 @@
 
 #include "json_util.hpp"
 #include "uaii/ir/dtype.hpp"
+#include "uaii/quant/formats.hpp"
 
 #include <sstream>
 
@@ -173,6 +174,7 @@ Error graph_to_json(const Graph& graph, std::string* out) {
     o["storage_hint"] = json::Value::string(to_string(t.storage_hint));
     o["is_weight"] = json::Value::boolean(t.is_weight);
     o["weight_ref"] = json::Value::string(t.weight_ref);
+    o["quant_format"] = json::Value::string(quant::to_string(t.quant_format));
     tensors.push_back(json::Value::object(std::move(o)));
   }
   root["tensors"] = json::Value::array(std::move(tensors));
@@ -307,6 +309,9 @@ Error graph_from_json(const std::string& text, Graph* out) {
       }
       if (const json::Value* r = json::get(*o, "weight_ref"); r && r->is_string()) {
         t.weight_ref = r->str;
+      }
+      if (const json::Value* qf = json::get(*o, "quant_format"); qf && qf->is_string()) {
+        (void)quant::parse_quant_format(qf->str, &t.quant_format);
       }
       g.tensors.push_back(std::move(t));
     }

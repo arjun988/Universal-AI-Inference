@@ -1,0 +1,33 @@
+name: wheels
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-wheels:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build C++ runtime
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUAII_BUILD_PLUGINS=ON
+          cmake --build build --config Release --parallel
+      - name: Bundle native + build wheel
+        shell: bash
+        run: |
+          python bindings/python/scripts/bundle_native.py --build-dir build
+          python -m pip install build
+          python -m build bindings/python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: bindings/python/dist/*

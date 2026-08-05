@@ -11,6 +11,11 @@ target_link_libraries(uaii_runtime_test PRIVATE
 uaii_set_warnings(uaii_runtime_test)
 add_test(NAME uaii_runtime_test COMMAND uaii_runtime_test)
 
+add_executable(uaii_quant_dequant_test unit/quant_dequant_test.cpp)
+target_link_libraries(uaii_quant_dequant_test PRIVATE uaii::core uaii::quant)
+uaii_set_warnings(uaii_quant_dequant_test)
+add_test(NAME uaii_quant_dequant_test COMMAND uaii_quant_dequant_test)
+
 # Ensure Windows finds uaii_capi.dll (and deps) next to / via PATH.
 set(_uaii_test_path "$<TARGET_FILE_DIR:uaii_capi>;$ENV{PATH}")
 set_tests_properties(uaii_runtime_test PROPERTIES

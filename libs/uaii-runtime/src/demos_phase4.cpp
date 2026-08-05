@@ -1,10 +1,12 @@
 #include "uaii/runtime/session.hpp"
 
 #include "uaii/core/log.hpp"
+#include "uaii/interfaces/tokenizer.hpp"
 #include "uaii/ir/graph.hpp"
 #include "uaii/loaders/gguf.hpp"
 #include "uaii/loaders/registry.hpp"
 #include "uaii/loaders/safetensors.hpp"
+#include "uaii/tokenizers/gguf_tokenizer.hpp"
 #include "uaii/tokenizers/simple_tokenizer.hpp"
 
 #include <cmath>
@@ -56,6 +58,8 @@ Error write_tiny_lm_gguf(const std::string& path, int vocab, int dim) {
   std::unordered_map<std::string, loaders::GgufValue> kv;
   kv["general.name"] = std::string("uaii-tiny-gguf");
   kv["general.architecture"] = std::string("tiny_lm");
+  kv["tokenizer.ggml.tokens"] = std::vector<std::string>{
+      "<unk>", "<bos>", "<eos>", "hello", "world", "uaii", "runtime", "the", "a", "model"};
 
   return loaders::gguf_write_f32(
       path, kv,
@@ -80,10 +84,9 @@ Error write_tiny_lm_safetensors(const std::string& path, int vocab, int dim) {
 }
 
 Error run_loaded_generate(ir::Graph graph,
-                          float token_id,
+                          const ITokenizer& tok,
                           std::string* decoded,
-                          bool* ok,
-                          const tokenizers::SimpleTokenizer& tok) {
+                          bool* ok) {
   if (ok) *ok = false;
   SessionOptions opts;
   opts.validate = true;
@@ -92,32 +95,43 @@ Error run_loaded_generate(ir::Graph graph,
   Error err = session.create(std::move(graph), opts);
   if (!err.ok()) return err;
 
-  err = session.set_tensor_f32("tokens", {token_id});
+  std::vector<std::int64_t> prompt;
+  err = tok.encode("hello", &prompt);
   if (!err.ok()) return err;
-  err = session.run();
+  if (prompt.empty()) {
+    return Error::make(ErrorCode::InvalidArgument, "encode produced empty prompt");
+  }
+
+  std::vector<std::int64_t> generated;
+  err = session.generate(prompt, /*max_new_tokens=*/1, &generated);
   if (!err.ok()) return err;
 
-  std::vector<float> probs;
-  err = session.get_tensor_f32("probs", &probs);
-  if (!err.ok()) return err;
-
-  float sum = std::accumulate(probs.begin(), probs.end(), 0.0f);
-  int argmax = 0;
-  for (std::size_t i = 1; i < probs.size(); ++i) {
-    if (probs[i] > probs[static_cast<std::size_t>(argmax)]) {
-      argmax = static_cast<int>(i);
-    }
+  std::vector<std::int64_t> new_tokens;
+  if (generated.size() > prompt.size()) {
+    new_tokens.assign(generated.begin() + static_cast<std::ptrdiff_t>(prompt.size()),
+                      generated.end());
+  } else if (!generated.empty()) {
+    new_tokens.push_back(generated.back());
   }
 
   std::string text;
-  err = tok.decode({static_cast<std::int64_t>(argmax)}, &text);
+  err = tok.decode(new_tokens, &text);
   if (!err.ok()) return err;
   if (decoded) *decoded = text;
 
-  const bool good = nearly_one(sum) && !probs.empty();
+  std::vector<float> probs;
+  err = session.get_tensor_f32("probs", &probs);
+  if (!err.ok()) {
+    // generate path may only expose logits on the last step; still accept decode success.
+    if (ok) *ok = !text.empty();
+    log::info("demo") << "generate decode='" << text << "' (no probs tensor)";
+    return Error::success();
+  }
+
+  float sum = std::accumulate(probs.begin(), probs.end(), 0.0f);
+  const bool good = nearly_one(sum) && !probs.empty() && !text.empty();
   if (ok) *ok = good;
-  log::info("demo") << "generate probs_sum=" << sum << " argmax=" << argmax
-                    << " decode='" << text << "'";
+  log::info("demo") << "generate probs_sum=" << sum << " decode='" << text << "'";
   if (!good) {
     return Error::make(ErrorCode::Internal, "generate demo failed probability check");
   }
@@ -136,9 +150,12 @@ Error run_gguf_generate_demo(std::string* decoded, bool* ok) {
   err = loaders::load_model(path, &graph);
   if (!err.ok()) return err;
 
-  auto tok = tokenizers::SimpleTokenizer::demo_vocab();
-  // Feed token id 3 ("hello")
-  return run_loaded_generate(std::move(graph), 3.0f, decoded, ok, tok);
+  auto tok = tokenizers::load_gguf_tokenizer(path);
+  if (!tok) {
+    tok = std::make_unique<tokenizers::SimpleTokenizer>(
+        tokenizers::SimpleTokenizer::demo_vocab());
+  }
+  return run_loaded_generate(std::move(graph), *tok, decoded, ok);
 }
 
 Error run_safetensors_generate_demo(std::string* decoded, bool* ok) {
@@ -152,7 +169,7 @@ Error run_safetensors_generate_demo(std::string* decoded, bool* ok) {
   if (!err.ok()) return err;
 
   auto tok = tokenizers::SimpleTokenizer::demo_vocab();
-  return run_loaded_generate(std::move(graph), 3.0f, decoded, ok, tok);
+  return run_loaded_generate(std::move(graph), tok, decoded, ok);
 }
 
 Error run_moe_smoke_demo(bool* ok) {

@@ -1,8 +1,12 @@
 #include "uaii/loaders/registry.hpp"
 
 #include "uaii/loaders/gguf.hpp"
+#include "uaii/loaders/mlx.hpp"
+#include "uaii/loaders/onnx.hpp"
+#include "uaii/loaders/pytorch.hpp"
 #include "uaii/loaders/safetensors.hpp"
 #include "uaii/ir/serialize.hpp"
+#include "uaii/quant/formats.hpp"
 
 #include <cctype>
 #include <cstring>
@@ -53,6 +57,9 @@ void LoaderRegistry::register_defaults() {
   loaders_.clear();
   register_loader(std::make_unique<GgufLoader>());
   register_loader(std::make_unique<SafetensorsLoader>());
+  register_loader(std::make_unique<OnnxLoader>());
+  register_loader(std::make_unique<PytorchLoader>());
+  register_loader(std::make_unique<MlxLoader>());
 }
 
 LoaderRegistry& default_loaders() {
@@ -146,6 +153,49 @@ Error load_weight_ref_f32(const std::string& weight_ref,
   if (static_cast<std::size_t>(in.gcount()) != nbytes) {
     return Error::make(ErrorCode::IoError, "short read for weight " + path);
   }
+  return Error::success();
+}
+
+Error load_weight_ref_auto(const std::string& weight_ref,
+                           const std::string& weights_dir,
+                           const Shape& expected_shape,
+                           bool keep_packed,
+                           std::vector<std::uint8_t>* packed_out,
+                           quant::QuantFormat* out_format,
+                           float* dst_f32,
+                           std::size_t nbytes_f32) {
+  if (out_format == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "out_format null");
+  }
+  *out_format = quant::QuantFormat::F32;
+  const auto hash = weight_ref.find('#');
+  if (hash == std::string::npos || !keep_packed || packed_out == nullptr) {
+    return load_weight_ref_f32(weight_ref, weights_dir, expected_shape, dst_f32, nbytes_f32);
+  }
+  const std::string file = join_path(weights_dir, weight_ref.substr(0, hash));
+  const std::string tensor = weight_ref.substr(hash + 1);
+  const auto ext_pos = file.find_last_of('.');
+  std::string ext = ext_pos == std::string::npos ? std::string{} : file.substr(ext_pos);
+  for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (ext != ".gguf") {
+    return load_weight_ref_f32(weight_ref, weights_dir, expected_shape, dst_f32, nbytes_f32);
+  }
+  GgufFile gf;
+  Error err = gguf_read_header(file, &gf);
+  if (!err.ok()) return err;
+  GgufType gt = GgufType::F32;
+  Shape shape;
+  err = gguf_load_tensor_raw(gf, tensor, packed_out, &shape, &gt);
+  if (!err.ok()) return err;
+  if (!gguf_type_supported(gt)) {
+    return Error::make(ErrorCode::NotImplemented,
+                       "unsupported GGUF quant type: " + std::string(to_string(gt)));
+  }
+  *out_format = gguf_type_to_quant(gt);
+  if (!quant::is_gguf_block_quant(*out_format)) {
+    return load_weight_ref_f32(weight_ref, weights_dir, expected_shape, dst_f32, nbytes_f32);
+  }
+  (void)expected_shape;
   return Error::success();
 }
 

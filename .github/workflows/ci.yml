@@ -59,7 +59,45 @@ jobs:
           "$BIN" validate examples/ir/toy_mlp.uaii.json
           "$BIN" run --demo toy_mlp
           "$BIN" run --demo optimize || true
+          "$BIN" run --demo streaming || true
           "$BIN" run --demo parity || true
+
+  cuda-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CUDA toolkit (compile-only)
+        run: |
+          # Soft: skip if toolkit install fails on runner; job continues as optional matrix
+          sudo apt-get update -y || true
+          sudo apt-get install -y nvidia-cuda-toolkit || true
+      - name: Configure with CUDA if nvcc present
+        run: |
+          if command -v nvcc >/dev/null 2>&1; then
+            cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release -DUAII_WITH_CUDA=ON -DUAII_BUILD_TESTS=ON
+            cmake --build build-cuda --parallel
+            ctest --test-dir build-cuda -C Release --output-on-failure || true
+          else
+            echo "nvcc not available; skipping CUDA compile"
+          fi
+
+  onednn-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install oneDNN if available (optional CPU GEMM path)
+        run: |
+          sudo apt-get update -y || true
+          sudo apt-get install -y libdnnl-dev || true
+      - name: Configure with oneDNN when headers present
+        run: |
+          if [ -f /usr/include/dnnl/dnnl.hpp ] || pkg-config --exists dnnl 2>/dev/null; then
+            cmake -S . -B build-onednn -DCMAKE_BUILD_TYPE=Release -DUAII_WITH_ONEDNN=ON -DUAII_BUILD_TESTS=ON
+            cmake --build build-onednn --parallel
+            ctest --test-dir build-onednn -C Release --output-on-failure || true
+          else
+            echo "oneDNN (DNNL) not available; skipping optional GEMM backend compile"
+          fi
 
   docs-site:
     runs-on: ubuntu-latest

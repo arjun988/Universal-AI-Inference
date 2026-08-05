@@ -5,6 +5,7 @@
 #include "uaii/kernels/kernels.hpp"
 #include "uaii/kernels/view_util.hpp"
 #include "uaii/plugins/operator_host.hpp"
+#include "uaii/runtime/scheduler_device.hpp"
 #include "uaii/runtime/session.hpp"
 
 #include <cmath>
@@ -108,11 +109,36 @@ int main() {
 
   // C API version + options defaults fail-closed
   {
-    expect(std::string(uaii_get_c_api_version_string()) == "0.2.0", "c api 0.2.0");
+    expect(std::string(uaii_get_c_api_version_string()) == "0.3.0", "c api 0.3.0");
     uaii_session_options opts;
     uaii_session_options_init(&opts);
     expect(opts.struct_size == sizeof(opts), "struct_size");
     expect(opts.weight_init == UAII_WEIGHT_INIT_NONE, "default weight none");
+    expect(opts.keep_quantized_weights != 0, "default keep quant");
+    expect(opts.max_context == 0, "default max_context");
+  }
+
+  // DeviceScheduler: Attention → CPU when attention_host_fallback
+  {
+    uaii::ir::GraphBuilder b("sched");
+    auto x = b.add_tensor("x", uaii::DType::F32, uaii::Shape{{1, 4}});
+    auto y = b.add_tensor("y", uaii::DType::F32, uaii::Shape{{1, 4}});
+    b.add_node("a", "Attention", "1", {x}, {y});
+    b.set_inputs({x}).set_outputs({y});
+    uaii::ir::ExecutionPlan plan;
+    uaii::ir::PlannedOp pop;
+    pop.node_id = 1;
+    pop.op_name = "Attention";
+    pop.op_version = "1";
+    plan.ops.push_back(pop);
+
+    uaii::runtime::DeviceScheduler sched(uaii::DeviceType::Cuda);
+    sched.set_attention_host_fallback(true);
+    std::vector<uaii::ScheduleDecision> decisions;
+    expect(sched.schedule_plan(plan, &decisions).ok(), "schedule_plan");
+    expect(!decisions.empty(), "decisions non-empty");
+    expect(decisions[0].device == uaii::DeviceType::Cpu, "attention on cpu");
+    expect(decisions[0].reason == "attention-host-fallback", "attention reason");
   }
 
   if (failures) {

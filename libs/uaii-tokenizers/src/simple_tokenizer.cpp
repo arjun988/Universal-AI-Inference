@@ -31,6 +31,21 @@ Error SimpleTokenizer::load_vocab_file(const std::string& path) {
   return Error::success();
 }
 
+Error SimpleTokenizer::load_from_token_list(const std::vector<std::string>& tokens) {
+  if (tokens.empty()) {
+    return Error::make(ErrorCode::InvalidArgument, "empty token list");
+  }
+  token_to_id_.clear();
+  id_to_token_ = tokens;
+  for (std::size_t i = 0; i < tokens.size(); ++i) {
+    token_to_id_[tokens[i]] = static_cast<std::int64_t>(i);
+  }
+  unk_id_ = token_to_id_.count("<unk>") ? token_to_id_["<unk>"] : 0;
+  bos_id_ = token_to_id_.count("<bos>") ? token_to_id_["<bos>"] : unk_id_;
+  eos_id_ = token_to_id_.count("<eos>") ? token_to_id_["<eos>"] : unk_id_;
+  return Error::success();
+}
+
 void SimpleTokenizer::set_vocab(std::unordered_map<std::string, std::int64_t> token_to_id) {
   token_to_id_ = std::move(token_to_id);
   std::int64_t max_id = -1;

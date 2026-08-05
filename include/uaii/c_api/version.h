@@ -16,10 +16,10 @@ extern "C" {
  * Plugin ABI (`UAII_PLUGIN_ABI_VERSION`) is versioned independently.
  */
 #define UAII_C_API_VERSION_MAJOR 0
-#define UAII_C_API_VERSION_MINOR 2
+#define UAII_C_API_VERSION_MINOR 3
 #define UAII_C_API_VERSION_PATCH 0
 
-#define UAII_C_API_VERSION_STRING "0.2.0"
+#define UAII_C_API_VERSION_STRING "0.3.0"
 
 #ifdef __cplusplus
 }

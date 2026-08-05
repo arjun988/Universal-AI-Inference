@@ -55,6 +55,11 @@ typedef enum uaii_weight_init {
   UAII_WEIGHT_INIT_SEQUENCE = 3
 } uaii_weight_init;
 
+typedef enum uaii_compute_dtype {
+  UAII_COMPUTE_DTYPE_F32 = 0,
+  UAII_COMPUTE_DTYPE_F16 = 1
+} uaii_compute_dtype;
+
 typedef struct uaii_session uaii_session;
 
 typedef struct uaii_session_options {
@@ -78,6 +83,12 @@ typedef struct uaii_session_options {
   int allow_missing_weights;
   /** Optional sandbox root; weight paths must stay under this directory. */
   const char* weights_sandbox;
+  /** Activation compute dtype (default UAII_COMPUTE_DTYPE_F32). */
+  int compute_dtype;
+  /** Non-zero keeps GGUF block-quant weights packed (default 1). */
+  int keep_quantized_weights;
+  /** Max context for generate / KV; 0 = graph metadata. */
+  int64_t max_context;
 } uaii_session_options;
 
 /** Fill options with safe defaults. */
@@ -117,6 +128,18 @@ UAII_CAPI_API uaii_status uaii_session_get_f32(uaii_session* session,
                                                size_t* out_n);
 
 UAII_CAPI_API uaii_status uaii_session_run(uaii_session* session);
+
+/**
+ * Greedy generate: prompt_tokens → out_tokens (capacity in/out via out_n).
+ * Writes up to capacity tokens; *out_n is count written (prompt+new truncated).
+ */
+UAII_CAPI_API uaii_status uaii_session_generate(uaii_session* session,
+                                                const int64_t* prompt_tokens,
+                                                size_t prompt_n,
+                                                int64_t max_new_tokens,
+                                                int64_t* out_tokens,
+                                                size_t capacity,
+                                                size_t* out_n);
 
 /** Copy profiler summary into buf (NUL-terminated). */
 UAII_CAPI_API uaii_status uaii_session_profile_summary(uaii_session* session,

@@ -73,7 +73,8 @@ TensorId GraphBuilder::add_tensor(std::string name, DType dtype, Shape shape,
 }
 
 TensorId GraphBuilder::add_weight(std::string name, DType dtype, Shape shape,
-                                  std::string weight_ref) {
+                                  std::string weight_ref,
+                                  quant::QuantFormat quant_format) {
   Tensor t;
   t.id = next_tensor_id_++;
   t.name = std::move(name);
@@ -82,6 +83,7 @@ TensorId GraphBuilder::add_weight(std::string name, DType dtype, Shape shape,
   t.is_weight = true;
   t.storage_hint = StorageHint::External;
   t.weight_ref = std::move(weight_ref);
+  t.quant_format = quant_format;
   graph_.tensors.push_back(std::move(t));
   return graph_.tensors.back().id;
 }

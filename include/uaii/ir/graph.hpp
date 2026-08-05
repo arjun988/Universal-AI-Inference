@@ -5,6 +5,7 @@
 #include "uaii/ir/node.hpp"
 #include "uaii/ir/tensor.hpp"
 #include "uaii/ir/version.hpp"
+#include "uaii/quant/formats.hpp"
 
 #include <string>
 #include <unordered_map>
@@ -47,7 +48,8 @@ class UAII_API GraphBuilder {
 
   TensorId add_tensor(std::string name, DType dtype, Shape shape,
                       StorageHint hint = StorageHint::Unspecified);
-  TensorId add_weight(std::string name, DType dtype, Shape shape, std::string weight_ref);
+  TensorId add_weight(std::string name, DType dtype, Shape shape, std::string weight_ref,
+                      quant::QuantFormat quant_format = quant::QuantFormat::F32);
 
   NodeId add_node(std::string name,
                   std::string op_name,

@@ -1,5 +1,7 @@
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/kernels/quant_gemm.hpp"
 #include "uaii/plugins/operator_host.hpp"
+#include "uaii/runtime/kv_cache.hpp"
 
 namespace uaii {
 namespace kernels {
@@ -80,9 +82,15 @@ Error dispatch_cpu(const std::string& op_name,
     if (inputs.size() != 2 || outputs->size() != 1) {
       return Error::make(ErrorCode::InvalidArgument, "MatMul expects 2 inputs / 1 output");
     }
-    Error err = matmul_f32(inputs[0], inputs[1], &(*outputs)[0],
-                           attr_bool(attrs, "transpose_a", false),
-                           attr_bool(attrs, "transpose_b", false));
+    Error err;
+    if (supports_quant_gemm(inputs[1].quant_format) &&
+        attr_bool(attrs, "transpose_b", false)) {
+      err = quant_gemm_f32(inputs[0], inputs[1], &(*outputs)[0], true);
+    } else {
+      err = matmul_f32(inputs[0], inputs[1], &(*outputs)[0],
+                       attr_bool(attrs, "transpose_a", false),
+                       attr_bool(attrs, "transpose_b", false));
+    }
     if (!err.ok()) return err;
     if (op_name == "MatMulRelu") {
       return relu_f32((*outputs)[0], &(*outputs)[0]);
@@ -177,13 +185,38 @@ Error dispatch_cpu(const std::string& op_name,
     return rope_f32(inputs[0], pos, &(*outputs)[0], attr_float(attrs, "theta", 10000.f));
   }
   if (op_name == "Attention") {
-    if (inputs.size() < 3 || outputs->size() != 1) {
+    if (inputs.size() < 3 || outputs->empty()) {
       return Error::make(ErrorCode::InvalidArgument, "Attention expects Q,K,V");
     }
-    return attention_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0],
-                         static_cast<int>(attr_int(attrs, "num_heads", 1)),
-                         attr_float(attrs, "scale", 0.f),
-                         attr_bool(attrs, "causal", true));
+    const int num_heads = static_cast<int>(attr_int(attrs, "num_heads", 1));
+    const float scale = attr_float(attrs, "scale", 0.f);
+    const bool causal = attr_bool(attrs, "causal", true);
+    const bool use_kv = attr_bool(attrs, "use_kv_cache", false);
+    const std::int64_t layer_id = attr_int(attrs, "layer_id", -1);
+
+    // Explicit past_k/past_v inputs (size 5) and optional present outputs (size 3).
+    if (inputs.size() >= 5) {
+      TensorView* present_k = outputs->size() >= 3 ? &(*outputs)[1] : nullptr;
+      TensorView* present_v = outputs->size() >= 3 ? &(*outputs)[2] : nullptr;
+      return attention_kv_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0],
+                              num_heads, scale, causal, &inputs[3], &inputs[4],
+                              present_k, present_v);
+    }
+
+    runtime::KvCache* cache = active_kv_cache();
+    if (use_kv && cache != nullptr && layer_id >= 0) {
+      TensorView past_k = cache->k_view(layer_id);
+      TensorView past_v = cache->v_view(layer_id);
+      const TensorView* pk = past_k.data != nullptr ? &past_k : nullptr;
+      const TensorView* pv = past_v.data != nullptr ? &past_v : nullptr;
+      Error err = attention_kv_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0],
+                                   num_heads, scale, causal, pk, pv, nullptr, nullptr);
+      if (!err.ok()) return err;
+      return cache->append_layer(layer_id, inputs[1], inputs[2]);
+    }
+
+    return attention_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0], num_heads,
+                         scale, causal);
   }
   if (op_name == "MoERouter") {
     if (inputs.size() != 2 || outputs->size() < 2) {

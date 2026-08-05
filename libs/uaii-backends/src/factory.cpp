@@ -27,15 +27,15 @@ std::vector<BackendDescriptor> list_backends() {
       {"cpu", DeviceType::Cpu, true, true,
        "Host CPU backend (reference kernels)"},
       {"cuda", DeviceType::Cuda, true, CudaBackend::native_compiled(),
-       "CUDA backend (host-fallback always; native when UAII_WITH_CUDA=ON)"},
+       "CUDA backend (native device path when UAII_WITH_CUDA=ON; else host-fallback)"},
       {"metal", DeviceType::Metal, true, MetalBackend::native_compiled(),
-       "Metal backend (host-fallback always; native when UAII_WITH_METAL=ON)"},
+       "Metal backend (native buffers when UAII_WITH_METAL=ON; else host-fallback)"},
       {"vulkan", DeviceType::Vulkan, true, VulkanBackend::native_compiled(),
-       "Vulkan backend (host-fallback always; native when UAII_WITH_VULKAN=ON)"},
+       "Vulkan backend (native buffers when UAII_WITH_VULKAN=ON; else host-fallback)"},
       {"webgpu", DeviceType::WebGpu, true, WebGpuBackend::native_compiled(),
-       "WebGPU backend (host-fallback always; native when UAII_WITH_WEBGPU=ON)"},
+       "WebGPU backend (native when UAII_WITH_WEBGPU=ON; else host-fallback)"},
       {"rocm", DeviceType::Rocm, true, RocmBackend::native_compiled(),
-       "ROCm backend (host-fallback always; native when UAII_WITH_ROCM=ON)"},
+       "ROCm backend (native when UAII_WITH_ROCM=ON; else host-fallback)"},
   };
 }
 

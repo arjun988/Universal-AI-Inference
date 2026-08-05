@@ -1,4 +1,5 @@
 #include "uaii/quant/codec.hpp"
+#include "uaii/quant/gguf_dequant.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -237,6 +238,17 @@ Error unpack_to_f32(const std::uint8_t* packed,
       }
       return Error::success();
     }
+    case QuantFormat::Q4_0:
+    case QuantFormat::Q4_1:
+    case QuantFormat::Q5_0:
+    case QuantFormat::Q5_1:
+    case QuantFormat::Q8_0:
+    case QuantFormat::Q2_K:
+    case QuantFormat::Q3_K:
+    case QuantFormat::Q4_K:
+    case QuantFormat::Q5_K:
+    case QuantFormat::Q6_K:
+      return dequant_gguf_row(format, packed, static_cast<std::int64_t>(n), dst);
     default:
       return Error::make(ErrorCode::NotImplemented, "unsupported quant format");
   }

@@ -35,6 +35,15 @@ class UAII_API StreamingWeightStore {
   /// Kick off async load of `id` into the inactive buffer (best-effort).
   void prefetch(TensorId id);
 
+  /// Host staging pointer for `slot` (0 or 1) when `slot_resident(slot) != 0`.
+  [[nodiscard]] TensorId slot_resident(int slot) const noexcept;
+  [[nodiscard]] const void* slot_data(int slot) const noexcept;
+  [[nodiscard]] std::size_t tensor_bytes(TensorId id) const;
+
+  /// If `id` is ready in the inactive prefetch slot, return host bytes (non-consuming).
+  [[nodiscard]] bool try_peek_prefetched(TensorId id, const void** out_data,
+                                         std::size_t* out_nbytes);
+
   void reset_stats() noexcept;
 
  private:

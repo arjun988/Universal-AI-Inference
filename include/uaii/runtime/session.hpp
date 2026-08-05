@@ -12,9 +12,12 @@
 #include "uaii/planner/optimize.hpp"
 #include "uaii/profiler/profiler.hpp"
 #include "uaii/quant/formats.hpp"
+#include "uaii/runtime/kv_cache.hpp"
 #include "uaii/runtime/scheduler_cpu.hpp"
+#include "uaii/runtime/scheduler_device.hpp"
 #include "uaii/storage/streaming.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -54,6 +57,12 @@ struct SessionOptions {
   bool enable_profiler = false;
   std::string profile_trace_path;
   quant::QuantFormat weight_quant = quant::QuantFormat::F32;
+  /// Activation compute dtype: F32 (default) or F16 (stored/computed as f32 today with policy flag).
+  DType compute_dtype = DType::F32;
+  /// Keep GGUF block-quant weights packed for in-memory quant GEMM when true.
+  bool keep_quantized_weights = true;
+  /// Max context length for generate / KV (0 = from graph metadata or unlimited).
+  std::int64_t max_context = 0;
 };
 
 struct OptimizeReport {
@@ -104,6 +113,15 @@ class UAII_API Session {
 
   [[nodiscard]] Error run();
 
+  /// Greedy autoregressive generate: prefill prompt, then decode up to max_new_tokens.
+  /// Respects options_.max_context / graph metadata max_context (fail-closed).
+  [[nodiscard]] Error generate(const std::vector<std::int64_t>& prompt_tokens,
+                               std::int64_t max_new_tokens,
+                               std::vector<std::int64_t>* out_tokens);
+
+  [[nodiscard]] KvCache* kv_cache() noexcept { return kv_.get(); }
+  [[nodiscard]] const KvCache* kv_cache() const noexcept { return kv_.get(); }
+
   [[nodiscard]] std::string debug_stats() const;
 
  private:
@@ -112,6 +130,14 @@ class UAII_API Session {
   [[nodiscard]] Error resolve_tensor(const std::string& name_or_id, TensorId* out) const;
   [[nodiscard]] kernels::TensorView view_of(memory::TensorBuffer& buf) const;
   [[nodiscard]] Error stage_streamed_inputs(const ir::Node& node);
+  void try_prefetch_stream_h2d(TensorId tid);
+  [[nodiscard]] Error ensure_stream_device(TensorId tid, std::size_t nbytes);
+  [[nodiscard]] Error upload_streamed_weight(TensorId tid, const void* host,
+                                             std::size_t nbytes);
+  [[nodiscard]] Error sync_stream_h2d(TensorId tid);
+  [[nodiscard]] Error ensure_kv_cache(std::int64_t max_seq);
+  [[nodiscard]] Error write_tokens_step(TensorId tokens_id, std::int64_t token);
+  [[nodiscard]] Error read_argmax_token(TensorId scores_id, std::int64_t* token) const;
 
   bool ready_ = false;
   SessionOptions options_;
@@ -120,9 +146,17 @@ class UAII_API Session {
   OptimizeReport report_;
   std::unique_ptr<memory::Allocator> allocator_;
   std::unique_ptr<IBackend> backend_;
-  CpuScheduler scheduler_;
+  DeviceScheduler scheduler_;
   profiler::Profiler profiler_;
   std::unique_ptr<storage::StreamingWeightStore> streaming_;
+  struct StreamDeviceStaging {
+    void* device_ptr = nullptr;
+    std::size_t nbytes = 0;
+    bool h2d_in_flight = false;
+  };
+  std::unordered_map<TensorId, StreamDeviceStaging> stream_device_;
+  bool stream_async_h2d_ = false;
+  std::unique_ptr<KvCache> kv_;
   planner::MemoryReusePlan memory_plan_;
   std::unordered_map<int, memory::TensorBuffer> owned_slots_;
   std::unordered_map<TensorId, memory::TensorBuffer> buffers_;
@@ -155,7 +189,7 @@ class UAII_API Session {
                                                     1.f, 2.f, 3.f, 4.f},
                                                 const std::string& input_name = "x");
 
-/// Phase 5 demo: toy MLP on cpu vs cuda (host-fallback) with parity policy.
+/// Phase 5 demo: toy MLP on cpu vs cuda with parity policy (native CUDA when available).
 [[nodiscard]] UAII_API Error run_parity_demo(backends::ParityReport* report);
 
 struct OptimizeDemoReport {

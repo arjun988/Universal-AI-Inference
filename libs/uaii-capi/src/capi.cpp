@@ -6,6 +6,7 @@
 #include "uaii/runtime/session.hpp"
 #include "uaii/version.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -71,6 +72,9 @@ void uaii_session_options_init(uaii_session_options* opts) {
   opts->enable_streaming = 0;
   opts->allow_missing_weights = 0;
   opts->weights_sandbox = nullptr;
+  opts->compute_dtype = UAII_COMPUTE_DTYPE_F32;
+  opts->keep_quantized_weights = 1;
+  opts->max_context = 0;
 }
 
 uaii_status uaii_get_version(int* major, int* minor, int* patch) {
@@ -162,6 +166,13 @@ uaii_status uaii_session_create(const char* path,
   sopts.enable_streaming = local.enable_streaming != 0;
   sopts.allow_missing_weights = local.allow_missing_weights != 0;
   if (local.weights_sandbox) sopts.weights_sandbox = local.weights_sandbox;
+  if (local.compute_dtype == UAII_COMPUTE_DTYPE_F16) {
+    sopts.compute_dtype = uaii::DType::F16;
+  } else {
+    sopts.compute_dtype = uaii::DType::F32;
+  }
+  sopts.keep_quantized_weights = local.keep_quantized_weights != 0;
+  sopts.max_context = local.max_context;
 
   err = handle->session.create(std::move(graph), sopts);
   if (!err.ok()) return from_error(err);
@@ -219,6 +230,32 @@ uaii_status uaii_session_run(uaii_session* session) {
   }
   auto* h = reinterpret_cast<SessionHandle*>(session);
   return from_error(h->session.run());
+}
+
+uaii_status uaii_session_generate(uaii_session* session,
+                                  const int64_t* prompt_tokens,
+                                  size_t prompt_n,
+                                  int64_t max_new_tokens,
+                                  int64_t* out_tokens,
+                                  size_t capacity,
+                                  size_t* out_n) {
+  if (session == nullptr || out_tokens == nullptr || out_n == nullptr) {
+    set_error_msg("generate null args");
+    return UAII_ERR_INVALID_ARGUMENT;
+  }
+  auto* h = reinterpret_cast<SessionHandle*>(session);
+  std::vector<std::int64_t> prompt;
+  if (prompt_tokens != nullptr && prompt_n > 0) {
+    prompt.assign(prompt_tokens, prompt_tokens + prompt_n);
+  }
+  std::vector<std::int64_t> out;
+  uaii::Error err = h->session.generate(prompt, max_new_tokens, &out);
+  if (!err.ok()) return from_error(err);
+  const size_t n = std::min(capacity, out.size());
+  for (size_t i = 0; i < n; ++i) out_tokens[i] = out[i];
+  *out_n = n;
+  g_last_error.clear();
+  return UAII_OK;
 }
 
 uaii_status uaii_session_profile_summary(uaii_session* session,

@@ -2,6 +2,10 @@
 
 #include "uaii/kernels/kernels.hpp"
 
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
 namespace uaii {
 namespace backends {
 
@@ -49,6 +53,7 @@ BackendCapabilities HostExecutableBackend::capabilities() const {
   caps.supports_async = false;
   caps.host_fallback = host_fallback_;
   caps.native_available = native_available_;
+  caps.attention_host_fallback = attention_host_fallback_;
   caps.details = details_;
   return caps;
 }
@@ -76,6 +81,44 @@ Error HostExecutableBackend::free(void* ptr) noexcept {
   return Error::make(ErrorCode::NotFound, "pointer not owned by backend");
 }
 
+Error HostExecutableBackend::copy_h2d(const void* host, void* device, std::size_t bytes) {
+  if (bytes == 0) {
+    return Error::success();
+  }
+  if (host == nullptr || device == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "copy_h2d null pointer");
+  }
+  std::memcpy(device, host, bytes);
+  return Error::success();
+}
+
+Error HostExecutableBackend::copy_h2d_async(const void* host, void* device,
+                                            std::size_t bytes) {
+  return copy_h2d(host, device, bytes);
+}
+
+Error HostExecutableBackend::copy_d2h(const void* device, void* host, std::size_t bytes) {
+  if (bytes == 0) {
+    return Error::success();
+  }
+  if (host == nullptr || device == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "copy_d2h null pointer");
+  }
+  std::memcpy(host, device, bytes);
+  return Error::success();
+}
+
+Error HostExecutableBackend::copy_d2d(const void* src, void* dst, std::size_t bytes) {
+  if (bytes == 0) {
+    return Error::success();
+  }
+  if (src == nullptr || dst == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "copy_d2d null pointer");
+  }
+  std::memcpy(dst, src, bytes);
+  return Error::success();
+}
+
 Error HostExecutableBackend::synchronize() {
   return Error::success();
 }
@@ -89,6 +132,75 @@ Error HostExecutableBackend::dispatch(const std::string& op_name,
     return Error::make(ErrorCode::InvalidArgument, name_ + " backend not initialized");
   }
   return kernels::dispatch_cpu(op_name, op_version, inputs, outputs, attrs);
+}
+
+Error HostExecutableBackend::dispatch_on_host_path(
+    const std::string& op_name,
+    const std::string& op_version,
+    const std::vector<kernels::TensorView>& inputs,
+    std::vector<kernels::TensorView>* outputs,
+    const std::vector<ir::Attribute>& attrs) {
+  if (device_type_ != DeviceType::Cpu && native_available_) {
+    return dispatch_via_host_staging(op_name, op_version, inputs, outputs, attrs);
+  }
+  return dispatch(op_name, op_version, inputs, outputs, attrs);
+}
+
+Error HostExecutableBackend::dispatch_via_host_staging(
+    const std::string& op_name,
+    const std::string& op_version,
+    const std::vector<kernels::TensorView>& inputs,
+    std::vector<kernels::TensorView>* outputs,
+    const std::vector<ir::Attribute>& attrs) {
+  if (outputs == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "dispatch outputs null");
+  }
+
+  std::vector<std::vector<std::uint8_t>> in_storage(inputs.size());
+  std::vector<kernels::TensorView> host_inputs = inputs;
+  for (std::size_t i = 0; i < inputs.size(); ++i) {
+    if (inputs[i].data == nullptr || inputs[i].nbytes == 0) {
+      continue;
+    }
+    in_storage[i].resize(inputs[i].nbytes);
+    Error err = copy_d2h(inputs[i].data, in_storage[i].data(), inputs[i].nbytes);
+    if (!err.ok()) {
+      return err;
+    }
+    host_inputs[i].data = in_storage[i].data();
+  }
+
+  std::vector<std::vector<std::uint8_t>> out_storage(outputs->size());
+  std::vector<kernels::TensorView> host_outputs = *outputs;
+  for (std::size_t i = 0; i < outputs->size(); ++i) {
+    if ((*outputs)[i].data == nullptr || (*outputs)[i].nbytes == 0) {
+      continue;
+    }
+    out_storage[i].resize((*outputs)[i].nbytes);
+    // Seed with device contents when kernels may read-modify-write.
+    Error err = copy_d2h((*outputs)[i].data, out_storage[i].data(), (*outputs)[i].nbytes);
+    if (!err.ok()) {
+      return err;
+    }
+    host_outputs[i].data = out_storage[i].data();
+  }
+
+  Error err =
+      kernels::dispatch_cpu(op_name, op_version, host_inputs, &host_outputs, attrs);
+  if (!err.ok()) {
+    return err;
+  }
+
+  for (std::size_t i = 0; i < outputs->size(); ++i) {
+    if ((*outputs)[i].data == nullptr || (*outputs)[i].nbytes == 0) {
+      continue;
+    }
+    err = copy_h2d(out_storage[i].data(), (*outputs)[i].data, (*outputs)[i].nbytes);
+    if (!err.ok()) {
+      return err;
+    }
+  }
+  return Error::success();
 }
 
 }  // namespace backends

@@ -5,6 +5,7 @@
 #include "uaii/ir/attribute.hpp"
 #include "uaii/kernels/tensor_view.hpp"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,8 @@ struct BackendCapabilities {
   bool supports_async = false;
   bool host_fallback = false;
   bool native_available = false;
+  /// True when Attention (and related) still run on the host path.
+  bool attention_host_fallback = false;
   std::string details;
 };
 
@@ -38,6 +41,36 @@ class IBackend {
   [[nodiscard]] virtual Error allocate(std::size_t bytes, void** out_ptr) = 0;
   [[nodiscard]] virtual Error free(void* ptr) noexcept = 0;
 
+  [[nodiscard]] virtual Error copy_h2d(const void* host, void* device, std::size_t bytes) {
+    (void)host;
+    (void)device;
+    (void)bytes;
+    return Error::make(ErrorCode::NotImplemented, "copy_h2d not implemented");
+  }
+
+  /// Best-effort async host→device copy (CUDA copy stream when supported).
+  [[nodiscard]] virtual Error copy_h2d_async(const void* host, void* device,
+                                               std::size_t bytes) {
+    (void)host;
+    (void)device;
+    (void)bytes;
+    return Error::make(ErrorCode::NotImplemented, "copy_h2d_async not implemented");
+  }
+
+  [[nodiscard]] virtual Error copy_d2h(const void* device, void* host, std::size_t bytes) {
+    (void)device;
+    (void)host;
+    (void)bytes;
+    return Error::make(ErrorCode::NotImplemented, "copy_d2h not implemented");
+  }
+
+  [[nodiscard]] virtual Error copy_d2d(const void* src, void* dst, std::size_t bytes) {
+    (void)src;
+    (void)dst;
+    (void)bytes;
+    return Error::make(ErrorCode::NotImplemented, "copy_d2d not implemented");
+  }
+
   [[nodiscard]] virtual Error synchronize() = 0;
 
   /// Execute one operator. Host-fallback GPU backends may run CPU kernels.
@@ -48,6 +81,9 @@ class IBackend {
                                        const std::vector<ir::Attribute>& attrs) = 0;
 
   [[nodiscard]] virtual bool uses_host_fallback() const noexcept { return false; }
+
+  /// True when Attention still executes via the host kernel path.
+  [[nodiscard]] virtual bool attention_host_fallback() const noexcept { return false; }
 };
 
 }  // namespace uaii

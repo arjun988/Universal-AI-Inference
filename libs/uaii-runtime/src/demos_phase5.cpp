@@ -1,5 +1,6 @@
 #include "uaii/runtime/session.hpp"
 
+#include "uaii/backends/cuda_backend.hpp"
 #include "uaii/core/log.hpp"
 #include "uaii/ir/graph.hpp"
 
@@ -9,6 +10,31 @@
 namespace uaii {
 namespace runtime {
 namespace {
+
+bool parity_force_host_fallback(const std::string& backend_name) {
+  if (backend_name == "cuda") {
+    return !(backends::CudaBackend::native_compiled() &&
+             backends::CudaBackend::native_device_available());
+  }
+  return true;
+}
+
+bool parity_skip_gpu_backend(const std::string& backend_name, backends::ParityReport* report) {
+  if (backend_name != "cuda") {
+    return false;
+  }
+  if (!backends::CudaBackend::native_compiled()) {
+    return false;
+  }
+  if (backends::CudaBackend::native_device_available()) {
+    return false;
+  }
+  if (report != nullptr) {
+    report->ok = true;
+    report->message = "skipped: no CUDA device";
+  }
+  return true;
+}
 
 ir::Graph make_toy_mlp_parity_graph() {
   ir::GraphBuilder b("parity_toy_mlp");
@@ -94,16 +120,22 @@ Error run_backend_parity(const ir::Graph& graph,
   std::unordered_map<std::string, std::vector<float>> outs_a;
   std::unordered_map<std::string, std::vector<float>> outs_b;
 
-  // Force host-fallback so numerical parity is defined without vendor SDKs.
-  Error err = run_once(graph, backend_a, input_f32, input_name, &outs_a,
-                       /*force_host_fallback=*/true);
+  if (parity_skip_gpu_backend(backend_a, report) || parity_skip_gpu_backend(backend_b, report)) {
+    log::info("parity") << report->backend_a << " vs " << report->backend_b << ": "
+                        << report->message;
+    return Error::success();
+  }
+
+  const bool fb_a = parity_force_host_fallback(backend_a);
+  const bool fb_b = parity_force_host_fallback(backend_b);
+
+  Error err = run_once(graph, backend_a, input_f32, input_name, &outs_a, fb_a);
   if (!err.ok()) {
     report->ok = false;
     report->message = "backend_a failed: " + err.to_string();
     return err;
   }
-  err = run_once(graph, backend_b, input_f32, input_name, &outs_b,
-                 /*force_host_fallback=*/true);
+  err = run_once(graph, backend_b, input_f32, input_name, &outs_b, fb_b);
   if (!err.ok()) {
     report->ok = false;
     report->message = "backend_b failed: " + err.to_string();

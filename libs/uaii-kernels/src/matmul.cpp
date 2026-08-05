@@ -1,10 +1,6 @@
 #include "uaii/kernels/kernels.hpp"
-#include "uaii/kernels/thread_pool.hpp"
+#include "uaii/kernels/gemm.hpp"
 #include "uaii/kernels/view_util.hpp"
-
-#if defined(__AVX2__)
-#  include <immintrin.h>
-#endif
 
 namespace uaii {
 namespace kernels {
@@ -19,16 +15,6 @@ Error require_f32_2d(const TensorView& t, const char* name) {
                        std::string(name) + " must be rank-2 with data");
   }
   return check_view_bytes(t, name);
-}
-
-inline float load_a(const float* A, std::int64_t i, std::int64_t k, std::int64_t ld,
-                    bool transpose_a) {
-  return transpose_a ? A[k * ld + i] : A[i * ld + k];
-}
-
-inline float load_b(const float* B, std::int64_t k, std::int64_t j, std::int64_t ld,
-                    bool transpose_b) {
-  return transpose_b ? B[j * ld + k] : B[k * ld + j];
 }
 
 }  // namespace
@@ -65,49 +51,8 @@ Error matmul_f32(const TensorView& a,
     return Error::make(ErrorCode::InvalidArgument, "matmul output shape mismatch");
   }
 
-  const float* A = a.f32();
-  const float* B = b.f32();
-  float* C = c->f32();
-  const std::int64_t M = a_rows;
-  const std::int64_t K = a_cols;
-  const std::int64_t N = b_cols;
-  const std::int64_t a_ld = a.dim(1);
-  const std::int64_t b_ld = b.dim(1);
-
-  // Parallelize over rows; inner loop uses AVX2 when available and layout is contiguous.
-  parallel_for(static_cast<std::size_t>(M), [&](std::size_t ii) {
-    const std::int64_t i = static_cast<std::int64_t>(ii);
-#if defined(__AVX2__)
-    if (!transpose_a && !transpose_b) {
-      for (std::int64_t j = 0; j < N; ++j) {
-        __m256 acc = _mm256_setzero_ps();
-        std::int64_t k = 0;
-        for (; k + 8 <= K; k += 8) {
-          __m256 av = _mm256_loadu_ps(A + i * a_ld + k);
-          __m256 bv = _mm256_set_ps(
-              B[(k + 7) * b_ld + j], B[(k + 6) * b_ld + j], B[(k + 5) * b_ld + j],
-              B[(k + 4) * b_ld + j], B[(k + 3) * b_ld + j], B[(k + 2) * b_ld + j],
-              B[(k + 1) * b_ld + j], B[(k + 0) * b_ld + j]);
-          acc = _mm256_add_ps(acc, _mm256_mul_ps(av, bv));
-        }
-        alignas(32) float tmp[8];
-        _mm256_store_ps(tmp, acc);
-        float sum = tmp[0] + tmp[1] + tmp[2] + tmp[3] + tmp[4] + tmp[5] + tmp[6] + tmp[7];
-        for (; k < K; ++k) sum += A[i * a_ld + k] * B[k * b_ld + j];
-        C[i * N + j] = sum;
-      }
-      return;
-    }
-#endif
-    for (std::int64_t j = 0; j < N; ++j) {
-      float sum = 0.0f;
-      for (std::int64_t k = 0; k < K; ++k) {
-        sum += load_a(A, i, k, a_ld, transpose_a) * load_b(B, k, j, b_ld, transpose_b);
-      }
-      C[i * N + j] = sum;
-    }
-  });
-  return Error::success();
+  return default_gemm().gemm_f32(a_rows, b_cols, a_cols, a.f32(), a.dim(1), transpose_a,
+                                 b.f32(), b.dim(1), transpose_b, c->f32(), c->dim(1));
 }
 
 }  // namespace kernels

@@ -19,6 +19,9 @@ class UAII_API SimpleTokenizer : public ITokenizer {
   /// Load vocab from a simple text file: one token per line (id = line index).
   [[nodiscard]] Error load_vocab_file(const std::string& path);
 
+  /// Load vocab from an ordered token list (id = index).
+  [[nodiscard]] Error load_from_token_list(const std::vector<std::string>& tokens);
+
   void set_vocab(std::unordered_map<std::string, std::int64_t> token_to_id);
 
   [[nodiscard]] std::string name() const override { return "simple"; }

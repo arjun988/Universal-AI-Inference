@@ -285,26 +285,25 @@ Host rejects plugins whose `abi_version != UAII_PLUGIN_ABI_VERSION`.
 - [x] MoE router + expert dispatch (+ smoke demo)
 - [x] GGUF/Safetensors generate-style demos
 
-**Phase 5** (scaffold — CPU kernels under GPU names until real device paths land)
+**Phase 5+** (see [docs/backend_support.md](docs/backend_support.md))
 
-- [x] Backend factory + host-fallback CUDA/Metal/Vulkan/WebGPU/ROCm modules
-- [x] Parity policy API (honest host-fallback comparisons)
-- [ ] Real device kernels (CUDA/Metal/…) — not yet
+- [x] Backend factory; CUDA first-class when `UAII_WITH_CUDA`; other GPUs minimal/native + honest caps
+- [x] Parity policy API
+- [ ] Multi-backend execution (single backend today; scheduler validates + host-path dispatch for CPU placements)
 
-**Phase 6**
+**Phase 6+** (see [docs/gguf_support.md](docs/gguf_support.md))
 
-- [x] Fusion, memory reuse, storage plan, streaming fixture, profiler
-- [x] Threaded MatMul + shape/nbytes guards
-- [x] GGUF Q4_0 / Q8_0 dequant-to-f32 load
-- [ ] Competitive SIMD kernels / async IO-compute overlap — partial
+- [x] Fusion, memory reuse, profiler, plan disk cache
+- [x] Weight streaming (host staging + CUDA async H2D overlap when native)
+- [x] Competitive CPU GEMM (`IGemm` / oneDNN / OpenBLAS / tiled ref)
+- [x] In-memory GGUF quant GEMM + KV cache generate path
 
-**Phase 7**
+**Phase 7+**
 
-- [x] C API **0.2.0** (`struct_size`, fail-closed weights) + `uaii_capi`
-- [x] Python SDK load/run/profile (ctypes; optional pybind11)
-- [x] Next.js static docs site + CI website build
-- [x] `find_package(uaii)` install export
-- [ ] Pip wheels bundling native libs by default — use `bundle_native.py` or `UAII_CAPI_PATH`
+- [x] C API **0.3.0** (`struct_size`, `uaii_session_generate`, `compute_dtype` / `keep_quantized_weights` / `max_context`) + `uaii_capi`
+- [x] Python SDK + `bundle_native.py` / wheels workflow (tag / manual dispatch; not PR CI)
+- [x] ONNX / PyTorch / MLX loaders + BPE / SentencePiece
+- [x] Docs site + CI (multi-OS build/test; optional CUDA + oneDNN compile-only jobs)
 
 ### Phase 6 optimization (run after you build)
 

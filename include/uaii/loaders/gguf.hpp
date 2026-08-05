@@ -4,6 +4,7 @@
 #include "uaii/export.hpp"
 #include "uaii/interfaces/loader.hpp"
 #include "uaii/interfaces/types.hpp"
+#include "uaii/quant/formats.hpp"
 
 #include <cstdint>
 #include <string>
@@ -22,6 +23,11 @@ enum class GgufType : std::uint32_t {
   Q5_0 = 6,
   Q5_1 = 7,
   Q8_0 = 8,
+  Q2_K = 10,
+  Q3_K = 11,
+  Q4_K = 12,
+  Q5_K = 13,
+  Q6_K = 14,
   I8 = 16,
   I16 = 17,
   I32 = 18,
@@ -71,6 +77,18 @@ struct GgufFile {
                                                   const std::string& tensor_name,
                                                   std::vector<float>* out,
                                                   Shape* out_shape);
+
+/// Load raw packed bytes (no dequant) for in-memory quant GEMM.
+[[nodiscard]] UAII_API Error gguf_load_tensor_raw(const GgufFile& file,
+                                                  const std::string& tensor_name,
+                                                  std::vector<std::uint8_t>* out,
+                                                  Shape* out_shape,
+                                                  GgufType* out_type);
+
+/// True for F32/F16 and GGUF block quants supported on the transformer import path.
+[[nodiscard]] UAII_API bool gguf_type_supported(GgufType t) noexcept;
+
+[[nodiscard]] UAII_API quant::QuantFormat gguf_type_to_quant(GgufType t) noexcept;
 
 /// Write a minimal F32-only GGUF (for fixtures / demos).
 [[nodiscard]] UAII_API Error gguf_write_f32(

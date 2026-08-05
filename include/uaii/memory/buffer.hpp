@@ -2,6 +2,7 @@
 
 #include "uaii/interfaces/types.hpp"
 #include "uaii/ir/tensor.hpp"
+#include "uaii/quant/formats.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,9 @@ struct TensorBuffer {
   void* data = nullptr;
   std::size_t nbytes = 0;
   bool owned = false;  // true if pool/arena owns the allocation
+  quant::QuantFormat quant_format = quant::QuantFormat::F32;
+  std::int64_t quant_rows = 0;
+  std::int64_t quant_cols = 0;
 };
 
 [[nodiscard]] inline float* as_f32(TensorBuffer& buf) {

@@ -56,7 +56,7 @@ namespace kernels {
                                       TensorView* out,
                                       float theta = 10000.0f);
 
-/// Simplified MHA: Q,K,V are [batch, seq, dim]; out same. attrs via scale/causal.
+/// Simplified MHA: Q,K,V are [batch, seq, dim] or [batch, dim]; out same.
 [[nodiscard]] UAII_API Error attention_f32(const TensorView& q,
                                            const TensorView& k,
                                            const TensorView& v,
@@ -64,6 +64,21 @@ namespace kernels {
                                            int num_heads,
                                            float scale,
                                            bool causal);
+
+/// MHA with optional past K/V ([batch, past_seq, dim]) and optional present outputs.
+/// If present_* aliases past_* (same data pointer), appends new K/V in-place when capacity allows.
+/// Supports rank-2 ([batch, dim] ⇒ seq=1) and rank-3 Q/K/V.
+[[nodiscard]] UAII_API Error attention_kv_f32(const TensorView& q,
+                                              const TensorView& k,
+                                              const TensorView& v,
+                                              TensorView* out,
+                                              int num_heads,
+                                              float scale,
+                                              bool causal,
+                                              const TensorView* past_k,
+                                              const TensorView* past_v,
+                                              TensorView* present_k,
+                                              TensorView* present_v);
 
 /// MoE router: logits = x @ gate_w^T ; probs = softmax; returns top-1 expert index in out_index (f32)
 [[nodiscard]] UAII_API Error moe_router_f32(const TensorView& x,

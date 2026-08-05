@@ -514,7 +514,9 @@ Error SafetensorsLoader::load(const std::string& path, ir::Graph* out_graph) {
       TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, dim}});
       b.add_node(pfx + "attn", "Attention", "1", {q, k, v}, {attn},
                  {ir::make_int_attr("num_heads", n_heads),
-                  ir::make_bool_attr("causal", true)});
+                  ir::make_bool_attr("causal", true),
+                  ir::make_bool_attr("use_kv_cache", true),
+                  ir::make_int_attr("layer_id", li)});
       TensorId attn_o = b.add_tensor(pfx + "attn_o", DType::F32, Shape{{1, dim}});
       b.add_node(pfx + "o_proj", "MatMul", "1", {attn, wo}, {attn_o},
                  {ir::make_bool_attr("transpose_b", true)});
@@ -575,6 +577,13 @@ Error SafetensorsLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.set_inputs({tokens}).set_outputs({probs});
     b.set_metadata("architecture", n_layers > 0 ? "transformer" : "tiny_lm");
     b.set_metadata("n_layers", std::to_string(n_layers));
+    b.set_metadata("n_heads", std::to_string(n_heads));
+    b.set_metadata("embedding_length", std::to_string(dim));
+    if (auto it = file.metadata.find("max_position_embeddings");
+        it != file.metadata.end()) {
+      b.set_metadata("max_context", it->second);
+      b.set_metadata("context_length", it->second);
+    }
   } else {
     TensorId x = b.add_tensor("x", DType::F32, Shape{{1, 1}});
     TensorId y = b.add_tensor("y", DType::F32, Shape{{1, 1}});

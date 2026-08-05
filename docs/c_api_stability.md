@@ -2,7 +2,7 @@
 
 **Surface:** [`include/uaii/c_api/uaii.h`](../include/uaii/c_api/uaii.h)  
 **API version macros:** [`include/uaii/c_api/version.h`](../include/uaii/c_api/version.h)  
-**Current C API:** `UAII_C_API_VERSION` = **0.2.0** (pre-1.0; `struct_size` required)
+**Current C API:** `UAII_C_API_VERSION` = **0.3.0** (pre-1.0; `struct_size` required)
 
 ## Semantic versioning
 
@@ -21,7 +21,28 @@ Package version (`uaii_get_version` / CMake `PROJECT_VERSION`) may advance indep
 3. String arguments are UTF-8 paths / names; ownership stays with the caller.
 4. `uaii_session_options` may grow at the end in minor releases; always call `uaii_session_options_init` and set/keep `struct_size = sizeof(uaii_session_options)`.
 5. Defaults are **fail-closed**: `weight_init = NONE` (no silent Ones fill).
-5. Plugin ABI (`UAII_PLUGIN_ABI_VERSION`) is **separate** from the C API version.
+6. Plugin ABI (`UAII_PLUGIN_ABI_VERSION`) is **separate** from the C API version.
+
+## `uaii_session_options` (0.3.0)
+
+| Field | Default | Notes |
+|---|---|---|
+| `struct_size` | `sizeof(...)` | Required; reject if 0 or larger than library |
+| `backend` | `"cpu"` | |
+| `weights_dir` | NULL | |
+| `weight_init` | `UAII_WEIGHT_INIT_NONE` | Fail closed |
+| `enable_fusion` / `enable_memory_reuse` | 1 | |
+| `enable_profiler` | 0 | |
+| `profile_trace_path` | NULL | |
+| `budget_bytes` | 0 | Unlimited |
+| `enable_streaming` | 0 | Host staging; CUDA native may async H2D |
+| `allow_missing_weights` | 0 | |
+| `weights_sandbox` | NULL | |
+| `compute_dtype` | `UAII_COMPUTE_DTYPE_F32` | Added at end of struct (0.3.0) |
+| `keep_quantized_weights` | 1 | GGUF block-quant packed path |
+| `max_context` | 0 | 0 = graph metadata / unlimited generate bound |
+
+Callers built against an older header with a smaller `struct_size` continue to work: the library zero-initializes defaults then copies only `struct_size` bytes.
 
 ## Shared library
 

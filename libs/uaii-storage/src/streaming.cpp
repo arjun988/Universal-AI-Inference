@@ -2,6 +2,8 @@
 
 #include "uaii/core/log.hpp"
 
+#include <chrono>
+
 namespace uaii {
 namespace storage {
 namespace {
@@ -95,6 +97,40 @@ void StreamingWeightStore::prefetch(TensorId id) {
   prefetch_fut_ = std::async(std::launch::async, [this, slot, id]() {
     return stage_into(slot, id);
   });
+}
+
+TensorId StreamingWeightStore::slot_resident(int slot) const noexcept {
+  if (slot < 0 || slot > 1) return 0;
+  return resident_[slot];
+}
+
+const void* StreamingWeightStore::slot_data(int slot) const noexcept {
+  if (slot < 0 || slot > 1) return nullptr;
+  return buffers_[slot].data();
+}
+
+std::size_t StreamingWeightStore::tensor_bytes(TensorId id) const {
+  auto it = sizes_.find(id);
+  if (it == sizes_.end()) return 0;
+  return static_cast<std::size_t>(it->second);
+}
+
+bool StreamingWeightStore::try_peek_prefetched(TensorId id, const void** out_data,
+                                               std::size_t* out_nbytes) {
+  if (out_data == nullptr || out_nbytes == nullptr) return false;
+  std::lock_guard<std::mutex> lock(mu_);
+  if (prefetch_fut_.valid() && prefetch_id_ == id) {
+    if (prefetch_fut_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      return false;
+    }
+  }
+  const int inactive = 1 - active_;
+  if (resident_[inactive] != id) return false;
+  auto sit = sizes_.find(id);
+  if (sit == sizes_.end()) return false;
+  *out_data = buffers_[inactive].data();
+  *out_nbytes = static_cast<std::size_t>(sit->second);
+  return true;
 }
 
 Error StreamingWeightStore::stage(TensorId id, const void** out_data, std::size_t* out_nbytes) {

@@ -10,22 +10,80 @@ uaii_add_module(backends
     src/factory.cpp
     src/parity.cpp
     src/native_unavailable.cpp
-    src/native_scaffold.cpp
   DEPS uaii::core uaii::ir uaii::memory uaii::kernels
 )
 
+# --- CUDA (first-class device path) ------------------------------------------
 if(UAII_WITH_CUDA)
+  include(CheckLanguage)
+  check_language(CUDA)
+  if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+  else()
+    message(FATAL_ERROR "UAII_WITH_CUDA=ON but no CUDA compiler found")
+  endif()
+
+  find_package(CUDAToolkit REQUIRED)
+
+  target_sources(uaii_backends PRIVATE
+    src/cuda_runtime_api.cpp
+    src/cuda_kernels.cu
+  )
   target_compile_definitions(uaii_backends PUBLIC UAII_WITH_CUDA=1)
+  target_link_libraries(uaii_backends PUBLIC CUDA::cudart CUDA::cublas CUDA::cublasLt)
+  set_target_properties(uaii_backends PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_STANDARD 17
+  )
+  # Allow .cpp to include cuda_runtime.h / cublas_v2.h
+  target_include_directories(uaii_backends PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 endif()
+
+# --- Metal -------------------------------------------------------------------
 if(UAII_WITH_METAL)
   target_compile_definitions(uaii_backends PUBLIC UAII_WITH_METAL=1)
+  if(APPLE)
+    target_sources(uaii_backends PRIVATE src/metal_runtime_api.mm)
+    target_link_libraries(uaii_backends PUBLIC
+      "-framework Metal"
+      "-framework Foundation"
+    )
+  else()
+    target_sources(uaii_backends PRIVATE src/metal_runtime_api.cpp)
+  endif()
 endif()
+
+# --- Vulkan ------------------------------------------------------------------
 if(UAII_WITH_VULKAN)
   target_compile_definitions(uaii_backends PUBLIC UAII_WITH_VULKAN=1)
+  target_sources(uaii_backends PRIVATE src/vulkan_runtime_api.cpp)
+  find_package(Vulkan QUIET)
+  if(Vulkan_FOUND)
+    target_link_libraries(uaii_backends PUBLIC Vulkan::Vulkan)
+  else()
+    message(STATUS "UAII_WITH_VULKAN=ON but Vulkan package not found; "
+                   "vulkan_runtime_api.cpp will report missing headers at runtime")
+  endif()
 endif()
+
+# --- WebGPU ------------------------------------------------------------------
 if(UAII_WITH_WEBGPU)
   target_compile_definitions(uaii_backends PUBLIC UAII_WITH_WEBGPU=1)
+  target_sources(uaii_backends PRIVATE src/webgpu_runtime_api.cpp)
 endif()
+
+# --- ROCm / HIP --------------------------------------------------------------
 if(UAII_WITH_ROCM)
   target_compile_definitions(uaii_backends PUBLIC UAII_WITH_ROCM=1)
+  target_sources(uaii_backends PRIVATE src/rocm_runtime_api.cpp)
+  find_package(hip QUIET)
+  if(hip_FOUND)
+    target_sources(uaii_backends PRIVATE src/rocm_kernels.hip)
+    target_link_libraries(uaii_backends PUBLIC hip::host)
+    set_source_files_properties(src/rocm_kernels.hip PROPERTIES LANGUAGE HIP)
+  endif()
+  find_package(rocblas QUIET)
+  if(rocblas_FOUND)
+    target_link_libraries(uaii_backends PUBLIC roc::rocblas)
+  endif()
 endif()

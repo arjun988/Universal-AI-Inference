@@ -39,5 +39,16 @@ class UAII_API LoaderRegistry {
                                                  float* dst,
                                                  std::size_t nbytes);
 
+/// Load packed quant bytes when available; sets *out_format. Falls back to f32 unpack
+/// into dst_f32 if keep_packed is false or format is dense.
+[[nodiscard]] UAII_API Error load_weight_ref_auto(const std::string& weight_ref,
+                                                  const std::string& weights_dir,
+                                                  const Shape& expected_shape,
+                                                  bool keep_packed,
+                                                  std::vector<std::uint8_t>* packed_out,
+                                                  quant::QuantFormat* out_format,
+                                                  float* dst_f32,
+                                                  std::size_t nbytes_f32);
+
 }  // namespace loaders
 }  // namespace uaii

@@ -6,6 +6,7 @@
 #include "uaii/core/log.hpp"
 #include "uaii/core/plugin.hpp"
 #include "uaii/interfaces/types.hpp"
+#include "uaii/kernels/gemm.hpp"
 #include "uaii/plugins/operator_host.hpp"
 #include "uaii/version.hpp"
 
@@ -82,14 +83,17 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   std::cout << "Modules (probed)\n";
   print_kv("uaii-core", "active");
   print_kv("uaii-ir", "active");
-  print_kv("uaii-runtime", "active (CPU session; f32 compute)");
+  print_kv("uaii-runtime",
+           "active (session; compute_dtype F32|F16 policy; quant weights optional)");
   print_kv("uaii-memory", "active");
   print_kv("uaii-storage", "active (OS mmap + double-buffer streaming)");
   print_kv("uaii-planner", "active (fusion, memory/storage plan, disk cache)");
-  print_kv("uaii-kernels", "active (threaded MatMul + plugin ops)");
-  print_kv("uaii-backends", "CPU real; GPU names = host-fallback unless native ON");
-  print_kv("uaii-loaders", "GGUF (Q4_0/Q8_0/F16→f32) + Safetensors");
-  print_kv("uaii-tokenizers", "SimpleTokenizer (whitespace; not BPE/SP)");
+  print_kv("uaii-kernels",
+           std::string("GEMM=") + kernels::GemmRegistry::instance().describe() +
+               "; quant-GEMM; plugin ops");
+  print_kv("uaii-backends", "CPU real; CUDA first-class when UAII_WITH_CUDA; others minimal/native");
+  print_kv("uaii-loaders", "GGUF/Safetensors/ONNX/MLX(+PT optional)");
+  print_kv("uaii-tokenizers", "Simple + BPE + SentencePiece (if enabled)");
   print_kv("uaii-quant", "pack/unpack helpers; session compute remains f32");
   print_kv("uaii-profiler", "chrome-trace timelines");
   print_kv("uaii-capi",
@@ -102,20 +106,21 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   for (const auto& b : backends::list_backends()) {
     std::unique_ptr<IBackend> be;
     backends::BackendCreateOptions bo;
-    // Probe real create path; GPU backends still report host_fallback in caps.
-    bo.force_host_fallback = (b.device_type != DeviceType::Cpu);
+    // Prefer native probe so caps reflect real host_fallback / attention flags.
+    bo.prefer_native = true;
+    bo.force_host_fallback = false;
     Error cerr = backends::create_backend(b.name, bo, &be);
     std::ostringstream oss;
     oss << to_string(b.device_type)
         << " create=" << (cerr.ok() ? "ok" : "fail")
         << " native_compiled=" << (b.native_compiled ? "yes" : "no")
-        << (b.device_type == DeviceType::Cpu ? " host_fallback=n/a"
-                                             : " host_fallback=default")
         << " — " << b.description;
     if (cerr.ok() && be) {
       (void)be->initialize();
       const auto caps = be->capabilities();
-      oss << " | " << caps.details;
+      oss << " | host_fallback=" << (caps.host_fallback ? "yes" : "no")
+          << " attention_host_fallback="
+          << (caps.attention_host_fallback ? "yes" : "no") << " | " << caps.details;
       be->shutdown();
     }
     print_kv(b.name.c_str(), oss.str());
@@ -128,11 +133,12 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
 
   std::cout << "Interfaces\n";
   print_kv("IBackend", "cpu/cuda/metal/vulkan/webgpu/rocm");
-  print_kv("IModelLoader", "GGUF + Safetensors");
-  print_kv("IOperator / IOperatorRegistry", "declared");
-  print_kv("IStorageProvider", "declared");
-  print_kv("IScheduler", "CPU");
-  print_kv("ITokenizer", "SimpleTokenizer");
+  print_kv("IModelLoader", "GGUF + Safetensors + ONNX + MLX + PyTorch(sidecar)");
+  print_kv("IOperator / IOperatorRegistry", "declared + plugin ops");
+  print_kv("IStorageProvider", "declared (mmap + streaming)");
+  print_kv("IScheduler", "DeviceScheduler (preferred device + attention host)");
+  print_kv("ITokenizer", "SimpleTokenizer + BpeTokenizer + SentencePieceTokenizer");
+  print_kv("IGemm", kernels::GemmRegistry::instance().describe());
   std::cout << '\n';
 
   PluginRegistry registry;
