@@ -40,7 +40,8 @@ LoaderInfo OnnxLoader::info() const {
 
 bool OnnxLoader::accepts(const std::string& path) const {
   const auto e = lower_ext(path);
-  return e == ".onnx" || path.size() > 10 && path.substr(path.size() - 10) == ".onnx.json";
+  return e == ".onnx" ||
+         (path.size() > 10 && path.substr(path.size() - 10) == ".onnx.json");
 }
 
 Error OnnxLoader::load(const std::string& path, ir::Graph* out_graph) {

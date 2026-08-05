@@ -7,7 +7,7 @@
 #include <cctype>
 #include <fstream>
 #include <filesystem>
-#include <iterator>
+#include <sstream>
 
 namespace uaii {
 namespace loaders {
@@ -56,7 +56,9 @@ Error MlxLoader::load(const std::string& path, ir::Graph* out_graph) {
   const fs::path cfg = root / "config.json";
   if (fs::exists(cfg)) {
     std::ifstream in(cfg);
-    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    const std::string text = ss.str();
     out_graph->metadata["mlx_config"] = text.substr(0, 4096);
     // Pull num_attention_heads / num_hidden_layers if present as plain substrings.
     auto pull = [&](const char* key) {

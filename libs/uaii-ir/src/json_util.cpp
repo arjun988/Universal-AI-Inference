@@ -320,7 +320,7 @@ void dump(std::ostream& os, const Value& v, bool pretty, int indent) {
     case Value::Kind::String:
       write_escaped(os, v.str);
       break;
-    case Value::Kind::Array: {
+    case Value::Kind::Arr: {
       os << '[';
       if (pretty && !v.arr.empty()) os << '\n';
       for (std::size_t i = 0; i < v.arr.size(); ++i) {
@@ -333,7 +333,7 @@ void dump(std::ostream& os, const Value& v, bool pretty, int indent) {
       os << ']';
       break;
     }
-    case Value::Kind::Object: {
+    case Value::Kind::Obj: {
       os << '{';
       if (pretty && !v.obj.empty()) os << '\n';
       std::size_t i = 0;

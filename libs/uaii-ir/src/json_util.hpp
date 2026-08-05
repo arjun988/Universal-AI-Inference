@@ -16,7 +16,8 @@ using Object = std::map<std::string, Value>;
 using Array = std::vector<Value>;
 
 struct Value {
-  enum class Kind { Null, Bool, Number, String, Array, Object };
+  // Names avoid shadowing the Array/Object type aliases above.
+  enum class Kind { Null, Bool, Number, String, Arr, Obj };
 
   Kind kind = Kind::Null;
   bool b = false;
@@ -46,13 +47,13 @@ struct Value {
   }
   [[nodiscard]] static Value array(Array v) {
     Value x;
-    x.kind = Kind::Array;
+    x.kind = Kind::Arr;
     x.arr = std::move(v);
     return x;
   }
   [[nodiscard]] static Value object(Object v) {
     Value x;
-    x.kind = Kind::Object;
+    x.kind = Kind::Obj;
     x.obj = std::move(v);
     return x;
   }
@@ -61,8 +62,8 @@ struct Value {
   [[nodiscard]] bool is_bool() const { return kind == Kind::Bool; }
   [[nodiscard]] bool is_number() const { return kind == Kind::Number; }
   [[nodiscard]] bool is_string() const { return kind == Kind::String; }
-  [[nodiscard]] bool is_array() const { return kind == Kind::Array; }
-  [[nodiscard]] bool is_object() const { return kind == Kind::Object; }
+  [[nodiscard]] bool is_array() const { return kind == Kind::Arr; }
+  [[nodiscard]] bool is_object() const { return kind == Kind::Obj; }
 };
 
 [[nodiscard]] Error parse(const std::string& text, Value* out);
