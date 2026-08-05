@@ -37,45 +37,53 @@ The `benchmarks` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml
 
 - Triggered on push / PR / **workflow_dispatch** (Actions → ci → Run workflow)
 - Job summary prints the GEMM table (median ms + GFLOP/s) with CPU and `gemm_provider`
-- Use these JSONs for public citation when local Application Control blocks unsigned builds
+- Download from the run’s **Artifacts** section
 
-## Sample results (one Windows host)
+## Published results — GitHub Actions Windows
 
-**Artifact:** [`benchmarks/results/sample_windows_mingw.json`](../benchmarks/results/sample_windows_mingw.json)
+**Host:** GitHub Actions `windows-latest` · AMD EPYC 7763 · **4 threads** · Release · `GEMM=ref-tiled`  
+**Run:** https://github.com/arjun988/Universal-AI-Inference/actions/runs/31042515292  
+**JSON:** [`benchmarks/results/ci_windows_gha.json`](../benchmarks/results/ci_windows_gha.json)  
+(raw artifact copy: [`ci_windows_1f263e31fd60.json`](../benchmarks/results/ci_windows_1f263e31fd60.json))
 
 | Field | Value |
 |---|---|
-| OS / toolchain | Windows 11 · MinGW g++ 15 · Ninja Release |
-| GEMM provider | `ref-tiled` (no oneDNN / OpenBLAS) |
-| Statistic | mean of timed iters (legacy sample; current harness → **median**) |
+| Statistic | **median** of 21 trials (warmup 5; N=1024 used 10 trials) |
+| Scope | Kernel microbenchmarks — not LLM tokens/s |
 
-### 1. Dense f32 GEMM (headline)
+### 1. Dense f32 GEMM
 
 Square `C = A @ B`, FLOPs = `2·N³`.
 
-| N | UAII time | Throughput |
+| N | Median ms | GFLOP/s |
 |---:|---:|---:|
-| 512 | 23.6 ms | **11.4 GFLOP/s** |
-| 1024 | 452 ms | **4.7 GFLOP/s** |
+| 256 | 9.96 | **3.37** |
+| 512 | 85.2 | **3.15** |
+| 1024 | 1173 | **1.83** |
 
-Lower GFLOP/s at 1024 is expected on the ref-tiled path under cache/bandwidth pressure. Linking **oneDNN** or **OpenBLAS** and re-running is the fair way to quote higher absolute throughput — always cite `gemm_provider` from the JSON / `uaii doctor`.
+These absolute numbers reflect a **4-thread shared CI runner**, not a tuned desktop. Linking **oneDNN** or **OpenBLAS** and re-running is the fair way to quote higher throughput — always cite `gemm_provider`.
 
-### 2. Q4_0 weights (format + kernel)
+### 2. Session graph
+
+Synthetic **8 × MatMul(512²)+ReLU + Softmax** (`Session::run` only):
 
 | Metric | Value |
 |---|---:|
-| Weight shape | 1024 × 4096 |
-| f32 footprint | 16.0 MiB |
-| Q4_0 packed | **2.25 MiB** |
+| Parameters (f32) | 2,097,152 |
+| Median `Session::run` | **3.87 ms** |
+
+### 3. Q4_0 weights (format + kernel)
+
+| Metric | Value |
+|---|---:|
+| Weight shape | 2048 × 4096 |
+| f32 footprint | 32.0 MiB |
+| Q4_0 packed | **4.5 MiB** |
 | Format compression | **7.11×** (GGUF Q4_0: 32 values / 18 bytes) |
-| Packed quant-GEMM | 8.0 ms |
-| Unpack-all + f32 GEMM | 12.1 ms |
+| Packed quant-GEMM | **5.35 ms** |
+| Unpack-all + f32 GEMM | 13.6 ms |
 
-Memory ratio is **format-defined**. Timing compares two UAII paths on a synthetic Q4_0 payload (valid block layout), not a full GGUF model.
-
-### 3. Session graph
-
-Current `uaii_bench` times a synthetic **8 × MatMul(512²)+ReLU + Softmax** IR stack (`Session::run` only). Re-run locally for a citeable median; do not use outdated toy-MLP figures.
+Memory ratio is **format-defined**. Timing compares two UAII paths on a synthetic Q4_0 payload, not a full GGUF model.
 
 ## Methodology (what reviewers expect)
 
@@ -96,4 +104,4 @@ Current `uaii_bench` times a synthetic **8 × MatMul(512²)+ReLU + Softmax** IR 
 
 ## Fair citation template
 
-> UAII `ref-tiled` CPU GEMM on \<CPU\>, Windows Release, median of 21 trials: \<X\> GFLOP/s at 512³. Provider and JSON: \<link\>. Not an LLM tokens/s result.
+> UAII `ref-tiled` CPU GEMM on GitHub Actions `windows-latest` (AMD EPYC 7763, 4 threads), median of 21 trials: 3.15 GFLOP/s at 512³. JSON: `benchmarks/results/ci_windows_gha.json`. Not an LLM tokens/s result.

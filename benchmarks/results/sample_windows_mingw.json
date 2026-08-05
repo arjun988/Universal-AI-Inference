@@ -1,6 +1,6 @@
 {
   "schema": "uaii_bench/v2",
-  "disclaimer": "Single-host sample for methodology illustration. Cite only after re-running uaii_bench --json on the machine you claim. Not a bake-off vs llama.cpp / ONNX Runtime / TensorRT.",
+  "disclaimer": "LEGACY local MinGW capture — superseded for publication by ci_windows_gha.json (GitHub Actions windows-latest). Kept for historical comparison only.",
   "uaii_version": "0.1.0",
   "cpu": "set UAII_BENCH_CPU to your exact model before publishing",
   "os": "Windows 11",

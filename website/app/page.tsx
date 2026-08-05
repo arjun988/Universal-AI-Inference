@@ -76,29 +76,31 @@ export default function HomePage() {
           <p className="section-label">Benchmarks</p>
           <h2>Absolute numbers, not strawmen</h2>
           <p className="section-lede">
-            In-tree <code>uaii_bench</code> reports GFLOP/s and median times with full environment
-            disclosure. Reproduce locally — then cite your JSON.
+            Measured on GitHub Actions <code>windows-latest</code> with in-tree{" "}
+            <code>uaii_bench</code> — GFLOP/s, median times, full environment disclosure.
           </p>
           <div className="flow">
             <div className="flow-step">
               <b>512³</b>
-              <h3>11.4 GFLOP/s</h3>
-              <p>f32 GEMM on Windows Release · <code>ref-tiled</code> (no oneDNN).</p>
+              <h3>3.15 GFLOP/s</h3>
+              <p>
+                f32 GEMM · GHA Windows · EPYC 7763 · 4 threads · <code>ref-tiled</code>.
+              </p>
             </div>
             <div className="flow-step">
               <b>1024³</b>
-              <h3>4.7 GFLOP/s</h3>
-              <p>Same provider — honest drop under cache pressure.</p>
+              <h3>1.83 GFLOP/s</h3>
+              <p>Same CI host — honest drop under cache pressure.</p>
             </div>
             <div className="flow-step">
               <b>Q4_0</b>
               <h3>7.11×</h3>
-              <p>Format-defined weight compression vs f32 (16 MiB → 2.25 MiB).</p>
+              <p>Format-defined weight compression vs f32 (32 MiB → 4.5 MiB).</p>
             </div>
             <div className="flow-step">
               <b>Method</b>
               <h3>Median × 21</h3>
-              <p>Warmup discarded · CPU / threads / provider in every report.</p>
+              <p>CI artifact JSON checked into <code>benchmarks/results/</code>.</p>
             </div>
           </div>
           <div className="hero-cta" style={{ marginTop: "1.5rem" }}>

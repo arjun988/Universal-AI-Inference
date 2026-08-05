@@ -22,30 +22,50 @@ export default function Page() {
           <tbody>
             <tr>
               <td>
+                <strong>f32 GEMM 256³</strong>
+              </td>
+              <td>
+                <strong>3.37 GFLOP/s</strong> · 10.0 ms
+              </td>
+              <td>
+                <code>ref-tiled</code>, 4 threads
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <strong>f32 GEMM 512³</strong>
               </td>
               <td>
-                <strong>11.4 GFLOP/s</strong> · 23.6 ms
+                <strong>3.15 GFLOP/s</strong> · 85.2 ms
               </td>
-              <td>
-                <code>ref-tiled</code>, no oneDNN
-              </td>
+              <td>Median of 21 trials</td>
             </tr>
             <tr>
               <td>
                 <strong>f32 GEMM 1024³</strong>
               </td>
               <td>
-                <strong>4.7 GFLOP/s</strong> · 452 ms
+                <strong>1.83 GFLOP/s</strong> · 1173 ms
               </td>
               <td>Cache/bandwidth limited on ref path</td>
             </tr>
             <tr>
               <td>
-                <strong>Q4_0 weights</strong> 1024×4096
+                <strong>Session</strong> 8×512 stack
               </td>
               <td>
-                <strong>2.25 MiB</strong> vs 16.0 MiB f32
+                <strong>3.87 ms</strong> median
+              </td>
+              <td>
+                <code>Session::run</code> only
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Q4_0 weights</strong> 2048×4096
+              </td>
+              <td>
+                <strong>4.5 MiB</strong> vs 32 MiB f32
               </td>
               <td>7.11× format-defined compression</td>
             </tr>
@@ -53,7 +73,7 @@ export default function Page() {
               <td>
                 <strong>Q4_0 MatMul</strong>
               </td>
-              <td>8.0 ms packed · 12.1 ms unpack+f32</td>
+              <td>5.35 ms packed · 13.6 ms unpack+f32</td>
               <td>Two UAII paths, synthetic blocks</td>
             </tr>
           </tbody>
@@ -61,10 +81,13 @@ export default function Page() {
       </div>
 
       <p>
-        <strong>Host:</strong> Windows 11 · MinGW g++ 15 · Release ·{" "}
-        <code>GEMM=ref-tiled</code>. Sample JSON:{" "}
-        <code>benchmarks/results/sample_windows_mingw.json</code>. Regenerate with median of 21
-        trials before citing elsewhere.
+        <strong>Host:</strong> GitHub Actions <code>windows-latest</code> · AMD EPYC 7763 · 4
+        threads · Release · <code>GEMM=ref-tiled</code>. Published JSON:{" "}
+        <code>benchmarks/results/ci_windows_gha.json</code>.{" "}
+        <a href="https://github.com/arjun988/Universal-AI-Inference/actions/runs/31042515292">
+          CI run
+        </a>
+        .
       </p>
 
       <h2>Reproduce</h2>
@@ -77,7 +100,7 @@ export UAII_BENCH_CPU="Your Exact CPU Model"
       <p>
         GitHub Actions job <code>benchmarks</code> runs the same harness on Ubuntu, Windows, and
         macOS and uploads <code>uaii-bench-&lt;os&gt;-&lt;sha&gt;</code> JSON artifacts (median of 21
-        trials). Prefer those for public citation when local unsigned builds are blocked.
+        trials). The numbers above are from the Windows runner artifact checked into the repo.
       </p>
 
       <h2>What we measure</h2>

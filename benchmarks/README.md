@@ -24,8 +24,8 @@ Reports (absolute metrics first):
 
 Optional: `--vs-naive` appendix (engineering only; do not lead product claims with it).
 
-Published sample: [`results/sample_windows_mingw.json`](results/sample_windows_mingw.json)  
-CI uploads `results/ci_<os>_<sha>.json` from the `benchmarks` job (see [`docs/benchmarks.md`](../docs/benchmarks.md)).
+Published sample (GitHub Actions Windows): [`results/ci_windows_gha.json`](results/ci_windows_gha.json)  
+CI also uploads per-run `uaii-bench-<os>-<sha>` artifacts (see [`docs/benchmarks.md`](../docs/benchmarks.md)).
 
 ## CLI planner benchmark
 
