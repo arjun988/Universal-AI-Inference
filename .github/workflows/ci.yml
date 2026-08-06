@@ -129,14 +129,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install vendor GEMM libs (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libdnnl-dev libopenblas-dev || true
+
       - name: Configure (single-config)
         if: runner.os != 'Windows'
-        run: >
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Release
-          -DUAII_BUILD_TESTS=OFF
-          -DUAII_BUILD_PLUGINS=OFF
-          -DUAII_BUILD_BENCHMARKS=ON
+        run: |
+          EXTRA=""
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            EXTRA="-DUAII_WITH_ONEDNN=ON -DUAII_WITH_OPENBLAS=ON"
+          fi
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUAII_BUILD_TESTS=OFF \
+            -DUAII_BUILD_PLUGINS=OFF \
+            -DUAII_BUILD_BENCHMARKS=ON \
+            $EXTRA
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
@@ -199,19 +210,20 @@ jobs:
           os_slug="$(echo "${RUNNER_OS}" | tr '[:upper:]' '[:lower:]')"
           out="benchmarks/results/ci_${os_slug}_${GITHUB_SHA::12}.json"
           echo "Using $BIN → $out"
-          "$BIN" --trials 21 --warmup 5 --json | tee "$out"
+          "$BIN" --suite all --providers all --trials 21 --warmup 5 --json | tee "$out"
           if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
-          # Sanity: schema + at least one GEMM row with positive GFLOP/s
           "$PY" - "$out" <<'PY'
           import json, sys
           path = sys.argv[1]
           with open(path, encoding="utf-8") as f:
               data = json.load(f)
-          assert data.get("schema") == "uaii_bench/v2", data.get("schema")
-          gemm = data.get("gemm") or []
-          assert gemm, "missing gemm results"
-          for row in gemm:
-              assert float(row.get("gflops_median", 0)) > 0, row
+          assert data.get("schema") == "uaii_bench/v3", data.get("schema")
+          gemm = data.get("gemm_by_provider") or []
+          assert gemm, "missing gemm_by_provider"
+          for prov in gemm:
+              for row in prov.get("sizes") or []:
+                  assert float(row.get("gflops_median", 0)) > 0, row
+          print("linked:", data.get("linked_providers"))
           print("sanity ok:", path)
           PY
           echo "result_path=${out}" >> "$GITHUB_ENV"
@@ -228,29 +240,40 @@ jobs:
           with open(path, encoding="utf-8") as f:
               d = json.load(f)
           lines = [
-              "## UAII microbenchmarks",
+              "## UAII microbenchmarks (v3)",
               "",
               f"- **Runner:** {os.environ.get('RUNNER_OS')} / {os.environ.get('RUNNER_ARCH')}",
               f"- **CPU:** {d.get('cpu', '?')}",
-              f"- **GEMM provider:** `{d.get('gemm_provider', '?')}`",
+              f"- **Linked providers:** `{d.get('linked_providers', [])}`",
               f"- **Build:** {d.get('build', '?')}",
-              f"- **Trials (default):** {d.get('trials_default', '?')} (median)",
+              f"- **Trials:** {d.get('trials_default', '?')} (median)",
               "",
-              "| N | Median ms | GFLOP/s |",
-              "|---:|---:|---:|",
           ]
-          for row in d.get("gemm") or []:
-              ms = (row.get("uaii_ms") or {}).get("median_ms", "?")
-              lines.append(f"| {row.get('n')} | {ms} | **{row.get('gflops_median')}** |")
-          sess = d.get("session") or {}
-          run = sess.get("run_ms") or {}
+          for prov in d.get("gemm_by_provider") or []:
+              lines += [
+                  f"### GEMM `{prov.get('provider')}` ({prov.get('name')})",
+                  "",
+                  "| N | Median ms | GFLOP/s |",
+                  "|---:|---:|---:|",
+              ]
+              for row in prov.get("sizes") or []:
+                  ms = (row.get("uaii_ms") or {}).get("median_ms", "?")
+                  lines.append(f"| {row.get('n')} | {ms} | **{row.get('gflops_median')}** |")
+              lines.append("")
+          bw = d.get("bandwidth") or {}
+          if bw.get("kernels"):
+              lines += ["### Bandwidth", "", "| Kernel | GB/s |", "|---|---:|"]
+              for k in bw["kernels"]:
+                  lines.append(f"| {k.get('name')} | **{k.get('gbps_median')}** |")
+              lines.append("")
+          attn = d.get("attention") or {}
+          if attn:
+              e2e = (attn.get("e2e_ms") or {}).get("median_ms", "?")
+              lines += [f"**Attention** e2e median: **{e2e} ms**", ""]
           lines += [
-              "",
-              f"**Session** (`{sess.get('label', '?')}`): median **{run.get('median_ms', '?')} ms**",
-              "",
               f"Artifact JSON: `{path}`",
               "",
-              "> Kernel microbenchmarks only — not LLM tokens/s, not a bake-off vs other runtimes.",
+              "> Kernel microbenchmarks only — not LLM tokens/s.",
           ]
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
               out.write("\n".join(lines) + "\n")

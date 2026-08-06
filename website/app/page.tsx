@@ -76,28 +76,28 @@ export default function HomePage() {
           <p className="section-label">Benchmarks</p>
           <h2>Absolute numbers, not strawmen</h2>
           <p className="section-lede">
-            Local WSL2 · Intel Core i9-14900HX · 32 threads · <code>ref-tiled</code> — GFLOP/s,
-            median times, full environment disclosure.
+            Local WSL2 · i9-14900HX · OpenBLAS + ref · <code>uaii_bench</code> v3 — absolute
+            GFLOP/s, bandwidth, attention.
           </p>
           <div className="flow">
             <div className="flow-step">
-              <b>512³</b>
-              <h3>11.1 GFLOP/s</h3>
-              <p>f32 GEMM median of 21 trials · <code>uaii_bench</code>.</p>
+              <b>OpenBLAS</b>
+              <h3>425 GFLOP/s</h3>
+              <p>1024³ f32 GEMM · 284 GFLOP/s at 512³ · median of 21.</p>
             </div>
             <div className="flow-step">
-              <b>1024³</b>
-              <h3>14.6 GFLOP/s</h3>
-              <p>Same host — throughput rises with problem size on this path.</p>
+              <b>ref-tiled</b>
+              <h3>15.1 GFLOP/s</h3>
+              <p>Same shape — always-on baseline without vendor BLAS.</p>
             </div>
             <div className="flow-step">
-              <b>Q4_0</b>
-              <h3>7.11×</h3>
-              <p>Format-defined weight compression vs f32 (32 MiB → 4.5 MiB).</p>
+              <b>Bandwidth</b>
+              <h3>16.6 GB/s</h3>
+              <p>STREAM triad on ~256 MiB working set.</p>
             </div>
             <div className="flow-step">
               <b>Method</b>
-              <h3>Median × 21</h3>
+              <h3>--suite all</h3>
               <p>
                 JSON: <code>benchmarks/results/local_wsl.json</code>
               </p>

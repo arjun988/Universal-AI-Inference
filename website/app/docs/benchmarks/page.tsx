@@ -8,7 +8,7 @@ export default function Page() {
     <DocLayout
       title="Benchmarks"
       active="/docs/benchmarks/"
-      lede="Absolute, reproducible CPU microbenchmarks — GFLOP/s and median times, with full environment disclosure. Not a bake-off against other runtimes."
+      lede="uaii_bench v3 — multi-provider GEMM (ref + OpenBLAS), memory bandwidth, attention, session, and Q4."
     >
       <div className="matrix-wrap" style={{ marginBottom: "1.75rem" }}>
         <table className="matrix">
@@ -22,103 +22,90 @@ export default function Page() {
           <tbody>
             <tr>
               <td>
-                <strong>f32 GEMM 256³</strong>
+                <strong>OpenBLAS</strong> 256 / 512 / 1024
               </td>
               <td>
-                <strong>7.78 GFLOP/s</strong> · 4.32 ms
+                <strong>141 / 284 / 425 GFLOP/s</strong>
+              </td>
+              <td>32 threads · WSL2</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>ref-tiled</strong> 256 / 512 / 1024
               </td>
               <td>
-                <code>ref-tiled</code>, 32 threads
+                <strong>7.7 / 11.8 / 15.1 GFLOP/s</strong>
+              </td>
+              <td>Always-on baseline</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Bandwidth</strong> triad
+              </td>
+              <td>
+                <strong>16.6 GB/s</strong>
+              </td>
+              <td>~256 MiB STREAM-style</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Attention</strong> e2e
+              </td>
+              <td>
+                <strong>59.7 ms</strong>
+              </td>
+              <td>B1 H8 S512 D64 · ref GEMM</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Session</strong> 8×512
+              </td>
+              <td>
+                <strong>2.77 ms</strong>
+              </td>
+              <td>
+                <code>Session::run</code>
               </td>
             </tr>
             <tr>
               <td>
-                <strong>f32 GEMM 512³</strong>
+                <strong>Q4_0</strong> memory
               </td>
               <td>
-                <strong>11.1 GFLOP/s</strong> · 24.3 ms
+                <strong>7.11×</strong> · 4.5 MiB
               </td>
-              <td>Median of 21 trials</td>
-            </tr>
-            <tr>
-              <td>
-                <strong>f32 GEMM 1024³</strong>
-              </td>
-              <td>
-                <strong>14.6 GFLOP/s</strong> · 147 ms
-              </td>
-              <td>Median of 10 trials</td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Session</strong> 8×512 stack
-              </td>
-              <td>
-                <strong>2.86 ms</strong> median
-              </td>
-              <td>
-                <code>Session::run</code> only
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Q4_0 weights</strong> 2048×4096
-              </td>
-              <td>
-                <strong>4.5 MiB</strong> vs 32 MiB f32
-              </td>
-              <td>7.11× format-defined compression</td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Q4_0 MatMul</strong>
-              </td>
-              <td>3.45 ms packed · 12.9 ms unpack+f32</td>
-              <td>Two UAII paths, synthetic blocks</td>
+              <td>vs 32 MiB f32</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <p>
-        <strong>Host:</strong> local WSL2 · Intel Core i9-14900HX · 32 threads · Release ·{" "}
-        <code>GEMM=ref-tiled</code>. Published JSON:{" "}
+        <strong>Host:</strong> local WSL2 · Intel Core i9-14900HX · Release · linked{" "}
+        <code>ref</code> + <code>openblas</code>. JSON:{" "}
         <code>benchmarks/results/local_wsl.json</code>.
       </p>
 
       <h2>Reproduce</h2>
-      <pre>{`# WSL / Linux (recommended on locked-down Windows hosts)
-bash scripts/run_bench_wsl.sh
+      <pre>{`sudo apt install -y libopenblas-dev libdnnl-dev
+TRIALS=21 bash scripts/run_bench_wsl.sh
+# or:
+./build/benchmarks/uaii_bench --suite all --providers all --trials 21 --json`}</pre>
 
-# Native
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUAII_BUILD_BENCHMARKS=ON
-cmake --build build --target uaii_bench --parallel
-export UAII_BENCH_CPU="Your Exact CPU Model"
-./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json`}</pre>
-
-      <h2>CI</h2>
-      <p>
-        GitHub Actions job <code>benchmarks</code> builds the same harness on Ubuntu, Windows, and
-        macOS and uploads JSON artifacts for regression visibility. Those runner numbers are{" "}
-        <strong>not</strong> the published table above — cite{" "}
-        <code>local_wsl.json</code> (or your own machine JSON).
-      </p>
-
-      <h2>What we measure</h2>
+      <h2>Suites</h2>
       <ul>
         <li>
-          <strong>Dense GEMM</strong> — absolute GFLOP/s from median trial time (
-          <code>2·N³</code> FLOPs)
+          <code>gemm</code> — cycles linked providers (<code>ref</code>, <code>onednn</code>,{" "}
+          <code>openblas</code>)
         </li>
         <li>
-          <strong>Session</strong> — synthetic 8×512 MatMul+ReLU stack;{" "}
-          <code>Session::run</code> only
+          <code>bandwidth</code> — STREAM copy / scale / add / triad
         </li>
         <li>
-          <strong>Quant</strong> — GGUF Q4_0 packed GEMM + format memory ratio
+          <code>attention</code> — QKᵀ + softmax + AV microbench
         </li>
         <li>
-          <strong>Optional</strong> — <code>--vs-naive</code> appendix only (not a product claim)
+          <code>session</code> / <code>quant</code> — IR stack + Q4_0 packed path
         </li>
       </ul>
 
@@ -126,19 +113,12 @@ export UAII_BENCH_CPU="Your Exact CPU Model"
       <ul>
         <li>Tokens/s on public LLMs</li>
         <li>Wins vs llama.cpp / ONNX Runtime / TensorRT</li>
-        <li>GPU numbers unless you build that backend and publish its JSON</li>
+        <li>oneDNN numbers unless <code>onednn</code> is in <code>linked_providers</code></li>
       </ul>
-
-      <h2>Going faster</h2>
-      <p>
-        Build with <code>-DUAII_WITH_ONEDNN=ON</code>, <code>UAII_WITH_OPENBLAS=ON</code>, or{" "}
-        <code>UAII_WITH_CUDA=ON</code>, then re-run and quote <code>gemm_provider</code> from the
-        JSON / <code>uaii doctor</code>.
-      </p>
 
       <p>
         Deep dive: repository <code>docs/benchmarks.md</code>. Also see{" "}
-        <Link href="/docs/examples/">Examples</Link> for CLI smoke paths.
+        <Link href="/docs/examples/">Examples</Link>.
       </p>
     </DocLayout>
   );

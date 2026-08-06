@@ -1,38 +1,104 @@
 {
-  "schema": "uaii_bench/v2",
-  "source": "Local WSL2 Ubuntu · Linux Release build of uaii_bench",
-  "host_note": "Measured on the developer machine via scripts/run_bench_wsl.sh (Windows Application Control blocks unsigned .exe).",
+  "schema": "uaii_bench/v3",
+  "source": "Local WSL2 Ubuntu · scripts/run_bench_wsl.sh",
   "uaii_version": "0.1.0",
   "cpu": "Intel(R) Core(TM) i9-14900HX",
   "threads": 32,
   "build": "Release-ish (NDEBUG)",
-  "gemm_provider": "ref-tiled (ref)",
-  "gemm_name": "ref-tiled",
+  "linked_providers": ["ref", "openblas"],
+  "configure": "UAII_WITH_ONEDNN=OFF UAII_WITH_OPENBLAS=ON",
   "scope": "Kernel microbenchmarks of UAII. Not LLM tokens/s. Not a bake-off vs llama.cpp/ORT/TRT.",
   "warmup": 5,
   "trials_default": 21,
-  "gemm": [
+  "gemm_by_provider": [
     {
-      "n": 256,
-      "gflops_median": 7.775,
-      "uaii_ms": { "median_ms": 4.316, "min_ms": 4.075, "max_ms": 4.965, "trials": 21 }
+      "provider": "ref",
+      "name": "ref-tiled",
+      "sizes": [
+        {
+          "n": 256,
+          "gflops_median": 7.713,
+          "uaii_ms": { "median_ms": 4.351, "min_ms": 4.198, "max_ms": 11.48, "trials": 21 }
+        },
+        {
+          "n": 512,
+          "gflops_median": 11.848,
+          "uaii_ms": { "median_ms": 22.657, "min_ms": 21.424, "max_ms": 25.592, "trials": 21 }
+        },
+        {
+          "n": 1024,
+          "gflops_median": 15.138,
+          "uaii_ms": { "median_ms": 141.863, "min_ms": 134.02, "max_ms": 146.432, "trials": 10 }
+        }
+      ]
     },
     {
-      "n": 512,
-      "gflops_median": 11.069,
-      "uaii_ms": { "median_ms": 24.250, "min_ms": 21.536, "max_ms": 27.554, "trials": 21 }
-    },
-    {
-      "n": 1024,
-      "gflops_median": 14.578,
-      "uaii_ms": { "median_ms": 147.315, "min_ms": 141.698, "max_ms": 154.992, "trials": 10 }
+      "provider": "openblas",
+      "name": "openblas",
+      "sizes": [
+        {
+          "n": 256,
+          "gflops_median": 141.282,
+          "uaii_ms": { "median_ms": 0.237, "min_ms": 0.217, "max_ms": 0.348, "trials": 21 }
+        },
+        {
+          "n": 512,
+          "gflops_median": 283.646,
+          "uaii_ms": { "median_ms": 0.946, "min_ms": 0.617, "max_ms": 1.121, "trials": 21 }
+        },
+        {
+          "n": 1024,
+          "gflops_median": 425.155,
+          "uaii_ms": { "median_ms": 5.051, "min_ms": 4.012, "max_ms": 11.23, "trials": 10 }
+        }
+      ]
     }
   ],
+  "bandwidth": {
+    "elems": 22369621,
+    "working_set_mib": 256.0,
+    "kernels": [
+      {
+        "name": "copy",
+        "bytes_per_iter": 178956968.0,
+        "gbps_median": 13.874,
+        "ms": { "median_ms": 12.898, "min_ms": 12.223, "max_ms": 13.847, "trials": 10 }
+      },
+      {
+        "name": "scale",
+        "bytes_per_iter": 178956968.0,
+        "gbps_median": 14.021,
+        "ms": { "median_ms": 12.763, "min_ms": 11.621, "max_ms": 15.957, "trials": 10 }
+      },
+      {
+        "name": "add",
+        "bytes_per_iter": 268435452.0,
+        "gbps_median": 16.435,
+        "ms": { "median_ms": 16.333, "min_ms": 15.774, "max_ms": 18.419, "trials": 10 }
+      },
+      {
+        "name": "triad",
+        "bytes_per_iter": 268435452.0,
+        "gbps_median": 16.556,
+        "ms": { "median_ms": 16.214, "min_ms": 15.675, "max_ms": 16.91, "trials": 10 }
+      }
+    ]
+  },
+  "attention": {
+    "batch": 1,
+    "heads": 8,
+    "seq": 512,
+    "head_dim": 64,
+    "gemm_name": "ref-tiled",
+    "note": "Attention suite used first linked provider (ref). Re-run with --providers openblas for vendor attention path.",
+    "gemm_gflops_nominal": 0.537,
+    "e2e_ms": { "median_ms": 59.681, "min_ms": 56.237, "max_ms": 66.19, "trials": 10 }
+  },
   "session": {
     "label": "8× MatMul(512²)+ReLU + Softmax (synthetic IR)",
     "params": 2097152,
     "nodes": 17,
-    "run_ms": { "median_ms": 2.861, "min_ms": 2.772, "max_ms": 3.209, "trials": 21 }
+    "run_ms": { "median_ms": 2.769, "min_ms": 2.652, "max_ms": 3.083, "trials": 21 }
   },
   "quant_q4_0": {
     "rows": 2048,
@@ -40,7 +106,7 @@
     "f32_mib": 32.0,
     "q4_mib": 4.5,
     "format_mem_ratio": 7.111,
-    "quant_gemm_ms": { "median_ms": 3.446, "min_ms": 3.132, "max_ms": 3.722, "trials": 10 },
-    "unpack_then_f32_ms": { "median_ms": 12.851, "min_ms": 11.647, "max_ms": 14.610, "trials": 10 }
+    "quant_gemm_ms": { "median_ms": 4.495, "min_ms": 3.863, "max_ms": 5.333, "trials": 10 },
+    "unpack_then_f32_ms": { "median_ms": 11.57, "min_ms": 11.395, "max_ms": 12.012, "trials": 10 }
   }
 }

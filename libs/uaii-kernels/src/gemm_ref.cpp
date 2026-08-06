@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace uaii {
 namespace kernels {
@@ -83,6 +84,43 @@ RefGemm& ref_gemm() {
 
 }  // namespace
 
+IGemm* try_make_onednn();  // defined in gemm_onednn.cpp
+IGemm* try_make_openblas();  // defined in gemm_openblas.cpp
+
+bool gemm_provider_linked(GemmProvider p) noexcept {
+  switch (p) {
+    case GemmProvider::Ref:
+      return true;
+    case GemmProvider::OneDnn:
+      return try_make_onednn() != nullptr;
+    case GemmProvider::OpenBlas:
+      return try_make_openblas() != nullptr;
+    default:
+      return false;
+  }
+}
+
+IGemm* try_get_gemm(GemmProvider p) {
+  switch (p) {
+    case GemmProvider::Ref:
+      return &ref_gemm();
+    case GemmProvider::OneDnn:
+      return try_make_onednn();
+    case GemmProvider::OpenBlas:
+      return try_make_openblas();
+    default:
+      return nullptr;
+  }
+}
+
+std::vector<GemmProvider> linked_gemm_providers() {
+  std::vector<GemmProvider> out;
+  out.push_back(GemmProvider::Ref);
+  if (gemm_provider_linked(GemmProvider::OneDnn)) out.push_back(GemmProvider::OneDnn);
+  if (gemm_provider_linked(GemmProvider::OpenBlas)) out.push_back(GemmProvider::OpenBlas);
+  return out;
+}
+
 const char* to_string(GemmProvider p) noexcept {
   switch (p) {
     case GemmProvider::OneDnn: return "onednn";
@@ -91,9 +129,6 @@ const char* to_string(GemmProvider p) noexcept {
     default: return "ref";
   }
 }
-
-IGemm* try_make_onednn();
-IGemm* try_make_openblas();
 
 GemmRegistry& GemmRegistry::instance() {
   static GemmRegistry reg;

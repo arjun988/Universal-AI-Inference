@@ -47,30 +47,32 @@ UAII is a modular C++ inference runtime: load a model into a common intermediate
 
 ## Benchmarks (reproducible)
 
-Absolute kernel microbenchmarks from in-tree `uaii_bench` — not strawman “vs naive” marketing, and not a bake-off vs other runtimes. Full methodology: [docs/benchmarks.md](docs/benchmarks.md).
+Absolute kernel microbenchmarks from in-tree `uaii_bench` (schema **uaii_bench/v3**). Full methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
-**Published sample:** local WSL2 · Intel Core i9-14900HX · **32 threads** · **GEMM = `ref-tiled`** · median of 21 trials.  
-JSON: [`benchmarks/results/local_wsl.json`](benchmarks/results/local_wsl.json)
+**Published sample:** local WSL2 · Intel Core i9-14900HX · **32 threads** · median of 21 trials.  
+JSON: [`benchmarks/results/local_wsl.json`](benchmarks/results/local_wsl.json) · linked: **`ref`**, **`openblas`**
 
 | Workload | Result |
 |---|---:|
-| f32 GEMM **256³** | **7.78 GFLOP/s** (4.32 ms) |
-| f32 GEMM **512³** | **11.1 GFLOP/s** (24.3 ms) |
-| f32 GEMM **1024³** | **14.6 GFLOP/s** (147 ms) |
-| Session 8×512 MatMul+ReLU stack | **2.86 ms** median |
-| Q4_0 weight footprint (2048×4096) | **4.5 MiB** vs 32 MiB f32 (**7.11×** format ratio) |
-| Q4_0 packed MatMul vs unpack+f32 | 3.45 ms vs 12.9 ms |
+| f32 GEMM **openblas** 256³ / 512³ / 1024³ | **141 / 284 / 425 GFLOP/s** |
+| f32 GEMM **ref-tiled** 256³ / 512³ / 1024³ | **7.7 / 11.8 / 15.1 GFLOP/s** |
+| STREAM triad (~256 MiB) | **16.6 GB/s** |
+| Attention B1 H8 S512 D64 (e2e, ref GEMM) | **59.7 ms** median |
+| Session 8×512 MatMul+ReLU stack | **2.77 ms** median |
+| Q4_0 weights (2048×4096) | **4.5 MiB** vs 32 MiB f32 (**7.11×**) |
 
 ```bash
-# Linux / WSL
-./scripts/run_bench_wsl.sh
+# WSL
+sudo apt install -y libopenblas-dev libdnnl-dev   # vendors
+TRIALS=21 bash scripts/run_bench_wsl.sh
 
-# Or native
+# Native
+cmake -S . -B build -DUAII_WITH_OPENBLAS=ON -DUAII_WITH_ONEDNN=ON -DUAII_BUILD_BENCHMARKS=ON
 cmake --build build --target uaii_bench --parallel
-./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json
+./build/benchmarks/uaii_bench --suite all --providers all --trials 21 --json
 ```
 
-CI job `benchmarks` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) also uploads per-run JSON artifacts (not the published table above). With oneDNN / OpenBLAS / CUDA, re-run and quote `gemm_provider` from the JSON / `uaii doctor`.
+CI `benchmarks` job builds Ubuntu with oneDNN/OpenBLAS when available and uploads JSON artifacts.
 
 ---
 

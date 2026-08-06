@@ -1,107 +1,50 @@
 # Benchmarks
 
-UAII publishes **absolute, reproducible microbenchmarks** of its own kernels — not strawman speedups, and not a bake-off against llama.cpp, ONNX Runtime, or TensorRT.
+UAII publishes **absolute, reproducible microbenchmarks** (`uaii_bench` schema **v3**) — not strawman speedups, and not a bake-off against llama.cpp / ONNX Runtime / TensorRT.
 
-Primary metrics: **GFLOP/s** and **median wall time**, with full environment disclosure.
+Suites: **gemm** (per linked provider), **bandwidth**, **attention**, **session**, **quant**.
 
-## How to run (publication recipe)
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUAII_BUILD_BENCHMARKS=ON
-cmake --build build --config Release --target uaii_bench --parallel
-
-# Recommended: odd trial count → clean median
-./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json
-```
-
-Windows (native `.exe` may be blocked by Application Control / WDAC):
-
-```powershell
-$env:UAII_BENCH_CPU = "Your Exact CPU Model"
-.\build\benchmarks\uaii_bench.exe --trials 21 --warmup 5 --json
-```
-
-**Recommended on locked-down Windows:** run inside WSL:
-
-```powershell
-wsl -e bash scripts/run_bench_wsl.sh
-```
-
-Writes `benchmarks/results/local_wsl.json`.
-
-Optional engineering appendix (slow; **not** for marketing headlines):
+## How to run
 
 ```bash
-./build/benchmarks/uaii_bench --trials 21 --vs-naive --json
+sudo apt install -y libopenblas-dev libdnnl-dev   # optional vendors
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DUAII_BUILD_BENCHMARKS=ON \
+  -DUAII_WITH_ONEDNN=ON -DUAII_WITH_OPENBLAS=ON
+cmake --build build --target uaii_bench --parallel
+./build/benchmarks/uaii_bench --suite all --providers all --trials 21 --json
 ```
 
-Also available: `uaii benchmark --demo` (planner fusion / memory-reuse path).
+WSL: `TRIALS=21 bash scripts/run_bench_wsl.sh`
 
 ## Published results — local WSL
 
-**Host:** WSL2 Ubuntu · Intel Core i9-14900HX · **32 threads** · Release · `GEMM=ref-tiled`  
-**JSON:** [`benchmarks/results/local_wsl.json`](../benchmarks/results/local_wsl.json)
+**Host:** WSL2 · Intel Core i9-14900HX · 32 threads · Release  
+**JSON:** [`benchmarks/results/local_wsl.json`](../benchmarks/results/local_wsl.json)  
+**Linked:** `ref`, `openblas` (oneDNN not installed in this capture)
 
-| Field | Value |
-|---|---|
-| Statistic | **median** of 21 trials (warmup 5; N=1024 used 10 trials) |
-| Scope | Kernel microbenchmarks — not LLM tokens/s |
+### GEMM by provider
 
-### 1. Dense f32 GEMM
+| Provider | 256³ | 512³ | 1024³ |
+|---|---:|---:|---:|
+| **openblas** | **141 GFLOP/s** | **284 GFLOP/s** | **425 GFLOP/s** |
+| ref-tiled | 7.7 GFLOP/s | 11.8 GFLOP/s | 15.1 GFLOP/s |
 
-Square `C = A @ B`, FLOPs = `2·N³`.
+OpenBLAS is ~**28×** the ref kernel at 1024³ on this machine — cite both; the ref path is the always-available baseline.
 
-| N | Median ms | GFLOP/s |
-|---:|---:|---:|
-| 256 | 4.32 | **7.78** |
-| 512 | 24.3 | **11.1** |
-| 1024 | 147 | **14.6** |
-
-Linking **oneDNN** or **OpenBLAS** and re-running is the fair way to quote higher absolute throughput — always cite `gemm_provider`.
-
-### 2. Session graph
-
-Synthetic **8 × MatMul(512²)+ReLU + Softmax** (`Session::run` only):
+### Bandwidth / attention / session / Q4
 
 | Metric | Value |
 |---|---:|
-| Parameters (f32) | 2,097,152 |
-| Median `Session::run` | **2.86 ms** |
+| STREAM triad (~256 MiB) | **16.6 GB/s** |
+| Attention e2e (B1 H8 S512 D64, ref GEMM) | **59.7 ms** |
+| Session 8×512 stack | **2.77 ms** |
+| Q4_0 format compression | **7.11×** |
 
-### 3. Q4_0 weights (format + kernel)
+## Methodology
 
-| Metric | Value |
-|---|---:|
-| Weight shape | 2048 × 4096 |
-| f32 footprint | 32.0 MiB |
-| Q4_0 packed | **4.5 MiB** |
-| Format compression | **7.11×** (GGUF Q4_0: 32 values / 18 bytes) |
-| Packed quant-GEMM | **3.45 ms** |
-| Unpack-all + f32 GEMM | 12.9 ms |
+Median of 21 trials (10 for large kernels), full env in JSON. Not LLM tokens/s.
 
-Memory ratio is **format-defined**. Timing compares two UAII paths on a synthetic Q4_0 payload, not a full GGUF model.
+## Fair citation
 
-## CI (GitHub Actions)
-
-The `benchmarks` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds `uaii_bench` on Ubuntu, Windows, and macOS and uploads JSON artifacts for regression visibility. Those shared-runner numbers are **not** the published table above.
-
-## Methodology (what reviewers expect)
-
-| Rule | Practice |
-|---|---|
-| Statistic | Default **median** of `--trials` (21), after `--warmup` (5) |
-| Environment | CPU brand (`UAII_BENCH_CPU` or CPUID), thread count, GEMM provider, build type, UAII version |
-| FLOPs | `2·M·N·K` for dense GEMM |
-| Scope label | Every report states these are kernel microbenchmarks |
-| Naive ijk | Optional `--vs-naive` **appendix only** |
-
-## What we do **not** claim
-
-- Tokens/s on public LLMs
-- Wins vs llama.cpp / ONNX Runtime / TensorRT / PyTorch
-- GPU throughput (unless you build CUDA/Metal/etc. and publish that JSON)
-- Chatbot end-to-end latency
-
-## Fair citation template
-
-> UAII `ref-tiled` CPU GEMM on Intel Core i9-14900HX (32 threads, WSL2 Release), median of 21 trials: 11.1 GFLOP/s at 512³ / 14.6 GFLOP/s at 1024³. JSON: `benchmarks/results/local_wsl.json`. Not an LLM tokens/s result.
+> UAII with OpenBLAS on Intel Core i9-14900HX (32 threads, WSL2), median of 21: **425 GFLOP/s** at 1024³ f32 GEMM (ref-tiled 15.1 GFLOP/s). JSON: `benchmarks/results/local_wsl.json`.

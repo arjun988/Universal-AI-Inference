@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace uaii {
 namespace kernels {
@@ -58,6 +59,15 @@ class UAII_API GemmRegistry {
 };
 
 [[nodiscard]] UAII_API IGemm& default_gemm();
+
+/// True if this build linked the provider (Ref always true).
+[[nodiscard]] UAII_API bool gemm_provider_linked(GemmProvider p) noexcept;
+
+/// Non-owning pointer, or nullptr if not linked / unsupported.
+[[nodiscard]] UAII_API IGemm* try_get_gemm(GemmProvider p);
+
+/// Providers available in this binary (Ref first, then optional vendors).
+[[nodiscard]] UAII_API std::vector<GemmProvider> linked_gemm_providers();
 
 }  // namespace kernels
 }  // namespace uaii
