@@ -14,12 +14,20 @@ cmake --build build --config Release --target uaii_bench --parallel
 ./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json
 ```
 
-Windows:
+Windows (native `.exe` may be blocked by Application Control / WDAC):
 
 ```powershell
-$env:UAII_BENCH_CPU = "Your Exact CPU Model"   # e.g. AMD Ryzen 9 7950X
+$env:UAII_BENCH_CPU = "Your Exact CPU Model"
 .\build\benchmarks\uaii_bench.exe --trials 21 --warmup 5 --json
 ```
+
+**Recommended on locked-down Windows:** run inside WSL:
+
+```powershell
+wsl -e bash scripts/run_bench_wsl.sh
+```
+
+Writes `benchmarks/results/local_wsl.json`.
 
 Optional engineering appendix (slow; **not** for marketing headlines):
 
@@ -29,22 +37,10 @@ Optional engineering appendix (slow; **not** for marketing headlines):
 
 Also available: `uaii benchmark --demo` (planner fusion / memory-reuse path).
 
-## CI (GitHub Actions)
+## Published results — local WSL
 
-The `benchmarks` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds `uaii_bench` on Ubuntu, Windows, and macOS runners, runs `--trials 21 --warmup 5 --json`, and uploads an artifact:
-
-`uaii-bench-<os>-<sha>` → `benchmarks/results/ci_<os>_<sha12>.json`
-
-- Triggered on push / PR / **workflow_dispatch** (Actions → ci → Run workflow)
-- Job summary prints the GEMM table (median ms + GFLOP/s) with CPU and `gemm_provider`
-- Download from the run’s **Artifacts** section
-
-## Published results — GitHub Actions Windows
-
-**Host:** GitHub Actions `windows-latest` · AMD EPYC 7763 · **4 threads** · Release · `GEMM=ref-tiled`  
-**Run:** https://github.com/arjun988/Universal-AI-Inference/actions/runs/31042515292  
-**JSON:** [`benchmarks/results/ci_windows_gha.json`](../benchmarks/results/ci_windows_gha.json)  
-(raw artifact copy: [`ci_windows_1f263e31fd60.json`](../benchmarks/results/ci_windows_1f263e31fd60.json))
+**Host:** WSL2 Ubuntu · Intel Core i9-14900HX · **32 threads** · Release · `GEMM=ref-tiled`  
+**JSON:** [`benchmarks/results/local_wsl.json`](../benchmarks/results/local_wsl.json)
 
 | Field | Value |
 |---|---|
@@ -57,11 +53,11 @@ Square `C = A @ B`, FLOPs = `2·N³`.
 
 | N | Median ms | GFLOP/s |
 |---:|---:|---:|
-| 256 | 9.96 | **3.37** |
-| 512 | 85.2 | **3.15** |
-| 1024 | 1173 | **1.83** |
+| 256 | 4.32 | **7.78** |
+| 512 | 24.3 | **11.1** |
+| 1024 | 147 | **14.6** |
 
-These absolute numbers reflect a **4-thread shared CI runner**, not a tuned desktop. Linking **oneDNN** or **OpenBLAS** and re-running is the fair way to quote higher throughput — always cite `gemm_provider`.
+Linking **oneDNN** or **OpenBLAS** and re-running is the fair way to quote higher absolute throughput — always cite `gemm_provider`.
 
 ### 2. Session graph
 
@@ -70,7 +66,7 @@ Synthetic **8 × MatMul(512²)+ReLU + Softmax** (`Session::run` only):
 | Metric | Value |
 |---|---:|
 | Parameters (f32) | 2,097,152 |
-| Median `Session::run` | **3.87 ms** |
+| Median `Session::run` | **2.86 ms** |
 
 ### 3. Q4_0 weights (format + kernel)
 
@@ -80,10 +76,14 @@ Synthetic **8 × MatMul(512²)+ReLU + Softmax** (`Session::run` only):
 | f32 footprint | 32.0 MiB |
 | Q4_0 packed | **4.5 MiB** |
 | Format compression | **7.11×** (GGUF Q4_0: 32 values / 18 bytes) |
-| Packed quant-GEMM | **5.35 ms** |
-| Unpack-all + f32 GEMM | 13.6 ms |
+| Packed quant-GEMM | **3.45 ms** |
+| Unpack-all + f32 GEMM | 12.9 ms |
 
 Memory ratio is **format-defined**. Timing compares two UAII paths on a synthetic Q4_0 payload, not a full GGUF model.
+
+## CI (GitHub Actions)
+
+The `benchmarks` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds `uaii_bench` on Ubuntu, Windows, and macOS and uploads JSON artifacts for regression visibility. Those shared-runner numbers are **not** the published table above.
 
 ## Methodology (what reviewers expect)
 
@@ -104,4 +104,4 @@ Memory ratio is **format-defined**. Timing compares two UAII paths on a syntheti
 
 ## Fair citation template
 
-> UAII `ref-tiled` CPU GEMM on GitHub Actions `windows-latest` (AMD EPYC 7763, 4 threads), median of 21 trials: 3.15 GFLOP/s at 512³. JSON: `benchmarks/results/ci_windows_gha.json`. Not an LLM tokens/s result.
+> UAII `ref-tiled` CPU GEMM on Intel Core i9-14900HX (32 threads, WSL2 Release), median of 21 trials: 11.1 GFLOP/s at 512³ / 14.6 GFLOP/s at 1024³. JSON: `benchmarks/results/local_wsl.json`. Not an LLM tokens/s result.

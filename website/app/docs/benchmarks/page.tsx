@@ -25,10 +25,10 @@ export default function Page() {
                 <strong>f32 GEMM 256³</strong>
               </td>
               <td>
-                <strong>3.37 GFLOP/s</strong> · 10.0 ms
+                <strong>7.78 GFLOP/s</strong> · 4.32 ms
               </td>
               <td>
-                <code>ref-tiled</code>, 4 threads
+                <code>ref-tiled</code>, 32 threads
               </td>
             </tr>
             <tr>
@@ -36,7 +36,7 @@ export default function Page() {
                 <strong>f32 GEMM 512³</strong>
               </td>
               <td>
-                <strong>3.15 GFLOP/s</strong> · 85.2 ms
+                <strong>11.1 GFLOP/s</strong> · 24.3 ms
               </td>
               <td>Median of 21 trials</td>
             </tr>
@@ -45,16 +45,16 @@ export default function Page() {
                 <strong>f32 GEMM 1024³</strong>
               </td>
               <td>
-                <strong>1.83 GFLOP/s</strong> · 1173 ms
+                <strong>14.6 GFLOP/s</strong> · 147 ms
               </td>
-              <td>Cache/bandwidth limited on ref path</td>
+              <td>Median of 10 trials</td>
             </tr>
             <tr>
               <td>
                 <strong>Session</strong> 8×512 stack
               </td>
               <td>
-                <strong>3.87 ms</strong> median
+                <strong>2.86 ms</strong> median
               </td>
               <td>
                 <code>Session::run</code> only
@@ -73,7 +73,7 @@ export default function Page() {
               <td>
                 <strong>Q4_0 MatMul</strong>
               </td>
-              <td>5.35 ms packed · 13.6 ms unpack+f32</td>
+              <td>3.45 ms packed · 12.9 ms unpack+f32</td>
               <td>Two UAII paths, synthetic blocks</td>
             </tr>
           </tbody>
@@ -81,26 +81,27 @@ export default function Page() {
       </div>
 
       <p>
-        <strong>Host:</strong> GitHub Actions <code>windows-latest</code> · AMD EPYC 7763 · 4
-        threads · Release · <code>GEMM=ref-tiled</code>. Published JSON:{" "}
-        <code>benchmarks/results/ci_windows_gha.json</code>.{" "}
-        <a href="https://github.com/arjun988/Universal-AI-Inference/actions/runs/31042515292">
-          CI run
-        </a>
-        .
+        <strong>Host:</strong> local WSL2 · Intel Core i9-14900HX · 32 threads · Release ·{" "}
+        <code>GEMM=ref-tiled</code>. Published JSON:{" "}
+        <code>benchmarks/results/local_wsl.json</code>.
       </p>
 
       <h2>Reproduce</h2>
-      <pre>{`cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUAII_BUILD_BENCHMARKS=ON
+      <pre>{`# WSL / Linux (recommended on locked-down Windows hosts)
+bash scripts/run_bench_wsl.sh
+
+# Native
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUAII_BUILD_BENCHMARKS=ON
 cmake --build build --target uaii_bench --parallel
 export UAII_BENCH_CPU="Your Exact CPU Model"
 ./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json`}</pre>
 
-      <h2>CI artifacts</h2>
+      <h2>CI</h2>
       <p>
-        GitHub Actions job <code>benchmarks</code> runs the same harness on Ubuntu, Windows, and
-        macOS and uploads <code>uaii-bench-&lt;os&gt;-&lt;sha&gt;</code> JSON artifacts (median of 21
-        trials). The numbers above are from the Windows runner artifact checked into the repo.
+        GitHub Actions job <code>benchmarks</code> builds the same harness on Ubuntu, Windows, and
+        macOS and uploads JSON artifacts for regression visibility. Those runner numbers are{" "}
+        <strong>not</strong> the published table above — cite{" "}
+        <code>local_wsl.json</code> (or your own machine JSON).
       </p>
 
       <h2>What we measure</h2>

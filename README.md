@@ -49,24 +49,28 @@ UAII is a modular C++ inference runtime: load a model into a common intermediate
 
 Absolute kernel microbenchmarks from in-tree `uaii_bench` — not strawman “vs naive” marketing, and not a bake-off vs other runtimes. Full methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
-**Published sample:** [GitHub Actions `windows-latest`](https://github.com/arjun988/Universal-AI-Inference/actions/runs/31042515292) · AMD EPYC 7763 · **4 threads** · **GEMM = `ref-tiled`** · median of 21 trials.  
-JSON: [`benchmarks/results/ci_windows_gha.json`](benchmarks/results/ci_windows_gha.json)
+**Published sample:** local WSL2 · Intel Core i9-14900HX · **32 threads** · **GEMM = `ref-tiled`** · median of 21 trials.  
+JSON: [`benchmarks/results/local_wsl.json`](benchmarks/results/local_wsl.json)
 
 | Workload | Result |
 |---|---:|
-| f32 GEMM **256³** | **3.37 GFLOP/s** (10.0 ms) |
-| f32 GEMM **512³** | **3.15 GFLOP/s** (85.2 ms) |
-| f32 GEMM **1024³** | **1.83 GFLOP/s** (1173 ms) |
-| Session 8×512 MatMul+ReLU stack | **3.87 ms** median |
+| f32 GEMM **256³** | **7.78 GFLOP/s** (4.32 ms) |
+| f32 GEMM **512³** | **11.1 GFLOP/s** (24.3 ms) |
+| f32 GEMM **1024³** | **14.6 GFLOP/s** (147 ms) |
+| Session 8×512 MatMul+ReLU stack | **2.86 ms** median |
 | Q4_0 weight footprint (2048×4096) | **4.5 MiB** vs 32 MiB f32 (**7.11×** format ratio) |
-| Q4_0 packed MatMul vs unpack+f32 | 5.35 ms vs 13.6 ms |
+| Q4_0 packed MatMul vs unpack+f32 | 3.45 ms vs 12.9 ms |
 
 ```bash
+# Linux / WSL
+./scripts/run_bench_wsl.sh
+
+# Or native
 cmake --build build --target uaii_bench --parallel
 ./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json
 ```
 
-CI job `benchmarks` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) regenerates these on every push (Ubuntu / Windows / macOS artifacts). With oneDNN / OpenBLAS / CUDA, re-run and quote `gemm_provider` from the JSON / `uaii doctor`.
+CI job `benchmarks` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) also uploads per-run JSON artifacts (not the published table above). With oneDNN / OpenBLAS / CUDA, re-run and quote `gemm_provider` from the JSON / `uaii doctor`.
 
 ---
 

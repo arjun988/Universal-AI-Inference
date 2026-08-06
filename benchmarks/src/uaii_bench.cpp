@@ -108,7 +108,7 @@ std::string cpu_brand() {
   if (__get_cpuid_max(0x80000000u, &max_ext) == 0 || max_ext < 0x80000004u) {
     return "unknown-cpu";
   }
-  unsigned eax, ebx, ecx, edx;
+  unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
   __get_cpuid(0x80000002, &eax, &ebx, &ecx, &edx);
   std::memcpy(brand + 0, &eax, 4);
   std::memcpy(brand + 4, &ebx, 4);

@@ -9,11 +9,10 @@ cmake --build build --target uaii_bench --parallel
 ./build/benchmarks/uaii_bench --trials 21 --warmup 5 --json
 ```
 
-Windows:
+Windows (if Application Control blocks the `.exe`, use WSL):
 
 ```powershell
-$env:UAII_BENCH_CPU = "Your Exact CPU Model"
-.\build\benchmarks\uaii_bench.exe --trials 21 --warmup 5 --json
+wsl -e bash scripts/run_bench_wsl.sh
 ```
 
 Reports (absolute metrics first):
@@ -24,8 +23,8 @@ Reports (absolute metrics first):
 
 Optional: `--vs-naive` appendix (engineering only; do not lead product claims with it).
 
-Published sample (GitHub Actions Windows): [`results/ci_windows_gha.json`](results/ci_windows_gha.json)  
-CI also uploads per-run `uaii-bench-<os>-<sha>` artifacts (see [`docs/benchmarks.md`](../docs/benchmarks.md)).
+**Published sample:** [`results/local_wsl.json`](results/local_wsl.json)  
+Write-up: [`docs/benchmarks.md`](../docs/benchmarks.md)
 
 ## CLI planner benchmark
 

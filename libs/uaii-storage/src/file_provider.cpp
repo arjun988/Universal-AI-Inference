@@ -52,12 +52,12 @@ FileStorageProvider::~FileStorageProvider() {
 #else
     if (kv.second.view && kv.second.size)
       munmap(kv.second.view, static_cast<size_t>(kv.second.size));
-    if (kv.second.fd >= 0) close(kv.second.fd);
+    if (kv.second.fd >= 0) ::close(kv.second.fd);
 #endif
   }
   impl_->maps.clear();
 }
-
+ 
 Error FileStorageProvider::open(const std::string& uri, TensorHandle* out) {
   if (out == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "handle out null");
@@ -111,17 +111,17 @@ Error FileStorageProvider::open(const std::string& uri, TensorHandle* out) {
     }
     struct stat st {};
     if (fstat(mf.fd, &st) != 0) {
-      close(mf.fd);
+      ::close(mf.fd);
       return Error::make(ErrorCode::IoError, "fstat failed");
     }
     mf.size = static_cast<std::uint64_t>(st.st_size);
     if (mf.size == 0) {
-      close(mf.fd);
+      ::close(mf.fd);
       return Error::make(ErrorCode::IoError, "empty file " + uri);
     }
     mf.view = mmap(nullptr, static_cast<size_t>(mf.size), PROT_READ, MAP_PRIVATE, mf.fd, 0);
     if (mf.view == MAP_FAILED) {
-      close(mf.fd);
+      ::close(mf.fd);
       mf.view = nullptr;
       return Error::make(ErrorCode::IoError, "mmap failed " + uri);
     }
@@ -180,7 +180,7 @@ Error FileStorageProvider::close(const TensorHandle& handle) {
 #else
       if (it->second.view && it->second.size)
         munmap(it->second.view, static_cast<size_t>(it->second.size));
-      if (it->second.fd >= 0) close(it->second.fd);
+      if (it->second.fd >= 0) ::close(it->second.fd);
 #endif
       impl_->maps.erase(it);
     }

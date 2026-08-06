@@ -76,21 +76,19 @@ export default function HomePage() {
           <p className="section-label">Benchmarks</p>
           <h2>Absolute numbers, not strawmen</h2>
           <p className="section-lede">
-            Measured on GitHub Actions <code>windows-latest</code> with in-tree{" "}
-            <code>uaii_bench</code> — GFLOP/s, median times, full environment disclosure.
+            Local WSL2 · Intel Core i9-14900HX · 32 threads · <code>ref-tiled</code> — GFLOP/s,
+            median times, full environment disclosure.
           </p>
           <div className="flow">
             <div className="flow-step">
               <b>512³</b>
-              <h3>3.15 GFLOP/s</h3>
-              <p>
-                f32 GEMM · GHA Windows · EPYC 7763 · 4 threads · <code>ref-tiled</code>.
-              </p>
+              <h3>11.1 GFLOP/s</h3>
+              <p>f32 GEMM median of 21 trials · <code>uaii_bench</code>.</p>
             </div>
             <div className="flow-step">
               <b>1024³</b>
-              <h3>1.83 GFLOP/s</h3>
-              <p>Same CI host — honest drop under cache pressure.</p>
+              <h3>14.6 GFLOP/s</h3>
+              <p>Same host — throughput rises with problem size on this path.</p>
             </div>
             <div className="flow-step">
               <b>Q4_0</b>
@@ -100,7 +98,9 @@ export default function HomePage() {
             <div className="flow-step">
               <b>Method</b>
               <h3>Median × 21</h3>
-              <p>CI artifact JSON checked into <code>benchmarks/results/</code>.</p>
+              <p>
+                JSON: <code>benchmarks/results/local_wsl.json</code>
+              </p>
             </div>
           </div>
           <div className="hero-cta" style={{ marginTop: "1.5rem" }}>
