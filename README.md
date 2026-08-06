@@ -192,6 +192,18 @@ uaii benchmark --demo
 uaii cache status
 ```
 
+### Dashboard (local / self-host UI)
+
+Separate from the public `website/` docs site. Thin UI over the `uaii` CLI:
+
+```bash
+cd dashboard
+npm run install:all
+npm run dev          # UI :5174 · API :8787
+```
+
+See [dashboard/README.md](dashboard/README.md) and [docs/prd-dashboard.md](docs/prd-dashboard.md).
+
 ### Tests
 
 ```bash

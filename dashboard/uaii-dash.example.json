@@ -1,0 +1,11 @@
+# UAII Dashboard config (copy to uaii-dash.json or set env vars)
+{
+  "bind": "127.0.0.1",
+  "port": 8787,
+  "uaiiBin": "",
+  "modelDir": "models",
+  "token": "",
+  "threads": 0,
+  "gemm": "",
+  "backend": "cpu"
+}

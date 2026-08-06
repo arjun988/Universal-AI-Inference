@@ -1,0 +1,24 @@
+{
+  "name": "uaii-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "UAII local / self-host operator dashboard (separate from website/)",
+  "scripts": {
+    "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "node server/index.mjs",
+    "dev:web": "npm run dev --prefix web",
+    "build": "npm run build --prefix web",
+    "start": "cross-env NODE_ENV=production node server/index.mjs",
+    "install:all": "npm install && npm install --prefix web"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^2.2.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3"
+  }
+}

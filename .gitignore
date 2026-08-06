@@ -84,6 +84,12 @@ pip-wheel-metadata/
 
 # Website (Next.js) — also listed in website/.gitignore
 website/node_modules/
+dashboard/node_modules/
+dashboard/web/node_modules/
+dashboard/web/dist/
+dashboard/uaii-dash.json
+dashboard/models/*
+!dashboard/models/.gitkeep
 website/.next/
 website/out/
 website/.turbo/
