@@ -140,10 +140,21 @@ Error run_loaded_generate(ir::Graph graph,
 
 }  // namespace
 
-Error run_gguf_generate_demo(std::string* decoded, bool* ok) {
+Error materialize_tiny_gguf_demo(std::string* out_path) {
+  if (out_path == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "out_path null");
+  }
   const std::string dir = models_dir();
   const std::string path = dir + "/tiny_demo.gguf";
   Error err = write_tiny_lm_gguf(path, /*vocab=*/10, /*dim=*/4);
+  if (!err.ok()) return err;
+  *out_path = path;
+  return Error::success();
+}
+
+Error run_gguf_generate_demo(std::string* decoded, bool* ok) {
+  std::string path;
+  Error err = materialize_tiny_gguf_demo(&path);
   if (!err.ok()) return err;
 
   ir::Graph graph;

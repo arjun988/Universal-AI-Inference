@@ -824,7 +824,9 @@ Error Session::read_argmax_token(TensorId scores_id, std::int64_t* token) const 
 
 Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
                         std::int64_t max_new_tokens,
-                        std::vector<std::int64_t>* out_tokens) {
+                        std::vector<std::int64_t>* out_tokens,
+                        const std::vector<std::int64_t>& stop_token_ids,
+                        const OnNewToken& on_new_token) {
   if (!ready_) {
     return Error::make(ErrorCode::InvalidArgument, "session not ready");
   }
@@ -837,6 +839,13 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   if (max_new_tokens < 0) {
     return Error::make(ErrorCode::InvalidArgument, "max_new_tokens < 0");
   }
+
+  auto is_stop = [&](std::int64_t tok) {
+    for (const auto s : stop_token_ids) {
+      if (s == tok) return true;
+    }
+    return false;
+  };
 
   std::int64_t max_ctx = options_.max_context;
   if (max_ctx <= 0) {
@@ -918,6 +927,14 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
     err = read_argmax_token(scores_id, &next);
     if (!err.ok()) return err;
     out_tokens->push_back(next);
+    if (on_new_token) {
+      if (!on_new_token(next)) {
+        return Error::success();
+      }
+    }
+    if (is_stop(next)) {
+      return Error::success();
+    }
     if (n + 1 >= max_new_tokens) break;
     if (max_ctx > 0 && static_cast<std::int64_t>(out_tokens->size()) >= max_ctx) {
       return Error::make(ErrorCode::InvalidArgument, "context length exceeded during decode");

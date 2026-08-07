@@ -17,7 +17,7 @@ UAII is a modular C++ inference runtime: load a model into a common intermediate
 
 1. **Ingest** models from GGUF, Safetensors, ONNX, MLX (weights + config), or PyTorch export sidecars into **UAII IR**.
 2. **Validate & plan** the graph (shapes, dtypes, fusion, memory reuse, optional disk plan cache).
-3. **Execute** via a `Session` on a chosen backend, with competitive CPU GEMM, in-memory quantized MatMul, KV-cache generation for Llama-family GGUF, and optional weight streaming.
+3. **Execute** via a `Session` on a chosen backend, with competitive CPU GEMM, in-memory quantized MatMul, KV-cache generation for GGUF transformers (`blk.*` layout, any arch name), and optional weight streaming.
 4. **Integrate** through the `uaii` CLI, the C ABI shared library, or the Python SDK.
 
 ```text
@@ -82,7 +82,7 @@ CI `benchmarks` job builds Ubuntu with oneDNN/OpenBLAS when available and upload
 
 | Format | Role |
 |---|---|
-| **GGUF** | Llama-family transformer import (`llama`, `llama3`, `mistral`, `qwen2`, `phi3`); full `blk.*` stack with RMSNorm, QKV, RoPE, Attention + KV, SwiGLU, lm_head |
+| **GGUF** | Any architecture with llama.cpp-style `blk.*` decoder tensors (not a Llama-only allowlist); arch-prefixed metadata (`qwen2.*`, `gemma.*`, …); RMSNorm, QKV, RoPE, Attention + KV, SwiGLU or GELU MLP, tied embeddings; MoE fail-closed until expert ops |
 | **Safetensors** | Weight graphs / HF-style layouts → UAII IR |
 | **ONNX** | Import to IR (companion `.uaii.json` or ONNX proto when enabled) |
 | **MLX** | Directory with `config.json` + `.safetensors` (weights + config, not the Apple MLX runtime) |

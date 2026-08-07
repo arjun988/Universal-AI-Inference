@@ -1,0 +1,29 @@
+# Self-host UAII Dashboard on LAN / server.
+# Prerequisites: Node 20+, built `uaii` binary (and optionally uaii_bench).
+#
+#   export UAII_DASH_TOKEN=change-me
+#   docker compose up --build
+#
+# Or without Docker: ./scripts/start-host.sh
+
+services:
+  uaii-dash:
+    build: .
+    ports:
+      - "${UAII_DASH_PORT:-8787}:8787"
+    environment:
+      UAII_DASH_BIND: "0.0.0.0"
+      UAII_DASH_PORT: "8787"
+      UAII_DASH_TOKEN: "${UAII_DASH_TOKEN:?Set UAII_DASH_TOKEN}"
+      UAII_BIN: /opt/uaii/uaii
+      UAII_BENCH_BIN: /opt/uaii/uaii_bench
+      UAII_MODEL_DIR: /data/models
+      UAII_GEMM: "${UAII_GEMM:-}"
+      UAII_NUM_THREADS: "${UAII_NUM_THREADS:-0}"
+      NODE_ENV: production
+    volumes:
+      # Host-built CLI (adjust path for your OS/build tree)
+      - ${UAII_HOST_BIN:-../build/libs/uaii-cli/uaii}:/opt/uaii/uaii:ro
+      - ${UAII_HOST_BENCH:-../build/benchmarks/uaii_bench}:/opt/uaii/uaii_bench:ro
+      - ${UAII_MODEL_DIR:-./models}:/data/models
+    restart: unless-stopped

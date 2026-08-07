@@ -694,10 +694,66 @@ std::string lower_ascii(std::string s) {
   return s;
 }
 
-bool is_supported_transformer_arch(const std::string& arch_raw) {
-  const std::string arch = lower_ascii(arch_raw);
-  return arch == "llama" || arch == "llama3" || arch == "mistral" || arch == "qwen2" ||
-         arch == "phi3";
+const GgufTensorInfo* find_tensor(const GgufFile& file, const std::string& name) {
+  for (const auto& t : file.tensors) {
+    if (t.name == name) return &t;
+  }
+  return nullptr;
+}
+
+const GgufTensorInfo* find_tensor_any(const GgufFile& file,
+                                      std::initializer_list<const char*> names) {
+  for (const char* n : names) {
+    if (auto* t = find_tensor(file, n)) return t;
+  }
+  return nullptr;
+}
+
+/// GGUF stores hyperparams as `{general.architecture}.key` (e.g. qwen2.block_count).
+/// Probe arch prefix, then llama/general fallbacks used by many converters.
+std::int64_t kv_i64_arch(const GgufFile& file, const std::string& arch, const char* suffix,
+                         std::int64_t def) {
+  if (!arch.empty()) {
+    const std::string key = arch + "." + suffix;
+    const std::int64_t v = kv_i64(file, key.c_str(), -1);
+    if (v >= 0) return v;
+  }
+  const std::string llama_key = std::string("llama.") + suffix;
+  const std::int64_t llama = kv_i64(file, llama_key.c_str(), -1);
+  if (llama >= 0) return llama;
+  const std::string general_key = std::string("general.") + suffix;
+  const std::int64_t general = kv_i64(file, general_key.c_str(), -1);
+  if (general >= 0) return general;
+  return def;
+}
+
+float kv_float_arch(const GgufFile& file, const std::string& arch, const char* suffix, float def) {
+  if (!arch.empty()) {
+    const std::string key = arch + "." + suffix;
+    auto it = file.kv.find(key);
+    if (it != file.kv.end()) return kv_float(file, key.c_str(), def);
+  }
+  const std::string llama_key = std::string("llama.") + suffix;
+  auto it_llama = file.kv.find(llama_key);
+  if (it_llama != file.kv.end()) return kv_float(file, llama_key.c_str(), def);
+  const std::string general_key = std::string("general.") + suffix;
+  auto it_gen = file.kv.find(general_key);
+  if (it_gen != file.kv.end()) return kv_float(file, general_key.c_str(), def);
+  return def;
+}
+
+bool looks_like_moe(const GgufFile& file, const std::string& arch) {
+  if (kv_i64_arch(file, arch, "expert_count", 0) > 0) return true;
+  static const char* kMoEHints[] = {
+      "blk.0.ffn_gate_inp.weight",
+      "blk.0.ffn_gate_exps.weight",
+      "blk.0.ffn_up_exps.weight",
+      "blk.0.ffn_down_exps.weight",
+  };
+  for (const char* n : kMoEHints) {
+    if (find_tensor(file, n)) return true;
+  }
+  return false;
 }
 
 std::int64_t apply_layer_cap(std::int64_t model_layers) {
@@ -720,21 +776,6 @@ std::int64_t apply_layer_cap(std::int64_t model_layers) {
   return n;
 }
 
-const GgufTensorInfo* find_tensor(const GgufFile& file, const std::string& name) {
-  for (const auto& t : file.tensors) {
-    if (t.name == name) return &t;
-  }
-  return nullptr;
-}
-
-const GgufTensorInfo* find_tensor_any(const GgufFile& file,
-                                      std::initializer_list<const char*> names) {
-  for (const char* n : names) {
-    if (auto* t = find_tensor(file, n)) return t;
-  }
-  return nullptr;
-}
-
 }  // namespace
 
 Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
@@ -747,21 +788,27 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
 
   const GgufTensorInfo* emb =
       find_tensor_any(file, {"token_embd.weight", "embed.weight",
-                             "model.embed_tokens.weight"});
+                             "model.embed_tokens.weight", "token_embd"});
+  // Many GGUF models tie lm_head to token embeddings (no separate output.weight).
   const GgufTensorInfo* lm =
-      find_tensor_any(file, {"output.weight", "lm_head.weight"});
+      find_tensor_any(file, {"output.weight", "lm_head.weight", "output"});
+  const bool tied_embeddings = (lm == nullptr && emb != nullptr);
+  if (tied_embeddings) lm = emb;
   const GgufTensorInfo* norm =
-      find_tensor_any(file, {"output_norm.weight", "norm.weight"});
+      find_tensor_any(file, {"output_norm.weight", "norm.weight", "output_norm"});
 
   const bool has_blk0 = find_tensor(file, "blk.0.attn_q.weight") != nullptr ||
                         find_tensor(file, "blk.0.attn_norm.weight") != nullptr;
+  const std::string arch = lower_ascii(kv_string(file, "general.architecture"));
 
-  if (emb && lm && has_blk0) {
-    const std::string arch = kv_string(file, "general.architecture");
-    if (!arch.empty() && !is_supported_transformer_arch(arch)) {
-      return Error::make(ErrorCode::NotImplemented,
-                         "unsupported GGUF architecture for transformer import: " + arch);
-    }
+  // Capability-based import: any architecture with llama.cpp-style blk.* decoder
+  // tensors is accepted. MoE expert graphs need dedicated ops (fail closed).
+  if (emb && lm && has_blk0 && looks_like_moe(file, arch)) {
+    return Error::make(
+        ErrorCode::NotImplemented,
+        "MoE GGUF architecture '" + (arch.empty() ? std::string("unknown") : arch) +
+            "' detected (expert tensors / expert_count). Dense transformer import "
+            "only for now — convert a dense variant or wait for MoE expert ops.");
   }
 
   ir::GraphBuilder b(emb && lm ? (has_blk0 ? "gguf_transformer" : "gguf_tiny_lm")
@@ -769,6 +816,8 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
   b.set_producer("uaii-gguf-loader");
   b.set_metadata("source_format", "gguf");
   b.set_metadata("source_path", path);
+  if (!arch.empty()) b.set_metadata("architecture", arch);
+  if (tied_embeddings) b.set_metadata("tied_embeddings", "1");
   if (auto it = file.kv.find("general.name");
       it != file.kv.end() && std::holds_alternative<std::string>(it->second)) {
     b.set_metadata("model_name", std::get<std::string>(it->second));
@@ -780,17 +829,18 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     const std::int64_t dim = emb_shape.dims.size() > 1 ? emb_shape.dims[1] : 1;
     const std::int64_t vocab =
         lm_shape.dims.empty() ? emb_shape.dims[0] : lm_shape.dims[0];
-    const std::int64_t n_heads =
-        kv_i64(file, "llama.attention.head_count",
-               kv_i64(file, "general.attention.head_count", 1));
-    const std::int64_t n_kv_heads =
-        kv_i64(file, "llama.attention.head_count_kv",
-               kv_i64(file, "general.attention.head_count_kv", n_heads));
-    const std::int64_t head_dim = n_heads > 0 ? dim / n_heads : dim;
-    const float rope_theta = kv_float(
-        file, "llama.rope.freq_base", kv_float(file, "general.rope.freq_base", 10000.f));
-    std::int64_t n_layers = kv_i64(file, "llama.block_count",
-                                   kv_i64(file, "general.block_count", 0));
+    // Prefer arch-prefixed keys (qwen2.*, gemma.*, phi3.*, …) per GGUF spec.
+    std::int64_t n_heads = kv_i64_arch(file, arch, "attention.head_count", 0);
+    if (n_heads <= 0) n_heads = 1;
+    std::int64_t n_kv_heads = kv_i64_arch(file, arch, "attention.head_count_kv", n_heads);
+    if (n_kv_heads <= 0) n_kv_heads = n_heads;
+    const std::int64_t emb_len = kv_i64_arch(file, arch, "embedding_length", dim);
+    const std::int64_t head_dim =
+        n_heads > 0 ? (emb_len > 0 ? emb_len : dim) / n_heads : dim;
+    const float rope_theta = kv_float_arch(file, arch, "rope.freq_base", 10000.f);
+    const float rms_eps =
+        kv_float_arch(file, arch, "attention.layer_norm_rms_epsilon", 1e-5f);
+    std::int64_t n_layers = kv_i64_arch(file, arch, "block_count", 0);
     if (n_layers <= 0 && has_blk0) {
       // Infer layer count from tensor names.
       for (std::int64_t i = 0; i < 512; ++i) {
@@ -803,6 +853,12 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       }
     }
     n_layers = apply_layer_cap(n_layers);
+    if (has_blk0) {
+      log::info("gguf") << "transformer import arch="
+                        << (arch.empty() ? "unspecified" : arch)
+                        << " layers=" << n_layers << " heads=" << n_heads
+                        << " kv_heads=" << n_kv_heads;
+    }
 
     // seq=1 decode path: tokens [1,1], activations [1,dim] (Embedding + Session::generate).
     TensorId tokens = b.add_tensor("tokens", DType::F32, Shape{{1, 1}});
@@ -871,7 +927,7 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
 
       TensorId n1 = b.add_tensor(pfx + "n1", DType::F32, Shape{{1, dim}});
       b.add_node(pfx + "rms1", "RMSNorm", "1", {features, attn_norm}, {n1},
-                 {ir::make_float_attr("eps", 1e-5)});
+                 {ir::make_float_attr("eps", rms_eps)});
 
       TensorId q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, dim}});
       TensorId k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, dim}});
@@ -910,25 +966,23 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       if (ffn_norm) {
         TensorId n2 = b.add_tensor(pfx + "n2", DType::F32, Shape{{1, dim}});
         b.add_node(pfx + "rms2", "RMSNorm", "1", {resid1, ffn_norm}, {n2},
-                   {ir::make_float_attr("eps", 1e-5)});
+                   {ir::make_float_attr("eps", rms_eps)});
         mlp_in = n2;
       }
 
-      if (w_gate && w_up && w_down) {
-        // SwiGLU-style: silu(x@gate) * (x@up) @ down  (gate/up rows = intermediate)
-        const GgufTensorInfo* up_info = find_tensor(file, pfx + "ffn_up.weight");
-        const std::int64_t inter =
-            up_info && !up_info->dims.empty()
-                ? static_cast<std::int64_t>(up_info->dims.back() > up_info->dims.front()
-                                                ? up_info->dims.back()
-                                                : up_info->dims.front())
-                : dim * 4;
-        // Prefer [inter, dim] after dims_to_shape for transpose_b MatMul.
+      auto inter_dim_from_up = [&](const GgufTensorInfo* up_info) -> std::int64_t {
+        if (!up_info) return dim * 4;
         Shape up_shape = dims_to_shape(up_info->dims);
-        const std::int64_t inter_dim =
-            up_shape.dims.size() == 2
-                ? (up_shape.dims[0] == dim ? up_shape.dims[1] : up_shape.dims[0])
-                : inter;
+        if (up_shape.dims.size() == 2) {
+          return up_shape.dims[0] == dim ? up_shape.dims[1] : up_shape.dims[0];
+        }
+        return dim * 4;
+      };
+
+      if (w_gate && w_up && w_down) {
+        // SwiGLU-style: silu(x@gate) * (x@up) @ down
+        const GgufTensorInfo* up_info = find_tensor(file, pfx + "ffn_up.weight");
+        const std::int64_t inter_dim = inter_dim_from_up(up_info);
 
         TensorId gate = b.add_tensor(pfx + "gate", DType::F32, Shape{{1, inter_dim}});
         TensorId up = b.add_tensor(pfx + "up", DType::F32, Shape{{1, inter_dim}});
@@ -944,6 +998,21 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         b.add_node(pfx + "ff_mul", "Mul", "1", {gate_act, up}, {ff_hid});
         TensorId ff_out = b.add_tensor(pfx + "ff_out", DType::F32, Shape{{1, dim}});
         b.add_node(pfx + "ffn_down", "MatMul", "1", {ff_hid, w_down}, {ff_out},
+                   {ir::make_bool_attr("transpose_b", true)});
+        TensorId resid2 = b.add_tensor(pfx + "resid2", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "add2", "Add", "1", {resid1, ff_out}, {resid2});
+        features = resid2;
+      } else if (w_up && w_down) {
+        // Dense GELU MLP (no gate) — used by some non-LLaMA GGUF exports.
+        const GgufTensorInfo* up_info = find_tensor(file, pfx + "ffn_up.weight");
+        const std::int64_t inter_dim = inter_dim_from_up(up_info);
+        TensorId up = b.add_tensor(pfx + "up", DType::F32, Shape{{1, inter_dim}});
+        b.add_node(pfx + "ffn_up", "MatMul", "1", {mlp_in, w_up}, {up},
+                   {ir::make_bool_attr("transpose_b", true)});
+        TensorId up_act = b.add_tensor(pfx + "up_act", DType::F32, Shape{{1, inter_dim}});
+        b.add_node(pfx + "gelu", "Gelu", "1", {up}, {up_act});
+        TensorId ff_out = b.add_tensor(pfx + "ff_out", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "ffn_down", "MatMul", "1", {up_act, w_down}, {ff_out},
                    {ir::make_bool_attr("transpose_b", true)});
         TensorId resid2 = b.add_tensor(pfx + "resid2", DType::F32, Shape{{1, dim}});
         b.add_node(pfx + "add2", "Add", "1", {resid1, ff_out}, {resid2});
@@ -965,7 +1034,7 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
                                  gguf_type_to_quant(norm_info->type));
       TensorId nout = b.add_tensor("normed", DType::F32, Shape{{1, dim}});
       b.add_node("rms_out", "RMSNorm", "1", {features, nw}, {nout},
-                 {ir::make_float_attr("eps", 1e-5)});
+                 {ir::make_float_attr("eps", rms_eps)});
       features = nout;
     }
 
@@ -974,8 +1043,12 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
                          "unsupported GGUF quant type for weight " + lm->name + ": " +
                              to_string(lm->type));
     }
-    TensorId lm_w = b.add_weight(lm->name, DType::F32, lm_shape, path + "#" + lm->name,
-                                 gguf_type_to_quant(lm->type));
+    // When embeddings are tied, reuse the same weight_ref for lm_head.
+    TensorId lm_w =
+        tied_embeddings
+            ? emb_w
+            : b.add_weight(lm->name, DType::F32, lm_shape, path + "#" + lm->name,
+                           gguf_type_to_quant(lm->type));
     TensorId logits = b.add_tensor("logits", DType::F32, Shape{{1, vocab}});
     b.add_node("lm_head", "MatMul", "1", {features, lm_w}, {logits},
                {ir::make_bool_attr("transpose_b", true)});
@@ -983,19 +1056,17 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.add_node("softmax", "Softmax", "1", {logits}, {probs},
                {ir::make_int_attr("axis", -1)});
     b.set_inputs({tokens}).set_outputs({probs});
-    const std::string arch_meta = kv_string(file, "general.architecture");
-    b.set_metadata("architecture",
-                   !arch_meta.empty() ? arch_meta
-                                      : (has_blk0 ? "transformer" : "tiny_lm"));
+    if (arch.empty()) {
+      b.set_metadata("architecture", has_blk0 ? "transformer" : "tiny_lm");
+    }
     b.set_metadata("n_layers", std::to_string(n_layers));
     b.set_metadata("n_heads", std::to_string(n_heads));
     b.set_metadata("n_kv_heads", std::to_string(n_kv_heads));
     b.set_metadata("head_dim", std::to_string(head_dim));
     b.set_metadata("rope_theta", std::to_string(rope_theta));
     b.set_metadata("embedding_length", std::to_string(dim));
-    const std::int64_t ctx = kv_i64(
-        file, "llama.context_length",
-        kv_i64(file, "general.context_length", 0));
+    b.set_metadata("rms_eps", std::to_string(rms_eps));
+    const std::int64_t ctx = kv_i64_arch(file, arch, "context_length", 0);
     if (ctx > 0) {
       b.set_metadata("max_context", std::to_string(ctx));
       b.set_metadata("context_length", std::to_string(ctx));

@@ -1,5 +1,6 @@
 #include "commands/convert.hpp"
 #include "commands/doctor.hpp"
+#include "commands/generate.hpp"
 #include "commands/ir_commands.hpp"
 #include "commands/optimize.hpp"
 #include "commands/run.hpp"
@@ -27,6 +28,8 @@ void print_usage(const char* argv0) {
       << "  graph      Dump IR graph (text|dot|json|plan)\n"
       << "  convert    GGUF/Safetensors/ONNX/MLX/PyTorch sidecar → UAII IR\n"
       << "  tokenize   Encode/decode (Simple/BPE/SentencePiece/GGUF)\n"
+      << "  generate   Text generation from a GGUF model (greedy)\n"
+      << "  chat       JSONL chat worker (warm session for dashboard)\n"
       << "  run        Execute IR (or built-in demos)\n"
       << "  profile    Capture chrome-trace profiler JSON\n"
       << "  benchmark  Baseline vs optimized timings\n"
@@ -148,6 +151,12 @@ int main(int argc, char** argv) {
   }
   if (command == "tokenize") {
     return uaii::cli::cmd_tokenize(opts.rest);
+  }
+  if (command == "generate") {
+    return uaii::cli::cmd_generate(opts.rest);
+  }
+  if (command == "chat") {
+    return uaii::cli::cmd_chat(opts.rest);
   }
   if (command == "run") {
     return uaii::cli::cmd_run(opts.rest);

@@ -5,6 +5,7 @@ add_executable(uaii
   src/commands/run.cpp
   src/commands/convert.cpp
   src/commands/optimize.cpp
+  src/commands/generate.cpp
 )
 
 target_include_directories(uaii PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

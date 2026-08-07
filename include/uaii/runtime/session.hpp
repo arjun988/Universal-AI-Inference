@@ -18,6 +18,7 @@
 #include "uaii/storage/streaming.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -113,11 +114,17 @@ class UAII_API Session {
 
   [[nodiscard]] Error run();
 
+  /// Called once per newly generated token (not prompt). Return false to stop early.
+  using OnNewToken = std::function<bool(std::int64_t token_id)>;
+
   /// Greedy autoregressive generate: prefill prompt, then decode up to max_new_tokens.
   /// Respects options_.max_context / graph metadata max_context (fail-closed).
+  /// Stops early when a token is in stop_token_ids (token is included in out_tokens).
   [[nodiscard]] Error generate(const std::vector<std::int64_t>& prompt_tokens,
                                std::int64_t max_new_tokens,
-                               std::vector<std::int64_t>* out_tokens);
+                               std::vector<std::int64_t>* out_tokens,
+                               const std::vector<std::int64_t>& stop_token_ids = {},
+                               const OnNewToken& on_new_token = {});
 
   [[nodiscard]] KvCache* kv_cache() noexcept { return kv_.get(); }
   [[nodiscard]] const KvCache* kv_cache() const noexcept { return kv_.get(); }
@@ -167,6 +174,9 @@ class UAII_API Session {
                                               bool* matched_expected);
 
 [[nodiscard]] UAII_API Error run_tiny_block_demo(std::vector<float>* out_values);
+
+/// Write the Phase-4 tiny LM GGUF used by demos; returns path on success.
+[[nodiscard]] UAII_API Error materialize_tiny_gguf_demo(std::string* out_path);
 
 /// Phase 4: write tiny GGUF → load → generate-style forward; checks softmax mass.
 [[nodiscard]] UAII_API Error run_gguf_generate_demo(std::string* decoded,

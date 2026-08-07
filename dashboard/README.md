@@ -1,74 +1,132 @@
 # UAII Dashboard
 
-Local / self-host operator console for [Universal AI Inference](../README.md).
+Local **and** self-host operator console for Universal AI Inference.
 
-**This app lives in `dashboard/` and is completely separate from `website/`** (the public marketing/docs site).
+**Separate from `website/`** (marketing/docs). This folder is the product UI + API.
 
 ```text
-dashboard/          ← you are here (ops UI + API)
-website/            ← product site (Next.js) — do not mix
+Browser  →  dashboard server (:8787)  →  uaii / uaii_bench CLI
 ```
 
-Thin shell: the dashboard spawns the `uaii` CLI. It does not reimplement inference.
+## Features (end-to-end)
 
-## Quick start
+| Area | What you get |
+|---|---|
+| Chat / Run | **Real GGUF LLM chat** (warm `uaii chat`), streaming, tokenize, IR |
+| Models | Upload, list, convert GGUF→IR, delete |
+| Runtime | `uaii doctor --load-plugins` |
+| Benchmarks | `uaii_bench` JSON + table |
+| Logs | Recent CLI jobs |
+| Settings | Bind/port, binaries, GEMM, threads, token |
+| API | REST `/api/*` + OpenAI-compatible `/v1/*` |
+| Auth | Token required when binding off localhost |
 
-1. Build UAII (so `uaii` / `uaii.exe` exists under `build/`).
-2. Install and run the dashboard:
+## Local (laptop)
 
 ```bash
+# 1) Build UAII runtime first
+cmake --build build --target uaii uaii_bench --parallel
+# Windows App Control often blocks unsigned .exe — use WSL instead:
+#   bash scripts/test_generate_wsl.sh
+# Dashboard auto-detects WSL uaii, or set:
+#   UAII_USE_WSL=1
+#   UAII_WSL_BIN=/home/$USER/uaii-wsl-build-dash/libs/uaii-cli/uaii
+
+# 2) Dashboard
 cd dashboard
 npm run install:all
+
+# Dev (hot UI on :5174, API on :8787)
 npm run dev
+
+# Or one-port production locally
+npm run build && npm start
+# → http://127.0.0.1:8787
 ```
 
-- UI (Vite): http://127.0.0.1:5174  
-- API: http://127.0.0.1:8787  
+Windows:
 
-Production (serve built UI from the API server):
-
-```bash
+```powershell
 cd dashboard
 npm run install:all
-npm run build
-npm start
+.\scripts\start-local.ps1
+# → http://127.0.0.1:8787
 ```
 
-Then open http://127.0.0.1:8787
+Self-host on Windows LAN:
+
+```powershell
+$env:UAII_DASH_TOKEN = -join ((1..32) | ForEach-Object { '{0:x}' -f (Get-Random -Max 16) })
+.\scripts\start-host.ps1
+```
+
+## Self-host (company LAN / server)
+
+```bash
+export UAII_DASH_TOKEN=$(openssl rand -hex 16)
+export UAII_DASH_BIND=0.0.0.0
+cd dashboard
+./scripts/start-host.sh
+```
+
+Docker:
+
+```bash
+export UAII_DASH_TOKEN=$(openssl rand -hex 16)
+# Point volumes at your built binaries (Linux paths)
+export UAII_HOST_BIN=$PWD/../build/libs/uaii-cli/uaii
+export UAII_HOST_BENCH=$PWD/../build/benchmarks/uaii_bench
+cd dashboard
+docker compose up --build
+```
+
+Open `http://SERVER:8787`, unlock with the token.
+
+### OpenAI-compatible clients
+
+```bash
+curl -s http://SERVER:8787/v1/models \
+  -H "Authorization: Bearer $UAII_DASH_TOKEN"
+
+curl -s http://SERVER:8787/v1/chat/completions \
+  -H "Authorization: Bearer $UAII_DASH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"uaii-demo-gguf","messages":[{"role":"user","content":"hi"}]}'
+```
 
 ## Config
 
-Copy `uaii-dash.example.json` → `uaii-dash.json`, or use env:
+Env vars override `uaii-dash.json` (copy from `uaii-dash.example.json`):
 
-| Env | Meaning |
-|---|---|
-| `UAII_BIN` | Path to `uaii` executable |
-| `UAII_MODEL_DIR` | Model library directory |
-| `UAII_DASH_BIND` | Default `127.0.0.1` |
-| `UAII_DASH_PORT` | Default `8787` |
-| `UAII_DASH_TOKEN` | Required if bind is not loopback |
-| `UAII_GEMM` / `UAII_NUM_THREADS` | Passed through to CLI |
+| Variable | Default | Meaning |
+|---|---|---|
+| `UAII_BIN` | auto-detect build tree | Path to `uaii` |
+| `UAII_BENCH_BIN` | auto-detect | Path to `uaii_bench` |
+| `UAII_MODEL_DIR` | `dashboard/models` | Model library |
+| `UAII_DASH_BIND` | `127.0.0.1` | Use `0.0.0.0` to self-host |
+| `UAII_DASH_PORT` | `8787` | HTTP port |
+| `UAII_DASH_TOKEN` | empty | **Required** if bind ≠ loopback |
+| `UAII_GEMM` / `UAII_NUM_THREADS` | — | Passed to CLI |
 
-## MVP pages
+Non-loopback without a token **refuses to start**.
 
-| Page | Action |
-|---|---|
-| Chat / Run | `uaii run --demo …` |
-| Models | List / upload `.gguf` / `.uaii.json`; convert GGUF |
-| Runtime | `uaii doctor --load-plugins` |
-| Logs | Recent CLI jobs |
-| Settings | Binary path, model dir, backend, GEMM, threads |
+## Typical user flows
 
-## Self-host note
+1. **LLM chat (no model file):** Chat → Tiny demo LLM / GGUF with `uaii-tiny-demo` → Run (streams tokens)  
+2. **Real GGUF:** Models → Import a `.gguf` with `blk.*` decoder tensors (any arch) → Chat → select it → Run  
+3. **OpenAI clients:** `POST /v1/chat/completions` with `model: "uaii-tiny-demo"` or `uaii-file-<name.gguf>`  
+4. **Health:** Runtime → Run doctor  
+5. **Perf:** Benchmarks → Run microbench  
+6. **Team API:** Self-host + Bearer token  
 
-Default bind is localhost. For LAN:
+CLI (also used by the dashboard):
 
 ```bash
-UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=your-secret npm start
+uaii generate --demo --prompt "hello" --max-new-tokens 8 --json
+uaii generate --model path/to/model.gguf --prompt "hi" --max-new-tokens 64 --stream
+uaii chat --model path/to/model.gguf --jsonl   # warm session worker
 ```
-
-Send `Authorization: Bearer your-secret` from clients.
 
 ## PRD
 
-See [docs/prd-dashboard.md](../docs/prd-dashboard.md).
+[docs/prd-dashboard.md](../docs/prd-dashboard.md)
