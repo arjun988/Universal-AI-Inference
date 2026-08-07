@@ -1,13 +1,105 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const NAV = [
-  { id: "chat", label: "Chat / Run" },
-  { id: "models", label: "Models" },
-  { id: "runtime", label: "Runtime" },
-  { id: "bench", label: "Benchmarks" },
-  { id: "logs", label: "Logs" },
-  { id: "settings", label: "Settings" },
+const NAV_GROUPS = [
+  {
+    label: "Workspace",
+    items: [
+      { id: "chat", label: "Chat", icon: "chat" },
+      { id: "models", label: "Models", icon: "models" },
+    ],
+  },
+  {
+    label: "Operations",
+    items: [
+      { id: "runtime", label: "Runtime", icon: "runtime" },
+      { id: "bench", label: "Benchmarks", icon: "bench" },
+      { id: "logs", label: "Logs", icon: "logs" },
+      { id: "settings", label: "Settings", icon: "settings" },
+    ],
+  },
 ];
+
+const PAGE_META = {
+  chat: {
+    title: "Chat",
+    sub: "Run local GGUF models with streaming and sampling controls.",
+  },
+  models: {
+    title: "Models",
+    sub: "Import, convert, and manage weights in your model library.",
+  },
+  runtime: {
+    title: "Runtime",
+    sub: "Probe binaries, backends, and plugins with doctor.",
+  },
+  bench: {
+    title: "Benchmarks",
+    sub: "Absolute microbenchmarks from uaii_bench — cite the JSON.",
+  },
+  logs: {
+    title: "Logs",
+    sub: "Recent CLI jobs from chat, doctor, convert, and benches.",
+  },
+  settings: {
+    title: "Settings",
+    sub: "Bind address, binaries, GEMM, threads, and operator token.",
+  },
+};
+
+function Icon({ name }) {
+  const common = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.75",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": true,
+  };
+  switch (name) {
+    case "chat":
+      return (
+        <svg {...common}>
+          <path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z" />
+        </svg>
+      );
+    case "models":
+      return (
+        <svg {...common}>
+          <path d="M12 2 3 7v10l9 5 9-5V7l-9-5z" />
+          <path d="M3 7l9 5 9-5M12 22V12" />
+        </svg>
+      );
+    case "runtime":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />
+        </svg>
+      );
+    case "bench":
+      return (
+        <svg {...common}>
+          <path d="M4 19V5M4 19h16M8 17V10M12 17V7M16 17v-5" />
+        </svg>
+      );
+    case "logs":
+      return (
+        <svg {...common}>
+          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+        </svg>
+      );
+    case "settings":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
 
 const THEME_KEY = "uaii_dash_theme";
 
@@ -95,7 +187,7 @@ export default function App() {
   const [settings, setSettings] = useState(null);
   const [demo, setDemo] = useState("gguf");
   const [chatMode, setChatMode] = useState("gguf");
-  const [prompt, setPrompt] = useState("Hello from UAII operator UI");
+  const [prompt, setPrompt] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("You are a helpful assistant running on UAII.");
   const [maxNewTokens, setMaxNewTokens] = useState(64);
   const [temperature, setTemperature] = useState(0);
@@ -104,7 +196,7 @@ export default function App() {
   const [repPenalty, setRepPenalty] = useState(1);
   const [seed, setSeed] = useState("");
   const [streamChat, setStreamChat] = useState(true);
-  const [selectedModel, setSelectedModel] = useState("__demo__");
+  const [selectedModel, setSelectedModel] = useState("");
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
   const [jobId, setJobId] = useState("");
@@ -113,7 +205,14 @@ export default function App() {
   const [output, setOutput] = useState("");
   const [streamPreview, setStreamPreview] = useState("");
   const [theme, setTheme] = useState(() => readTheme());
+  const [chatConfigOpen, setChatConfigOpen] = useState(false);
   const chatEndRef = useRef(null);
+
+  const SUGGESTIONS = [
+    "Say hello in one short sentence.",
+    "List three uses for local LLM inference.",
+    "Explain what GGUF is, briefly.",
+  ];
 
   const authorized = useMemo(() => {
     if (!auth) return false;
@@ -148,10 +247,16 @@ export default function App() {
 
   const refreshModels = useCallback(async () => {
     const data = await api("/api/models");
-    setModels(data.models || []);
+    const list = data.models || [];
+    setModels(list);
     setModelDir(data.modelDir || "");
-    if (!selectedModel && data.models?.[0]) setSelectedModel(data.models[0].name);
-  }, [selectedModel]);
+    const ggufs = list.filter((m) => m.kind === "gguf");
+    setSelectedModel((cur) => {
+      if (cur && ggufs.some((m) => m.name === cur)) return cur;
+      if (cur && list.some((m) => m.name === cur)) return cur;
+      return ggufs[0]?.name || "";
+    });
+  }, []);
 
   const refreshLogs = useCallback(async () => {
     setLogs((await api("/api/logs")).logs || []);
@@ -228,36 +333,41 @@ export default function App() {
   }
 
   async function sendChat() {
-    setBusy(true);
     setError("");
     setJobId("");
     setStreamPreview("");
+
+    if (chatMode === "gguf") {
+      const ggufs = models.filter((m) => m.kind === "gguf");
+      if (!ggufs.length || !selectedModel) {
+        setError("No model selected. Upload a .gguf in Models, then pick it here.");
+        return;
+      }
+    }
+    if (chatMode === "ir" && !selectedModel) {
+      setError("No model selected. Upload a .gguf or .uaii.json in Models first.");
+      return;
+    }
+
+    setBusy(true);
     const userMsg = { role: "user", content: prompt };
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
 
-    const model =
-      chatMode === "gguf"
-        ? selectedModel || "__demo__"
-        : chatMode === "demo"
-          ? "__demo__"
-          : selectedModel;
-
     const payload = {
-      mode: chatMode === "demo" ? "gguf" : chatMode,
+      mode: chatMode,
       prompt,
       system: systemPrompt,
       demo,
-      model,
+      model: selectedModel,
       messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
       max_new_tokens: maxNewTokens,
       temperature,
       top_p: topP,
       top_k: topK,
       repetition_penalty: repPenalty,
-      stream: streamChat && (chatMode === "gguf" || chatMode === "demo"),
+      stream: streamChat && chatMode === "gguf",
       input: "x=1,2,3,4",
-      demoModel: model === "__demo__" || chatMode === "demo",
     };
     if (seed !== "" && seed != null) {
       const n = Number(seed);
@@ -338,13 +448,11 @@ export default function App() {
   }
 
   async function resetChatSession() {
+    if (!selectedModel) return;
     try {
       await api("/api/chat/reset", {
         method: "POST",
-        body: JSON.stringify({
-          model: selectedModel || "__demo__",
-          demoModel: selectedModel === "__demo__" || chatMode === "demo",
-        }),
+        body: JSON.stringify({ model: selectedModel }),
       });
     } catch (e) {
       setError(e.message);
@@ -458,12 +566,15 @@ export default function App() {
       <div className="login-shell">
         <form className="login-card" onSubmit={doLogin}>
           <div className="brand">
-            UAII
-            <span>Operator UI</span>
+            <div className="brand-mark">UA</div>
+            <div className="brand-text">
+              <strong>UAII</strong>
+              <span>Operator UI</span>
+            </div>
           </div>
           <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme">
             <span className="dot" />
-            {theme === "dark" ? "Dark mode" : "Light mode"} — switch
+            {theme === "dark" ? "Dark" : "Light"} theme
           </button>
           <p className="lede">Self-host mode — enter the operator token to continue.</p>
           {error ? (
@@ -485,140 +596,225 @@ export default function App() {
               placeholder="Paste token"
             />
           </div>
-          <button className="btn primary" type="submit">
-            Unlock
+          <button className="btn primary" type="submit" style={{ width: "100%" }}>
+            Unlock console
           </button>
         </form>
       </div>
     );
   }
 
-  const titles = {
-    chat: "Chat / Run",
-    models: "Model library",
-    runtime: "Runtime",
-    bench: "Benchmarks",
-    logs: "Job log",
-    settings: "Settings",
-  };
-
+  const meta = PAGE_META[page] || { title: page, sub: "" };
   const gemmRows = benchOut?.parsed?.gemm_by_provider || [];
+  const ggufModels = models.filter((m) => m.kind === "gguf");
+  const ggufCount = ggufModels.length;
+  const hasChatModel = chatMode !== "gguf" || Boolean(selectedModel && ggufCount);
 
   return (
     <div className="app">
       <aside className="nav">
         <div className="brand">
-          UAII
-          <span>Operator UI</span>
+          <div className="brand-mark">UA</div>
+          <div className="brand-text">
+            <strong>UAII</strong>
+            <span>Operator UI</span>
+          </div>
         </div>
-        <nav className="nav-list" aria-label="Primary">
-          {NAV.map((n) => (
-            <button
-              key={n.id}
-              type="button"
-              className={page === n.id ? "active" : ""}
-              onClick={() => setPage(n.id)}
-            >
-              {n.label}
-            </button>
-          ))}
-        </nav>
+
+        {NAV_GROUPS.map((group) => (
+          <div className="nav-section" key={group.label}>
+            <div className="nav-section-label">{group.label}</div>
+            <nav className="nav-list" aria-label={group.label}>
+              {group.items.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  className={page === n.id ? "active" : ""}
+                  onClick={() => setPage(n.id)}
+                >
+                  <Icon name={n.icon} />
+                  {n.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+        ))}
+
         <div className="nav-tools">
           <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme">
             <span className="dot" />
             {theme === "dark" ? "Dark" : "Light"}
           </button>
         </div>
+
         <div className="nav-foot">
-          Mode: {health?.mode || "…"}
-          <br />
-          v{health?.version || "…"}
-          <br />
-          Thin shell over uaii
+          <div className="nav-status">
+            <div className="status-line">
+              <span className={`status-dot ${health?.uaiiBinExists ? "on" : "off"}`} />
+              {health?.uaiiBinExists ? "Runtime ready" : "Runtime missing"}
+            </div>
+            <div className="status-line">
+              <span className="status-dot on" />
+              v{health?.version || "…"} · {health?.mode || "…"}
+            </div>
+          </div>
+          <div className="nav-foot-note">Console over the uaii CLI</div>
         </div>
       </aside>
 
       <div className="main">
-        <header className="top">
-          <h1>{titles[page]}</h1>
+        <header className={`top ${page === "chat" ? "top-compact" : ""}`}>
+          <div className="top-left">
+            {page !== "chat" ? (
+              <>
+                <p className="top-kicker">UAII / {meta.title}</p>
+                <h1>{meta.title}</h1>
+                <p className="top-sub">{meta.sub}</p>
+              </>
+            ) : (
+              <>
+                <h1>Chat</h1>
+                <p className="top-sub top-sub-inline">Local inference · streaming · sampling</p>
+              </>
+            )}
+          </div>
           <div className="top-meta">
             <span className={`pill ${health?.uaiiBinExists ? "ok" : "bad"}`}>
               {health?.uaiiBinExists ? "uaii ready" : "uaii missing"}
             </span>
-            <span className="pill">{health?.mode || "…"}</span>
             {health?.uaiiLaunchMode ? <span className="pill">{health.uaiiLaunchMode}</span> : null}
             <span className="pill">
               {health?.bind}:{health?.port}
             </span>
+            {busy ? <span className="pill">busy</span> : null}
           </div>
         </header>
 
-        <div className="content">
+        <div className={`content ${page === "chat" ? "content-chat" : ""}`}>
           {error ? (
             <div className="alert" role="alert">
               <div>
                 <strong>Error</strong>
                 <div>{error}</div>
               </div>
-              <button className="btn ghost" type="button" onClick={() => setError("")}>
+              <button className="btn ghost sm" type="button" onClick={() => setError("")}>
                 Dismiss
               </button>
             </div>
           ) : null}
 
           {page === "chat" && (
-            <div className="chat-layout">
-              <div className="panel">
-                <p className="panel-title">Session</p>
-                <p className="lede" style={{ marginBottom: "0.85rem" }}>
-                  Local LLM chat via <code>uaii generate</code> / warm <code>uaii chat --jsonl</code>.
-                  OpenAI clients: <code>POST /v1/chat/completions</code>.
-                </p>
-                <div className="toolbar">
-                  <div className="field grow" style={{ margin: 0 }}>
-                    <label>Mode</label>
-                    <select value={chatMode} onChange={(e) => setChatMode(e.target.value)}>
-                      <option value="gguf">LLM chat (GGUF)</option>
-                      <option value="demo">Tiny demo LLM</option>
-                      <option value="tokenize">Tokenize only</option>
-                      <option value="ir">Run float IR</option>
-                      <option value="cli-demo">CLI smoke demos</option>
-                    </select>
+            <div className="chat-stage">
+              <div className="chat-bar">
+                <div className="chat-bar-left">
+                  <div className="seg seg-tight" role="group" aria-label="Primary mode">
+                    <button
+                      type="button"
+                      className={chatMode === "gguf" ? "active" : ""}
+                      onClick={() => setChatMode("gguf")}
+                    >
+                      Chat
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        chatMode === "tokenize" || chatMode === "ir" || chatMode === "cli-demo"
+                          ? "active"
+                          : ""
+                      }
+                      onClick={() => {
+                        if (
+                          chatMode !== "tokenize" &&
+                          chatMode !== "ir" &&
+                          chatMode !== "cli-demo"
+                        ) {
+                          setChatMode("tokenize");
+                        }
+                      }}
+                    >
+                      Tools
+                    </button>
                   </div>
-                  {(chatMode === "gguf" || chatMode === "ir") && (
-                    <div className="field grow" style={{ margin: 0, minWidth: 200 }}>
-                      <label>Model</label>
-                      <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-                        <option value="__demo__">uaii-tiny-demo (built-in)</option>
-                        {models
-                          .filter((m) =>
-                            chatMode === "gguf"
-                              ? m.kind === "gguf"
-                              : m.kind === "uaii-ir" || m.kind === "gguf",
-                          )
-                          .map((m) => (
+
+                  {chatMode === "gguf" && (
+                    <select
+                      className="chat-select"
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      aria-label="Model"
+                    >
+                      {!ggufCount ? (
+                        <option value="">No models — upload a .gguf</option>
+                      ) : (
+                        <>
+                          {!selectedModel ? <option value="">Select a model…</option> : null}
+                          {ggufModels.map((m) => (
                             <option key={m.name} value={m.name}>
-                              {m.name} ({m.mib} MiB)
+                              {m.name}
                             </option>
                           ))}
-                      </select>
-                    </div>
+                        </>
+                      )}
+                    </select>
                   )}
-                  {chatMode === "cli-demo" && (
-                    <div className="field grow" style={{ margin: 0 }}>
-                      <label>CLI demo</label>
-                      <select value={demo} onChange={(e) => setDemo(e.target.value)}>
-                        {DEMOS.map((d) => (
-                          <option key={d} value={d}>
-                            {d}
-                          </option>
-                        ))}
+
+                  {(chatMode === "tokenize" || chatMode === "ir" || chatMode === "cli-demo") && (
+                    <>
+                      <select
+                        className="chat-select"
+                        value={chatMode}
+                        onChange={(e) => setChatMode(e.target.value)}
+                        aria-label="Tool"
+                      >
+                        <option value="tokenize">Tokenize</option>
+                        <option value="ir">Run IR</option>
+                        <option value="cli-demo">CLI demo</option>
                       </select>
-                    </div>
+                      {chatMode === "ir" && (
+                        <select
+                          className="chat-select"
+                          value={selectedModel}
+                          onChange={(e) => setSelectedModel(e.target.value)}
+                          aria-label="IR model"
+                        >
+                          {!models.length ? (
+                            <option value="">No models — upload first</option>
+                          ) : (
+                            <>
+                              {!selectedModel ? <option value="">Select a model…</option> : null}
+                              {models
+                                .filter((m) => m.kind === "uaii-ir" || m.kind === "gguf")
+                                .map((m) => (
+                                  <option key={m.name} value={m.name}>
+                                    {m.name}
+                                  </option>
+                                ))}
+                            </>
+                          )}
+                        </select>
+                      )}
+                      {chatMode === "cli-demo" && (
+                        <select
+                          className="chat-select"
+                          value={demo}
+                          onChange={(e) => setDemo(e.target.value)}
+                          aria-label="Demo"
+                        >
+                          {DEMOS.map((d) => (
+                            <option key={d} value={d}>
+                              {d}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </>
                   )}
-                  {(chatMode === "gguf" || chatMode === "demo") && (
-                    <div className="field" style={{ margin: 0, width: 130 }}>
-                      <label>Max tokens</label>
+                </div>
+
+                <div className="chat-bar-right">
+                  {chatMode === "gguf" && (
+                    <label className="chat-inline-field">
+                      <span>Tokens</span>
                       <input
                         type="number"
                         min={1}
@@ -626,142 +822,17 @@ export default function App() {
                         value={maxNewTokens}
                         onChange={(e) => setMaxNewTokens(Number(e.target.value) || 64)}
                       />
-                    </div>
-                  )}
-                  <button className="btn" type="button" disabled={busy} onClick={runDoctor}>
-                    Doctor
-                  </button>
-                </div>
-                {(chatMode === "gguf" || chatMode === "demo") && (
-                  <>
-                    <div className="field" style={{ marginTop: "0.85rem", marginBottom: 0 }}>
-                      <label>System prompt</label>
-                      <textarea
-                        rows={2}
-                        value={systemPrompt}
-                        onChange={(e) => setSystemPrompt(e.target.value)}
-                      />
-                    </div>
-                    <div className="row wrap" style={{ marginTop: "0.75rem", gap: "0.65rem" }}>
-                      <div className="field" style={{ margin: 0, width: 110 }}>
-                        <label>Temperature</label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={2}
-                          step={0.05}
-                          value={temperature}
-                          onChange={(e) => setTemperature(Number(e.target.value))}
-                          title="0 = greedy; &gt;0 samples"
-                        />
-                      </div>
-                      <div className="field" style={{ margin: 0, width: 100 }}>
-                        <label>Top-p</label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={topP}
-                          onChange={(e) => setTopP(Number(e.target.value))}
-                        />
-                      </div>
-                      <div className="field" style={{ margin: 0, width: 90 }}>
-                        <label>Top-k</label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={200}
-                          value={topK}
-                          onChange={(e) => setTopK(Number(e.target.value) || 0)}
-                        />
-                      </div>
-                      <div className="field" style={{ margin: 0, width: 110 }}>
-                        <label>Rep. penalty</label>
-                        <input
-                          type="number"
-                          min={1}
-                          max={2}
-                          step={0.05}
-                          value={repPenalty}
-                          onChange={(e) => setRepPenalty(Number(e.target.value) || 1)}
-                        />
-                      </div>
-                      <div className="field" style={{ margin: 0, width: 110 }}>
-                        <label>Seed</label>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="random"
-                          value={seed}
-                          onChange={(e) => setSeed(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="chat-thread" aria-live="polite">
-                {messages.length === 0 && !streamPreview ? (
-                  <div className="chat-empty">
-                    <h3>Start a run</h3>
-                    <p>Pick a model, type a prompt, then Run. Streaming shows tokens as they arrive.</p>
-                  </div>
-                ) : (
-                  <>
-                    {messages.map((m, i) => (
-                      <div key={i} className={`bubble ${m.role}`}>
-                        <div className="bubble-role">{m.role}</div>
-                        <pre>{m.content}</pre>
-                      </div>
-                    ))}
-                    {streamPreview ? (
-                      <div className="bubble assistant streaming">
-                        <div className="bubble-role">assistant · streaming</div>
-                        <pre>{streamPreview}</pre>
-                      </div>
-                    ) : null}
-                    <div ref={chatEndRef} />
-                  </>
-                )}
-              </div>
-
-              <div className="composer">
-                <div className="field" style={{ marginBottom: 0 }}>
-                  <label>Prompt</label>
-                  <textarea
-                    className="prompt"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !busy) {
-                        e.preventDefault();
-                        sendChat();
-                      }
-                    }}
-                    placeholder="Ask the local model…"
-                  />
-                </div>
-                <div className="composer-actions">
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={streamChat}
-                      onChange={(e) => setStreamChat(e.target.checked)}
-                    />
-                    Stream tokens
-                  </label>
-                  <button className="btn primary" type="button" disabled={busy || !prompt.trim()} onClick={sendChat}>
-                    {busy ? "Generating…" : "Run"}
-                  </button>
-                  {busy && (
-                    <button className="btn danger" type="button" onClick={cancelJob}>
-                      Stop
-                    </button>
+                    </label>
                   )}
                   <button
-                    className="btn ghost"
+                    className={`btn ghost sm ${chatConfigOpen ? "active-toggle" : ""}`}
+                    type="button"
+                    onClick={() => setChatConfigOpen((v) => !v)}
+                  >
+                    Configure
+                  </button>
+                  <button
+                    className="btn ghost sm"
                     type="button"
                     onClick={() => {
                       setMessages([]);
@@ -772,7 +843,211 @@ export default function App() {
                   >
                     Clear
                   </button>
-                  <span className="composer-hint">Ctrl/⌘ + Enter to run</span>
+                </div>
+              </div>
+
+              {chatConfigOpen && (
+                <div className="chat-config">
+                  <div className="chat-config-grid">
+                    {chatMode === "gguf" && (
+                      <div className="field" style={{ margin: 0, gridColumn: "1 / -1" }}>
+                        <label>System prompt</label>
+                        <textarea
+                          rows={2}
+                          value={systemPrompt}
+                          onChange={(e) => setSystemPrompt(e.target.value)}
+                        />
+                      </div>
+                    )}
+                    {chatMode === "gguf" && (
+                      <>
+                        <div className="field" style={{ margin: 0 }}>
+                          <label>Temperature</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={2}
+                            step={0.05}
+                            value={temperature}
+                            onChange={(e) => setTemperature(Number(e.target.value))}
+                          />
+                        </div>
+                        <div className="field" style={{ margin: 0 }}>
+                          <label>Top-p</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={topP}
+                            onChange={(e) => setTopP(Number(e.target.value))}
+                          />
+                        </div>
+                        <div className="field" style={{ margin: 0 }}>
+                          <label>Top-k</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={200}
+                            value={topK}
+                            onChange={(e) => setTopK(Number(e.target.value) || 0)}
+                          />
+                        </div>
+                        <div className="field" style={{ margin: 0 }}>
+                          <label>Rep. penalty</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={2}
+                            step={0.05}
+                            value={repPenalty}
+                            onChange={(e) => setRepPenalty(Number(e.target.value) || 1)}
+                          />
+                        </div>
+                        <div className="field" style={{ margin: 0 }}>
+                          <label>Seed</label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="random"
+                            value={seed}
+                            onChange={(e) => setSeed(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    )}
+                    <div className="chat-config-actions">
+                      <button className="btn sm" type="button" disabled={busy} onClick={runDoctor}>
+                        Doctor
+                      </button>
+                      <span className="chat-config-hint">
+                        {temperature > 0
+                          ? `Sampling · temp ${temperature}`
+                          : "Greedy decode (temp 0)"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="chat-surface">
+                <div className="chat-thread" aria-live="polite">
+                  {messages.length === 0 && !streamPreview ? (
+                    <div className="chat-empty">
+                      <div className="chat-empty-mark">UA</div>
+                      {!hasChatModel ? (
+                        <>
+                          <h3>Upload a model to chat</h3>
+                          <p>
+                            Chat needs a local <code>.gguf</code> file. Import one in Models, then
+                            select it above.
+                          </p>
+                          <div className="suggest-row">
+                            <button
+                              type="button"
+                              className="btn primary"
+                              onClick={() => setPage("models")}
+                            >
+                              Go to Models
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <h3>What do you want to run?</h3>
+                          <p>Pick a model above, then send a prompt. Streaming shows tokens live.</p>
+                          <div className="suggest-row">
+                            {SUGGESTIONS.map((s) => (
+                              <button
+                                key={s}
+                                type="button"
+                                className="suggest-chip"
+                                onClick={() => setPrompt(s)}
+                              >
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="chat-messages">
+                      {messages.map((m, i) => (
+                        <div key={i} className={`msg ${m.role}`}>
+                          <div className="msg-avatar">{m.role === "user" ? "You" : "UA"}</div>
+                          <div className="msg-body">
+                            <div className="msg-role">{m.role === "user" ? "You" : "Assistant"}</div>
+                            <pre>{m.content}</pre>
+                          </div>
+                        </div>
+                      ))}
+                      {streamPreview ? (
+                        <div className="msg assistant streaming">
+                          <div className="msg-avatar">UA</div>
+                          <div className="msg-body">
+                            <div className="msg-role">
+                              <span className="live" />
+                              Assistant
+                            </div>
+                            <pre>{streamPreview}</pre>
+                          </div>
+                        </div>
+                      ) : null}
+                      <div ref={chatEndRef} />
+                    </div>
+                  )}
+                </div>
+
+                <div className="composer-dock">
+                  <div className="composer-shell">
+                    <textarea
+                      className="prompt"
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !busy) {
+                          e.preventDefault();
+                          sendChat();
+                        }
+                      }}
+                      placeholder={
+                        hasChatModel
+                          ? "Ask your local model…"
+                          : "Upload a .gguf in Models before chatting…"
+                      }
+                      rows={2}
+                      disabled={chatMode === "gguf" && !hasChatModel}
+                    />
+                    <div className="composer-actions">
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          checked={streamChat}
+                          onChange={(e) => setStreamChat(e.target.checked)}
+                          disabled={chatMode === "gguf" && !hasChatModel}
+                        />
+                        Stream
+                      </label>
+                      <span className="composer-hint">
+                        <span className="kbd">⌘</span>
+                        <span className="kbd">↵</span>
+                      </span>
+                      {busy && (
+                        <button className="btn danger sm" type="button" onClick={cancelJob}>
+                          Stop
+                        </button>
+                      )}
+                      <button
+                        className="btn primary"
+                        type="button"
+                        disabled={busy || !prompt.trim() || (chatMode === "gguf" && !hasChatModel)}
+                        onClick={sendChat}
+                      >
+                        {busy ? "Running…" : "Run"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -780,20 +1055,42 @@ export default function App() {
 
           {page === "models" && (
             <>
+              <div className="stats-row">
+                <div className="stat">
+                  <div className="stat-label">Files</div>
+                  <div className="stat-value">{models.length}</div>
+                  <div className="stat-hint">In library</div>
+                </div>
+                <div className="stat">
+                  <div className="stat-label">GGUF</div>
+                  <div className="stat-value">{ggufCount}</div>
+                  <div className="stat-hint">Ready for chat</div>
+                </div>
+                <div className="stat">
+                  <div className="stat-label">Directory</div>
+                  <div className="stat-value" style={{ fontSize: "0.92rem", wordBreak: "break-all" }}>
+                    {modelDir ? modelDir.split(/[/\\]/).pop() : "…"}
+                  </div>
+                  <div className="stat-hint">{modelDir || "not set"}</div>
+                </div>
+              </div>
               <div className="panel">
-                <p className="panel-title">Library</p>
-                <p className="lede" style={{ marginBottom: "0.85rem" }}>
-                  Directory: <code>{modelDir || "…"}</code> — import GGUF/IR, convert, run.
-                </p>
-                <div className="row" style={{ marginBottom: 0 }}>
-                  <label className="btn primary">
-                    Import file
-                    <input type="file" hidden onChange={onUpload} />
-                  </label>
-                  <button className="btn" type="button" onClick={() => refreshModels()}>
-                    Refresh
-                  </button>
-                  <span className="pill">{models.length} files</span>
+                <div className="panel-head">
+                  <div>
+                    <p className="panel-title">Library</p>
+                    <p className="panel-desc">
+                      Import GGUF / IR, convert, or open in Chat.
+                    </p>
+                  </div>
+                  <div className="row" style={{ margin: 0 }}>
+                    <label className="btn primary sm">
+                      Import
+                      <input type="file" hidden onChange={onUpload} />
+                    </label>
+                    <button className="btn sm" type="button" onClick={() => refreshModels()}>
+                      Refresh
+                    </button>
+                  </div>
                 </div>
               </div>
               <div className="table-wrap">
@@ -813,7 +1110,7 @@ export default function App() {
                         <td colSpan={5}>
                           <div className="chat-empty" style={{ padding: "1.5rem" }}>
                             <h3>No models yet</h3>
-                            <p>Import a .gguf / .uaii.json, or use Chat → tiny demo.</p>
+                            <p>Import a .gguf / .uaii.json to use in Chat.</p>
                           </div>
                         </td>
                       </tr>
@@ -831,7 +1128,7 @@ export default function App() {
                           <td>
                             <div className="row" style={{ margin: 0 }}>
                               <button
-                                className="btn"
+                                className="btn sm"
                                 type="button"
                                 disabled={busy}
                                 onClick={() => runModel(m.name)}
@@ -839,7 +1136,7 @@ export default function App() {
                                 Run / convert
                               </button>
                               <button
-                                className="btn ghost"
+                                className="btn ghost sm"
                                 type="button"
                                 onClick={async () => {
                                   if (!window.confirm(`Delete ${m.name}?`)) return;
@@ -865,12 +1162,14 @@ export default function App() {
           {page === "runtime" && (
             <>
               <div className="panel">
-                <p className="panel-title">Doctor</p>
-                <p className="lede" style={{ marginBottom: "0.85rem" }}>
-                  Honest probe from <code>uaii doctor --load-plugins</code>.
-                </p>
-                <div className="row" style={{ marginBottom: "0.85rem" }}>
-                  <button className="btn primary" type="button" disabled={busy} onClick={runDoctor}>
+                <div className="panel-head">
+                  <div>
+                    <p className="panel-title">Doctor</p>
+                    <p className="panel-desc">
+                      Honest probe from <code>uaii doctor --load-plugins</code>.
+                    </p>
+                  </div>
+                  <button className="btn primary sm" type="button" disabled={busy} onClick={runDoctor}>
                     {busy ? "Probing…" : "Run doctor"}
                   </button>
                 </div>
@@ -890,22 +1189,26 @@ export default function App() {
           {page === "bench" && (
             <>
               <div className="panel">
-                <p className="panel-title">Microbench</p>
-                <p className="lede" style={{ marginBottom: "0.85rem" }}>
-                  Runs <code>uaii_bench</code> when built. Short trials for UI responsiveness.
-                </p>
-                <div className="row" style={{ marginBottom: 0 }}>
-                  <button className="btn primary" type="button" disabled={busy} onClick={runBench}>
-                    {busy ? "Benchmarking…" : "Run microbench"}
-                  </button>
-                  {busy && page === "bench" && (
-                    <button className="btn danger" type="button" onClick={cancelJob}>
-                      Stop
+                <div className="panel-head">
+                  <div>
+                    <p className="panel-title">Microbench</p>
+                    <p className="panel-desc">
+                      Short <code>uaii_bench</code> trials for the console — cite CI JSON for publish.
+                    </p>
+                  </div>
+                  <div className="row" style={{ margin: 0 }}>
+                    <button className="btn primary sm" type="button" disabled={busy} onClick={runBench}>
+                      {busy ? "Running…" : "Run"}
                     </button>
-                  )}
-                  <span className={`pill ${health?.benchBinExists ? "ok" : "bad"}`}>
-                    {health?.benchBinExists ? "bench found" : "bench missing"}
-                  </span>
+                    {busy && page === "bench" && (
+                      <button className="btn danger sm" type="button" onClick={cancelJob}>
+                        Stop
+                      </button>
+                    )}
+                    <span className={`pill ${health?.benchBinExists ? "ok" : "bad"}`}>
+                      {health?.benchBinExists ? "bench found" : "bench missing"}
+                    </span>
+                  </div>
                 </div>
               </div>
               {gemmRows.length > 0 && (
@@ -951,22 +1254,26 @@ export default function App() {
           {page === "logs" && (
             <>
               <div className="panel">
-                <p className="panel-title">Job log</p>
-                <div className="row" style={{ marginBottom: 0 }}>
-                  <button className="btn" type="button" onClick={refreshLogs}>
-                    Refresh
-                  </button>
-                  <button
-                    className="btn ghost"
-                    type="button"
-                    onClick={async () => {
-                      await api("/api/logs", { method: "DELETE" });
-                      refreshLogs();
-                    }}
-                  >
-                    Clear
-                  </button>
-                  <span className="pill">{logs.length} entries</span>
+                <div className="panel-head">
+                  <div>
+                    <p className="panel-title">Job log</p>
+                    <p className="panel-desc">{logs.length} recent entries</p>
+                  </div>
+                  <div className="row" style={{ margin: 0 }}>
+                    <button className="btn sm" type="button" onClick={refreshLogs}>
+                      Refresh
+                    </button>
+                    <button
+                      className="btn ghost sm"
+                      type="button"
+                      onClick={async () => {
+                        await api("/api/logs", { method: "DELETE" });
+                        refreshLogs();
+                      }}
+                    >
+                      Clear
+                    </button>
+                  </div>
                 </div>
               </div>
               {logs.length === 0 ? (
@@ -975,20 +1282,23 @@ export default function App() {
                   <p>Runs from Chat, Doctor, and Benchmarks show up here.</p>
                 </div>
               ) : (
-                logs.map((l, i) => (
-                  <div className="log-item" key={`${l.ts}-${i}`}>
-                    <div className="log-meta">
-                      <span className={l.kind}>{l.kind}</span> · {l.ts}
-                      {l.ms != null ? ` · ${l.ms} ms` : ""}
-                    </div>
-                    <div style={{ fontFamily: "var(--mono)", fontSize: "0.82rem" }}>{l.cmd}</div>
-                    {l.preview ? (
-                      <div className="pre" style={{ marginTop: "0.5rem", maxHeight: "8rem" }}>
-                        {l.preview}
+                <div className="log-list">
+                  {logs.map((l, i) => (
+                    <div className="log-item" key={`${l.ts}-${i}`}>
+                      <div className="log-meta">
+                        <span className={`pill ${l.kind === "ok" ? "ok" : "bad"}`}>{l.kind}</span>
+                        <span>{l.ts}</span>
+                        {l.ms != null ? <span>{l.ms} ms</span> : null}
                       </div>
-                    ) : null}
-                  </div>
-                ))
+                      <div style={{ fontFamily: "var(--mono)", fontSize: "0.82rem" }}>{l.cmd}</div>
+                      {l.preview ? (
+                        <div className="pre" style={{ marginTop: "0.5rem", maxHeight: "8rem" }}>
+                          {l.preview}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               )}
             </>
           )}
@@ -996,11 +1306,15 @@ export default function App() {
           {page === "settings" && settings && (
             <>
               <div className="panel">
-                <p className="panel-title">Host & paths</p>
-                <p className="lede" style={{ marginBottom: "1rem" }}>
-                  Local default: <code>127.0.0.1</code>. Self-host: bind <code>0.0.0.0</code> + token,
-                  then restart. Config: <code>{settings.configPath}</code>
-                </p>
+                <div className="panel-head">
+                  <div>
+                    <p className="panel-title">Host & paths</p>
+                    <p className="panel-desc">
+                      Local: <code>127.0.0.1</code>. LAN: bind <code>0.0.0.0</code> + token, then
+                      restart. Config: <code>{settings.configPath}</code>
+                    </p>
+                  </div>
+                </div>
                 <form onSubmit={saveSettings}>
                   <div className="settings-grid">
                     <div className="field">
@@ -1071,7 +1385,7 @@ UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=secret npm start
 curl http://HOST:8787/v1/models -H "Authorization: Bearer secret"
 curl http://HOST:8787/v1/chat/completions -H "Authorization: Bearer secret" \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"uaii-tiny-demo","messages":[{"role":"user","content":"hi"}]}'`}
+  -d '{"model":"uaii-file-your-model.gguf","messages":[{"role":"user","content":"hi"}]}'`}
               </div>
             </>
           )}

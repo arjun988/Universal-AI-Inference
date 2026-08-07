@@ -113,9 +113,9 @@ Non-loopback without a token **refuses to start**.
 
 ## Typical user flows
 
-1. **LLM chat (no model file):** Chat → Tiny demo LLM / GGUF with `uaii-tiny-demo` → Run (streams tokens)  
-2. **Real GGUF:** Models → Import a `.gguf` with `blk.*` decoder tensors (any arch) → Chat → select it → Run  
-3. **OpenAI clients:** `POST /v1/chat/completions` with `model: "uaii-tiny-demo"` or `uaii-file-<name.gguf>`  
+1. **LLM chat:** Models → Import a `.gguf` → Chat → select it → Run (streams tokens). No model → UI asks you to upload.  
+2. **OpenAI clients:** `POST /v1/chat/completions` with `model: "uaii-file-<name.gguf>"`  
+3. **Tools:** Chat → Tools for tokenize / IR / CLI smoke demos  
 4. **Health:** Runtime → Run doctor  
 5. **Perf:** Benchmarks → Run microbench  
 6. **Team API:** Self-host + Bearer token  

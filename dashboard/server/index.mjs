@@ -481,14 +481,19 @@ function formatChatPrompt(messages, fallbackPrompt, system) {
 
 function resolveChatModel(body) {
   const mode = body.mode || "gguf";
+  // Explicit demo only (API); Operator UI Chat no longer offers tiny demo.
   if (mode === "demo" || body.demoModel === true || body.model === "__demo__") {
     return { kind: "demo", path: "", label: "uaii-tiny-demo" };
   }
   const name = body.model || body.gguf || "";
-  if (!name) return { kind: "demo", path: "", label: "uaii-tiny-demo" };
+  if (!name || name === "__demo__") {
+    return {
+      error: "No model selected. Upload a .gguf in Models, then choose it in Chat.",
+    };
+  }
   const full = path.isAbsolute(name) ? name : path.join(config.modelDir, path.basename(name));
   if (!fs.existsSync(full)) {
-    return { error: "model not found", path: full };
+    return { error: "model not found — upload a .gguf in Models", path: full };
   }
   const lower = full.toLowerCase();
   if (lower.endsWith(".gguf")) {
@@ -769,7 +774,6 @@ app.post("/api/jobs/cancel-running", (_req, res) => {
 // --- OpenAI-compatible surface for internal apps (self-host) ---
 app.get("/v1/models", (_req, res) => {
   const models = [
-    { id: "uaii-tiny-demo", object: "model", owned_by: "uaii" },
     ...listModels()
       .filter((m) => m.kind === "gguf" || m.kind === "uaii-ir")
       .map((m) => ({
@@ -788,7 +792,7 @@ app.get("/v1/models", (_req, res) => {
 
 app.post("/v1/chat/completions", async (req, res) => {
   const body = req.body || {};
-  const model = String(body.model || "uaii-tiny-demo");
+  const model = String(body.model || "");
   const messages = body.messages || [];
   const maxNew = Number(body.max_tokens || body.max_new_tokens || 64);
 
@@ -803,6 +807,14 @@ app.post("/v1/chat/completions", async (req, res) => {
     seed: body.seed,
     stream: Boolean(body.stream),
   };
+  if (!model) {
+    return res.status(400).json({
+      error: {
+        message: "model is required — upload a .gguf and pass its filename (or uaii-file-<name>)",
+        type: "invalid_request_error",
+      },
+    });
+  }
   if (model === "uaii-tiny-demo" || model === "uaii-demo-gguf" || model.endsWith("-tiny-demo")) {
     chatBody = { ...chatBody, mode: "gguf", model: "__demo__", demoModel: true };
   } else if (model.startsWith("uaii-demo-")) {
