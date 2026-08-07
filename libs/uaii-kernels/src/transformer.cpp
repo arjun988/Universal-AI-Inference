@@ -451,6 +451,98 @@ Error moe_experts_f32(const TensorView& x,
   return Error::success();
 }
 
+Error moe_experts_swiglu_f32(const TensorView& x,
+                             const TensorView& gate_exps,
+                             const TensorView& up_exps,
+                             const TensorView& down_exps,
+                             const TensorView& probs,
+                             TensorView* out,
+                             int num_experts,
+                             int top_k) {
+  if (out == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "moe swiglu out");
+  }
+  if (x.rank != 2 || out->rank != 2 || gate_exps.rank != 3 || up_exps.rank != 3 ||
+      down_exps.rank != 3 || probs.rank != 2) {
+    return Error::make(ErrorCode::InvalidArgument,
+                       "moe swiglu expects x[B,D], gate/up[E,I,D], down[E,D,I], probs[B,E]");
+  }
+  const std::int64_t B = x.dim(0);
+  const std::int64_t D = x.dim(1);
+  const std::int64_t E = gate_exps.dim(0);
+  const std::int64_t I = gate_exps.dim(1);
+  if (E != num_experts || up_exps.dim(0) != E || up_exps.dim(1) != I || up_exps.dim(2) != D ||
+      down_exps.dim(0) != E || down_exps.dim(1) != D || down_exps.dim(2) != I ||
+      probs.dim(0) != B || probs.dim(1) != E || out->dim(0) != B || out->dim(1) != D ||
+      gate_exps.dim(2) != D) {
+    return Error::make(ErrorCode::InvalidArgument, "moe swiglu shape mismatch");
+  }
+  int k = top_k > 0 ? top_k : 1;
+  if (k > static_cast<int>(E)) k = static_cast<int>(E);
+
+  const float* X = x.f32();
+  const float* G = gate_exps.f32();
+  const float* U = up_exps.f32();
+  const float* Dn = down_exps.f32();
+  const float* P = probs.f32();
+  float* Y = out->f32();
+
+  std::vector<float> gate_act(static_cast<std::size_t>(I));
+  std::vector<float> up_act(static_cast<std::size_t>(I));
+  std::vector<float> hid(static_cast<std::size_t>(I));
+  std::vector<float> expert_out(static_cast<std::size_t>(D));
+  std::vector<std::pair<float, int>> ranked(static_cast<std::size_t>(E));
+
+  for (std::int64_t b = 0; b < B; ++b) {
+    for (std::int64_t e = 0; e < E; ++e) {
+      ranked[static_cast<std::size_t>(e)] = {
+          P[static_cast<std::size_t>(b * E + e)], static_cast<int>(e)};
+    }
+    std::partial_sort(ranked.begin(), ranked.begin() + k, ranked.end(),
+                      [](const auto& a, const auto& b2) { return a.first > b2.first; });
+    float mass = 0.0f;
+    for (int t = 0; t < k; ++t) mass += ranked[static_cast<std::size_t>(t)].first;
+    if (!(mass > 0.0f)) mass = 1.0f;
+
+    for (std::int64_t o = 0; o < D; ++o) Y[static_cast<std::size_t>(b * D + o)] = 0.0f;
+
+    const float* xb = X + static_cast<std::size_t>(b * D);
+    for (int t = 0; t < k; ++t) {
+      const int e = ranked[static_cast<std::size_t>(t)].second;
+      const float w = ranked[static_cast<std::size_t>(t)].first / mass;
+      const float* Ge = G + static_cast<std::size_t>(e) * static_cast<std::size_t>(I * D);
+      const float* Ue = U + static_cast<std::size_t>(e) * static_cast<std::size_t>(I * D);
+      const float* De = Dn + static_cast<std::size_t>(e) * static_cast<std::size_t>(D * I);
+
+      for (std::int64_t i = 0; i < I; ++i) {
+        float gsum = 0.0f;
+        float usum = 0.0f;
+        for (std::int64_t d = 0; d < D; ++d) {
+          const float xv = xb[static_cast<std::size_t>(d)];
+          gsum += xv * Ge[static_cast<std::size_t>(i * D + d)];
+          usum += xv * Ue[static_cast<std::size_t>(i * D + d)];
+        }
+        // SiLU
+        const float sig = 1.0f / (1.0f + std::exp(-gsum));
+        gate_act[static_cast<std::size_t>(i)] = gsum * sig;
+        up_act[static_cast<std::size_t>(i)] = usum;
+        hid[static_cast<std::size_t>(i)] =
+            gate_act[static_cast<std::size_t>(i)] * up_act[static_cast<std::size_t>(i)];
+      }
+      for (std::int64_t o = 0; o < D; ++o) {
+        float sum = 0.0f;
+        for (std::int64_t i = 0; i < I; ++i) {
+          sum += hid[static_cast<std::size_t>(i)] *
+                 De[static_cast<std::size_t>(o * I + i)];
+        }
+        expert_out[static_cast<std::size_t>(o)] = sum;
+        Y[static_cast<std::size_t>(b * D + o)] += w * sum;
+      }
+    }
+  }
+  return Error::success();
+}
+
 Error reshape_f32(const TensorView& in, TensorView* out) {
   if (out == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "reshape out");

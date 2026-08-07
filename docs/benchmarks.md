@@ -45,6 +45,29 @@ OpenBLAS is ~**28×** the ref kernel at 1024³ on this machine — cite both; th
 
 Median of 21 trials (10 for large kernels), full env in JSON. Not LLM tokens/s.
 
+## CI artifacts (not anecdotal)
+
+Every push/PR runs the `benchmarks` job (Ubuntu / Windows / macOS). It:
+
+1. Builds `uaii_bench` (Linux with OpenBLAS + oneDNN when packages install)
+2. Runs `--suite all --providers all --trials 21 --json`
+3. Uploads `uaii-bench-<os>-<sha>` artifacts (90-day retention)
+4. Writes a job summary table
+
+**How to cite CI:** open the workflow run → Artifacts → download JSON → quote `cpu`, `linked_providers`, and `gflops_median` from `gemm_by_provider`. Always include the commit SHA and runner OS.
+
+**How to rerun locally (same flags as CI):**
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DUAII_BUILD_BENCHMARKS=ON -DUAII_WITH_OPENBLAS=ON -DUAII_WITH_ONEDNN=ON
+cmake --build build --target uaii_bench --parallel
+./build/benchmarks/uaii_bench --suite all --providers all --trials 21 --warmup 5 --json \
+  | tee benchmarks/results/local.json
+```
+
+WSL helper: `TRIALS=21 bash scripts/run_bench_wsl.sh`
+
 ## Fair citation
 
 > UAII with OpenBLAS on Intel Core i9-14900HX (32 threads, WSL2), median of 21: **425 GFLOP/s** at 1024³ f32 GEMM (ref-tiled 15.1 GFLOP/s). JSON: `benchmarks/results/local_wsl.json`.

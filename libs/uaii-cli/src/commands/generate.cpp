@@ -1,8 +1,10 @@
 #include "commands/generate.hpp"
 
 #include "uaii/core/log.hpp"
+#include "uaii/interfaces/tokenizer.hpp"
 #include "uaii/ir/graph.hpp"
 #include "uaii/loaders/registry.hpp"
+#include "uaii/runtime/sampling.hpp"
 #include "uaii/runtime/session.hpp"
 #include "uaii/tokenizers/gguf_tokenizer.hpp"
 #include "uaii/tokenizers/simple_tokenizer.hpp"
@@ -34,7 +36,13 @@ void print_generate_usage() {
       << "  --max-new-tokens <n>     Default 64\n"
       << "  --max-context <n>        Session max context (0 = model default)\n"
       << "  --backend <name>         Default cpu\n"
+      << "  --temperature <f>        0 = greedy (default); >0 enables sampling\n"
+      << "  --top-p <f>              Nucleus sampling (default 1 = off)\n"
+      << "  --top-k <n>              Top-k filter (0 = off)\n"
+      << "  --repetition-penalty <f> >1 penalizes seen tokens (default 1 = off)\n"
+      << "  --seed <u64>             RNG seed (omit for nondeterministic)\n"
       << "  --stop-token-id <id>     Repeatable; stop when emitted\n"
+      << "  --stop <text>            Repeatable; encode text → stop token ids\n"
       << "  --system <text>          Optional system prefix\n"
       << "  --json                   Machine-readable JSON on stdout\n"
       << "  --stream                 Emit token lines while generating\n"
@@ -47,7 +55,9 @@ void print_chat_usage() {
       << "  uaii chat --model <path.gguf> --jsonl\n"
       << "  uaii chat --demo --jsonl\n\n"
       << "JSONL protocol (one JSON object per stdin line):\n"
-      << "  {\"cmd\":\"generate\",\"id\":\"1\",\"prompt\":\"hi\",\"max_new_tokens\":64,\"stream\":true}\n"
+      << "  {\"cmd\":\"generate\",\"id\":\"1\",\"prompt\":\"hi\",\"max_new_tokens\":64,\n"
+      << "   \"temperature\":0.8,\"top_p\":0.9,\"top_k\":40,\"repetition_penalty\":1.1,\n"
+      << "   \"seed\":42,\"stream\":true}\n"
       << "  {\"cmd\":\"reset\",\"id\":\"2\"}\n"
       << "  {\"cmd\":\"quit\"}\n\n"
       << "Events on stdout:\n"
@@ -177,6 +187,75 @@ std::int64_t extract_json_i64(const std::string& line, const char* key, std::int
   return std::strtoll(line.c_str() + pos + 1, nullptr, 10);
 }
 
+double extract_json_f64(const std::string& line, const char* key, double def) {
+  const std::string pat = std::string("\"") + key + "\"";
+  auto pos = line.find(pat);
+  if (pos == std::string::npos) return def;
+  pos = line.find(':', pos + pat.size());
+  if (pos == std::string::npos) return def;
+  return std::strtod(line.c_str() + pos + 1, nullptr);
+}
+
+bool json_has_key(const std::string& line, const char* key) {
+  return line.find(std::string("\"") + key + "\"") != std::string::npos;
+}
+
+std::vector<std::string> get_opt_all(const std::vector<std::string>& args,
+                                     const std::string& key) {
+  std::vector<std::string> out;
+  for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+    if (args[i] == key) out.push_back(args[i + 1]);
+  }
+  return out;
+}
+
+runtime::SampleParams sample_from_args(const std::vector<std::string>& args) {
+  runtime::SampleParams s;
+  if (has_flag(args, "--temperature") || !get_opt(args, "--temperature").empty()) {
+    s.temperature = static_cast<float>(std::strtod(get_opt(args, "--temperature", "0").c_str(),
+                                                   nullptr));
+  }
+  if (!get_opt(args, "--top-p").empty()) {
+    s.top_p = static_cast<float>(std::strtod(get_opt(args, "--top-p", "1").c_str(), nullptr));
+  }
+  if (!get_opt(args, "--top-k").empty()) {
+    s.top_k = static_cast<std::int32_t>(
+        std::strtol(get_opt(args, "--top-k", "0").c_str(), nullptr, 10));
+  }
+  if (!get_opt(args, "--repetition-penalty").empty()) {
+    s.repetition_penalty = static_cast<float>(
+        std::strtod(get_opt(args, "--repetition-penalty", "1").c_str(), nullptr));
+  }
+  if (!get_opt(args, "--seed").empty()) {
+    s.seed = static_cast<std::uint64_t>(
+        std::strtoull(get_opt(args, "--seed", "0").c_str(), nullptr, 10));
+    s.has_seed = true;
+  }
+  return s;
+}
+
+runtime::SampleParams sample_from_jsonl(const std::string& line) {
+  runtime::SampleParams s;
+  if (json_has_key(line, "temperature")) {
+    s.temperature = static_cast<float>(extract_json_f64(line, "temperature", 0.0));
+  }
+  if (json_has_key(line, "top_p")) {
+    s.top_p = static_cast<float>(extract_json_f64(line, "top_p", 1.0));
+  }
+  if (json_has_key(line, "top_k")) {
+    s.top_k = static_cast<std::int32_t>(extract_json_i64(line, "top_k", 0));
+  }
+  if (json_has_key(line, "repetition_penalty")) {
+    s.repetition_penalty =
+        static_cast<float>(extract_json_f64(line, "repetition_penalty", 1.0));
+  }
+  if (json_has_key(line, "seed")) {
+    s.seed = static_cast<std::uint64_t>(extract_json_i64(line, "seed", 0));
+    s.has_seed = true;
+  }
+  return s;
+}
+
 struct LoadedGen {
   ir::Graph graph;
   std::unique_ptr<ITokenizer> tok;
@@ -233,10 +312,24 @@ std::string build_prompt(const std::string& system, const std::string& user) {
   return "System: " + system + "\n\nUser: " + user + "\n\nAssistant:";
 }
 
+Error append_stop_strings(ITokenizer* tok, const std::vector<std::string>& stops,
+                          std::vector<std::int64_t>* stop_ids) {
+  if (!tok || !stop_ids) return Error::make(ErrorCode::InvalidArgument, "stop encode null");
+  for (const auto& s : stops) {
+    if (s.empty()) continue;
+    std::vector<std::int64_t> ids;
+    Error err = tok->encode(s, &ids);
+    if (!err.ok()) return err;
+    for (auto id : ids) stop_ids->push_back(id);
+  }
+  return Error::success();
+}
+
 Error run_text_generate(LoadedGen* gen,
                         const std::string& prompt,
                         std::int64_t max_new_tokens,
                         const std::vector<std::int64_t>& stop_ids,
+                        const runtime::SampleParams& sample,
                         bool stream,
                         bool json_mode,
                         const std::string& req_id,
@@ -279,7 +372,8 @@ Error run_text_generate(LoadedGen* gen,
           }
         }
         return true;
-      });
+      },
+      sample);
   if (!err.ok()) return err;
 
   std::vector<std::int64_t> new_tokens;
@@ -321,7 +415,9 @@ int cmd_generate(const std::vector<std::string>& args) {
       std::strtoll(get_opt(args, "--max-new-tokens", "64").c_str(), nullptr, 10);
   const std::int64_t max_ctx =
       std::strtoll(get_opt(args, "--max-context", "0").c_str(), nullptr, 10);
-  const auto stop_ids = get_opt_i64_all(args, "--stop-token-id");
+  auto stop_ids = get_opt_i64_all(args, "--stop-token-id");
+  const auto stop_texts = get_opt_all(args, "--stop");
+  const runtime::SampleParams sample = sample_from_args(args);
   const bool json_mode = has_flag(args, "--json");
   const bool stream = has_flag(args, "--stream");
 
@@ -358,13 +454,18 @@ int cmd_generate(const std::vector<std::string>& args) {
     std::cerr << err.to_string() << '\n';
     return 1;
   }
+  err = append_stop_strings(gen.tok.get(), stop_texts, &stop_ids);
+  if (!err.ok()) {
+    std::cerr << err.to_string() << '\n';
+    return 1;
+  }
 
   std::string reply;
   std::size_t prompt_n = 0;
   std::size_t new_n = 0;
   std::int64_t ms = 0;
-  err = run_text_generate(&gen, prompt, max_new, stop_ids, stream, json_mode, {}, &reply,
-                          &prompt_n, &new_n, &ms);
+  err = run_text_generate(&gen, prompt, max_new, stop_ids, sample, stream, json_mode, {},
+                          &reply, &prompt_n, &new_n, &ms);
   if (!err.ok()) {
     if (json_mode) {
       std::cout << "{\"ok\":false,\"error\":\"" << json_escape(err.to_string()) << "\"}\n";
@@ -465,13 +566,14 @@ int cmd_chat(const std::vector<std::string>& args) {
     prompt = build_prompt(system, prompt);
     const std::int64_t max_new = extract_json_i64(line, "max_new_tokens", 64);
     const bool stream = extract_json_bool(line, "stream", true);
+    const runtime::SampleParams sample = sample_from_jsonl(line);
 
     std::string reply;
     std::size_t prompt_n = 0;
     std::size_t new_n = 0;
     std::int64_t ms = 0;
-    err = run_text_generate(&gen, prompt, max_new, default_stops, stream, /*json_mode=*/true, id,
-                            &reply, &prompt_n, &new_n, &ms);
+    err = run_text_generate(&gen, prompt, max_new, default_stops, sample, stream,
+                            /*json_mode=*/true, id, &reply, &prompt_n, &new_n, &ms);
     if (!err.ok()) {
       std::cout << "{\"event\":\"error\",\"id\":\"" << json_escape(id) << "\",\"error\":\""
                 << json_escape(err.to_string()) << "\"}\n";

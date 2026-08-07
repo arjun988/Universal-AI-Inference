@@ -1,8 +1,9 @@
-# UAII Dashboard
+# UAII Operator UI
 
-Local **and** self-host operator console for Universal AI Inference.
+Local **and** self-host **operator console** for Universal AI Inference.
 
-**Separate from `website/`** (marketing/docs). This folder is the product UI + API.
+This is **not** a signed desktop “download and double-click” app — you build `uaii`, then run this Node console against it.  
+**Separate from `website/`** (marketing/docs).
 
 ```text
 Browser  →  dashboard server (:8787)  →  uaii / uaii_bench CLI

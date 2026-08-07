@@ -72,7 +72,9 @@ cmake --build build --target uaii_bench --parallel
 ./build/benchmarks/uaii_bench --suite all --providers all --trials 21 --json
 ```
 
-CI `benchmarks` job builds Ubuntu with oneDNN/OpenBLAS when available and uploads JSON artifacts.
+CI `benchmarks` job builds with oneDNN/OpenBLAS when available, uploads JSON **artifacts**, and prints a job summary — see [docs/benchmarks.md](docs/benchmarks.md) for how to cite and rerun.
+
+**New here?** → **[TRY.md](TRY.md)** (5-minute path).
 
 ---
 
@@ -82,7 +84,7 @@ CI `benchmarks` job builds Ubuntu with oneDNN/OpenBLAS when available and upload
 
 | Format | Role |
 |---|---|
-| **GGUF** | Any architecture with llama.cpp-style `blk.*` decoder tensors (not a Llama-only allowlist); arch-prefixed metadata (`qwen2.*`, `gemma.*`, …); RMSNorm, QKV, RoPE, Attention + KV, SwiGLU or GELU MLP, tied embeddings; MoE fail-closed until expert ops |
+| **GGUF** | Any architecture with llama.cpp-style `blk.*` decoder tensors (not a Llama-only allowlist); arch-prefixed metadata (`qwen2.*`, `gemma.*`, …); RMSNorm, QKV, RoPE, Attention + KV, dense SwiGLU/GELU or **MoE** (`ffn_*_exps` + router), tied embeddings |
 | **Safetensors** | Weight graphs / HF-style layouts → UAII IR |
 | **ONNX** | Import to IR (companion `.uaii.json` or ONNX proto when enabled) |
 | **MLX** | Directory with `config.json` + `.safetensors` (weights + config, not the Apple MLX runtime) |
@@ -192,18 +194,19 @@ uaii benchmark --demo
 uaii cache status
 ```
 
-### Dashboard (local / self-host UI)
+### Operator UI (local / self-host console)
 
-Separate from the public `website/` docs site. Thin UI over the `uaii` CLI — real GGUF chat, models, doctor, benches, OpenAI `/v1`, light/dark theme:
+Separate from the public `website/` docs site. This is an **operator console** over the `uaii` CLI (Node + browser) — not a signed “download and double-click” consumer app. Real GGUF chat with sampling controls, models, doctor, benches, OpenAI `/v1`:
 
 ```bash
+# Build uaii first, then:
 cd dashboard
 npm run install:all
 npm run build && npm start   # → http://127.0.0.1:8787
 # Self-host: UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=secret npm start
 ```
 
-Docs: website `/docs/dashboard/` · [dashboard/README.md](dashboard/README.md) · [docs/prd-dashboard.md](docs/prd-dashboard.md).
+Docs: [TRY.md](TRY.md) · website `/docs/dashboard/` · [dashboard/README.md](dashboard/README.md).
 
 ### Tests
 
@@ -223,8 +226,8 @@ ctest --test-dir build -C Release --output-on-failure
 | `uaii graph <path> [--format text\|dot\|json\|plan]` | Dump or visualize the graph |
 | `uaii convert <model> -o <out.uaii.json>` | GGUF / Safetensors / ONNX / MLX / PyTorch sidecar → IR |
 | `uaii tokenize encode\|decode …` | Simple / BPE / SentencePiece / GGUF tokenizer |
-| `uaii generate …` | Text gen from GGUF (any `blk.*` arch) or `--demo`; `--json` / `--stream` |
-| `uaii chat --jsonl …` | Warm chat worker for the dashboard |
+| `uaii generate …` | Text gen from GGUF (dense or MoE `blk.*`) or `--demo`; sampling + stop tokens; `--json` / `--stream` |
+| `uaii chat --jsonl …` | Warm chat worker for the Operator UI |
 | `uaii run …` | Run IR or built-in demos (`--backend`, `--weight-init`, …) |
 | `uaii profile` | Chrome-trace JSON |
 | `uaii benchmark` | Timing harness |

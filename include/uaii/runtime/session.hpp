@@ -13,6 +13,7 @@
 #include "uaii/profiler/profiler.hpp"
 #include "uaii/quant/formats.hpp"
 #include "uaii/runtime/kv_cache.hpp"
+#include "uaii/runtime/sampling.hpp"
 #include "uaii/runtime/scheduler_cpu.hpp"
 #include "uaii/runtime/scheduler_device.hpp"
 #include "uaii/storage/streaming.hpp"
@@ -20,6 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -117,14 +119,16 @@ class UAII_API Session {
   /// Called once per newly generated token (not prompt). Return false to stop early.
   using OnNewToken = std::function<bool(std::int64_t token_id)>;
 
-  /// Greedy autoregressive generate: prefill prompt, then decode up to max_new_tokens.
-  /// Respects options_.max_context / graph metadata max_context (fail-closed).
+  /// Autoregressive generate: prefill prompt, then decode up to max_new_tokens.
+  /// Sampling: temperature / top-k / top-p / repetition_penalty (see SampleParams).
+  /// Prefer graph `logits` when sampling; `probs` ok for greedy.
   /// Stops early when a token is in stop_token_ids (token is included in out_tokens).
   [[nodiscard]] Error generate(const std::vector<std::int64_t>& prompt_tokens,
                                std::int64_t max_new_tokens,
                                std::vector<std::int64_t>* out_tokens,
                                const std::vector<std::int64_t>& stop_token_ids = {},
-                               const OnNewToken& on_new_token = {});
+                               const OnNewToken& on_new_token = {},
+                               const SampleParams& sample = {});
 
   [[nodiscard]] KvCache* kv_cache() noexcept { return kv_.get(); }
   [[nodiscard]] const KvCache* kv_cache() const noexcept { return kv_.get(); }
@@ -145,6 +149,11 @@ class UAII_API Session {
   [[nodiscard]] Error ensure_kv_cache(std::int64_t max_seq);
   [[nodiscard]] Error write_tokens_step(TensorId tokens_id, std::int64_t token);
   [[nodiscard]] Error read_argmax_token(TensorId scores_id, std::int64_t* token) const;
+  [[nodiscard]] Error read_sample_token(TensorId scores_id,
+                                        const SampleParams& sample,
+                                        const std::vector<std::int64_t>& history,
+                                        std::mt19937_64* rng,
+                                        std::int64_t* token) const;
 
   bool ready_ = false;
   SessionOptions options_;

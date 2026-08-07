@@ -12,7 +12,7 @@ Import is driven by **tensor layout + metadata**, not a short name whitelist.
 | Arch-prefixed KV (`{arch}.block_count`, `{arch}.attention.head_count`, …) | Read first; fall back to `llama.*` / `general.*` |
 | Missing `general.architecture` but `blk.0.*` present | Still imports (legacy / hand-built) |
 | Tied embeddings (no `output.weight`) | Reuse `token_embd.weight` as lm_head |
-| MoE (`expert_count` > 0 or `ffn_*_exps` tensors) | **Fail closed** with a clear error (needs expert ops) |
+| MoE (`expert_count` / `ffn_gate_inp` + `ffn_*_exps`) | **Supported** — `MoERouter` + `MoEExpertsSwiGLU` (optional `*_shexp` shared experts) |
 | Weights-only dump (no emb + lm stack) | Any architecture — `Identity` graph |
 | Non-`blk.*` layouts (raw GPT-2/Bloom naming, Mamba, RWKV, …) | Not auto-mapped yet — weights graph or convert to `blk.*` GGUF |
 
@@ -35,13 +35,14 @@ Use `gguf_type_supported()` before `gguf_type_to_quant()`; unknown types are not
 - **RoPE** on Q/K (`theta` from `{arch}.rope.freq_base`, default 10000)
 - **GQA metadata**: `{arch}.attention.head_count_kv` → `kv_heads` on Attention
 - **RMSNorm** eps from `{arch}.attention.layer_norm_rms_epsilon`
-- **FFN**: SwiGLU when `ffn_gate` present; else GELU MLP (`ffn_up` + `ffn_down`)
+- **FFN**: MoE (`ffn_gate_inp` + `ffn_*_exps`) → top-k SwiGLU experts; else dense SwiGLU (`ffn_gate`) or GELU MLP
+- **MoE metadata**: `{arch}.expert_count`, `{arch}.expert_used_count` (top-k); graph meta `moe=1`
 - **Shapes**: seq=1 decode — tokens `[1,1]`, activations `[1,dim]` (matches `Session::generate`)
 - **KV cache**: `use_kv_cache` + `layer_id` on Attention
 
 ## Runtime
 
-- Prefill + greedy decode via `Session::generate` / `uaii_session_generate`
+- Prefill + decode via `Session::generate` (greedy or temp / top-k / top-p / repetition penalty)
 - Long sequence bounded by `{arch}.context_length` / `max_context` (fail-closed in generate)
 - Env:
   - `UAII_MAX_LAYERS` — optional cap (`0` = unlimited up to 512 absolute max; unset = model `block_count`)

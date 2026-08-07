@@ -235,6 +235,49 @@ Error run_moe_smoke_demo(bool* ok) {
   if (!good) {
     return Error::make(ErrorCode::Internal, "moe smoke failed");
   }
+
+  // SwiGLU experts: gate/up [E,I,D]=[2,3,4], down [E,D,I]=[2,4,3], top_k=2
+  ir::GraphBuilder b2("moe_swiglu_smoke");
+  b2.set_producer("uaii-phase4-demo");
+  TensorId x2 = b2.add_tensor("x", DType::F32, Shape{{1, 4}});
+  TensorId gate2 = b2.add_weight("gate", DType::F32, Shape{{2, 4}}, "moe/gate2.bin");
+  TensorId probs2 = b2.add_tensor("probs", DType::F32, Shape{{1, 2}});
+  TensorId top2 = b2.add_tensor("top_expert", DType::F32, Shape{{1, 1}});
+  TensorId g_ex =
+      b2.add_weight("gate_exps", DType::F32, Shape{{2, 3, 4}}, "moe/gate_exps.bin");
+  TensorId u_ex = b2.add_weight("up_exps", DType::F32, Shape{{2, 3, 4}}, "moe/up_exps.bin");
+  TensorId d_ex =
+      b2.add_weight("down_exps", DType::F32, Shape{{2, 4, 3}}, "moe/down_exps.bin");
+  TensorId y2 = b2.add_tensor("y", DType::F32, Shape{{1, 4}});
+  b2.add_node("router", "MoERouter", "1", {x2, gate2}, {probs2, top2},
+              {ir::make_int_attr("num_experts", 2)});
+  b2.add_node("experts", "MoEExpertsSwiGLU", "1", {x2, g_ex, u_ex, d_ex, probs2}, {y2},
+              {ir::make_int_attr("num_experts", 2), ir::make_int_attr("top_k", 2)});
+  b2.set_inputs({x2}).set_outputs({y2, probs2});
+
+  Session session2;
+  SessionOptions opts2;
+  opts2.weight_init = WeightInit::Sequence;
+  opts2.validate = true;
+  err = session2.create(b2.build(), opts2);
+  if (!err.ok()) return err;
+  err = session2.set_tensor_f32("x", {1.f, 0.f, 0.f, 0.f});
+  if (!err.ok()) return err;
+  err = session2.run();
+  if (!err.ok()) return err;
+  std::vector<float> out_y2;
+  std::vector<float> out_p2;
+  err = session2.get_tensor_f32("y", &out_y2);
+  if (!err.ok()) return err;
+  err = session2.get_tensor_f32("probs", &out_p2);
+  if (!err.ok()) return err;
+  const float psum2 = out_p2[0] + out_p2[1];
+  const bool good2 = out_y2.size() == 4 && nearly_one(psum2);
+  if (ok) *ok = good && good2;
+  log::info("demo") << "moe swiglu y0=" << out_y2[0] << " psum=" << psum2;
+  if (!good2) {
+    return Error::make(ErrorCode::Internal, "moe swiglu smoke failed");
+  }
   return Error::success();
 }
 

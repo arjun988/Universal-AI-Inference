@@ -136,7 +136,18 @@ export class ChatWorker {
     }
   }
 
-  async generate({ prompt, system = "", maxNewTokens = 64, stream = false, onToken = null }) {
+  async generate({
+    prompt,
+    system = "",
+    maxNewTokens = 64,
+    temperature,
+    topP,
+    topK,
+    repetitionPenalty,
+    seed,
+    stream = false,
+    onToken = null,
+  }) {
     await this.waitReady();
     while (this.busy) await new Promise((r) => setTimeout(r, 25));
     this.busy = true;
@@ -149,6 +160,17 @@ export class ChatWorker {
       max_new_tokens: maxNewTokens,
       stream: Boolean(stream || onToken),
     };
+    if (temperature != null && Number.isFinite(Number(temperature))) {
+      req.temperature = Number(temperature);
+    }
+    if (topP != null && Number.isFinite(Number(topP))) req.top_p = Number(topP);
+    if (topK != null && Number.isFinite(Number(topK))) req.top_k = Number(topK);
+    if (repetitionPenalty != null && Number.isFinite(Number(repetitionPenalty))) {
+      req.repetition_penalty = Number(repetitionPenalty);
+    }
+    if (seed != null && seed !== "" && Number.isFinite(Number(seed))) {
+      req.seed = Number(seed);
+    }
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, onToken });
       try {

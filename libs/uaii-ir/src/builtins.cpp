@@ -68,7 +68,10 @@ void OperatorRegistry::register_builtin_schemas() {
   (void)register_schema(schema("MoERouter", 2, 2, 2, 2, {"num_experts", "top_k"},
                                "MoE gate router → probs + top expert ids"));
   (void)register_schema(schema("MoEExperts", 3, 3, 1, 1, {"num_experts"},
-                               "MoE expert dispatch (top-1)"));
+                               "MoE expert dispatch (top-1 linear)"));
+  (void)register_schema(schema("MoEExpertsSwiGLU", 5, 5, 1, 1,
+                               {"num_experts", "top_k"},
+                               "MoE SwiGLU experts with top-k weighted merge"));
 }
 
 }  // namespace ir

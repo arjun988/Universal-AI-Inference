@@ -59,6 +59,8 @@ jobs:
           "$BIN" doctor --load-plugins
           "$BIN" validate examples/ir/toy_mlp.uaii.json
           "$BIN" run --demo toy_mlp
+          "$BIN" run --demo moe
+          "$BIN" generate --demo --prompt "hi" --max-new-tokens 4 --temperature 0.8 --top-p 0.9 --seed 1 --json
           "$BIN" run --demo optimize || true
           "$BIN" run --demo streaming || true
           "$BIN" run --demo parity || true

@@ -73,7 +73,7 @@ export default function Page() {
                 <code>chat</code>
               </td>
               <td>
-                Warm JSONL worker (<code>--jsonl</code>) used by the dashboard
+                Warm JSONL worker (<code>--jsonl</code>) used by the Operator UI
               </td>
             </tr>
             <tr>

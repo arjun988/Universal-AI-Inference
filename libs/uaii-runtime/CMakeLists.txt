@@ -3,6 +3,7 @@ uaii_add_module(runtime
     src/scheduler_cpu.cpp
     src/scheduler_device.cpp
     src/session.cpp
+    src/sampling.cpp
     src/kv_cache.cpp
     src/demos.cpp
     src/demos_phase4.cpp

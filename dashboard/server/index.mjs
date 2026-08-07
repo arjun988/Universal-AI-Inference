@@ -13,7 +13,7 @@ import { createBenchLauncher, createUaiiLauncher } from "./uaii_launch.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASH_ROOT = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(DASH_ROOT, "..");
-const VERSION = "0.3.0";
+const VERSION = "0.2.0";
 
 const LOG_LIMIT = 300;
 const logs = [];
@@ -527,6 +527,15 @@ async function runLlmChat(body, { onToken = null } = {}) {
   const prompt = String(body.prompt || "").trim();
   const system = String(body.system || "").trim();
   const maxNew = Math.max(1, Number(body.max_new_tokens || body.maxTokens || 64));
+  const temperature =
+    body.temperature != null && body.temperature !== "" ? Number(body.temperature) : undefined;
+  const topP = body.top_p != null && body.top_p !== "" ? Number(body.top_p) : undefined;
+  const topK = body.top_k != null && body.top_k !== "" ? Number(body.top_k) : undefined;
+  const repetitionPenalty =
+    body.repetition_penalty != null && body.repetition_penalty !== ""
+      ? Number(body.repetition_penalty)
+      : undefined;
+  const seed = body.seed != null && body.seed !== "" ? Number(body.seed) : undefined;
 
   // Legacy utility modes
   if (mode === "tokenize") {
@@ -594,6 +603,11 @@ async function runLlmChat(body, { onToken = null } = {}) {
       prompt: fullPrompt,
       system: "", // already folded into fullPrompt
       maxNewTokens: maxNew,
+      temperature,
+      topP,
+      topK,
+      repetitionPenalty,
+      seed,
       stream: Boolean(onToken || body.stream),
       onToken,
     });
@@ -778,7 +792,17 @@ app.post("/v1/chat/completions", async (req, res) => {
   const messages = body.messages || [];
   const maxNew = Number(body.max_tokens || body.max_new_tokens || 64);
 
-  let chatBody = { mode: "gguf", messages, max_new_tokens: maxNew, stream: Boolean(body.stream) };
+  let chatBody = {
+    mode: "gguf",
+    messages,
+    max_new_tokens: maxNew,
+    temperature: body.temperature,
+    top_p: body.top_p,
+    top_k: body.top_k,
+    repetition_penalty: body.repetition_penalty,
+    seed: body.seed,
+    stream: Boolean(body.stream),
+  };
   if (model === "uaii-tiny-demo" || model === "uaii-demo-gguf" || model.endsWith("-tiny-demo")) {
     chatBody = { ...chatBody, mode: "gguf", model: "__demo__", demoModel: true };
   } else if (model.startsWith("uaii-demo-")) {

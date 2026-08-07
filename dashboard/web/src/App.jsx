@@ -95,9 +95,14 @@ export default function App() {
   const [settings, setSettings] = useState(null);
   const [demo, setDemo] = useState("gguf");
   const [chatMode, setChatMode] = useState("gguf");
-  const [prompt, setPrompt] = useState("Hello from UAII dashboard");
+  const [prompt, setPrompt] = useState("Hello from UAII operator UI");
   const [systemPrompt, setSystemPrompt] = useState("You are a helpful assistant running on UAII.");
   const [maxNewTokens, setMaxNewTokens] = useState(64);
+  const [temperature, setTemperature] = useState(0);
+  const [topP, setTopP] = useState(1);
+  const [topK, setTopK] = useState(0);
+  const [repPenalty, setRepPenalty] = useState(1);
+  const [seed, setSeed] = useState("");
   const [streamChat, setStreamChat] = useState(true);
   const [selectedModel, setSelectedModel] = useState("__demo__");
   const [messages, setMessages] = useState([]);
@@ -246,10 +251,18 @@ export default function App() {
       model,
       messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
       max_new_tokens: maxNewTokens,
+      temperature,
+      top_p: topP,
+      top_k: topK,
+      repetition_penalty: repPenalty,
       stream: streamChat && (chatMode === "gguf" || chatMode === "demo"),
       input: "x=1,2,3,4",
       demoModel: model === "__demo__" || chatMode === "demo",
     };
+    if (seed !== "" && seed != null) {
+      const n = Number(seed);
+      if (Number.isFinite(n)) payload.seed = n;
+    }
 
     try {
       if (payload.stream) {
@@ -446,7 +459,7 @@ export default function App() {
         <form className="login-card" onSubmit={doLogin}>
           <div className="brand">
             UAII
-            <span>Dashboard</span>
+            <span>Operator UI</span>
           </div>
           <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label="Toggle theme">
             <span className="dot" />
@@ -496,7 +509,7 @@ export default function App() {
       <aside className="nav">
         <div className="brand">
           UAII
-          <span>Dashboard</span>
+          <span>Operator UI</span>
         </div>
         <nav className="nav-list" aria-label="Primary">
           {NAV.map((n) => (
@@ -620,14 +633,72 @@ export default function App() {
                   </button>
                 </div>
                 {(chatMode === "gguf" || chatMode === "demo") && (
-                  <div className="field" style={{ marginTop: "0.85rem", marginBottom: 0 }}>
-                    <label>System prompt</label>
-                    <textarea
-                      rows={2}
-                      value={systemPrompt}
-                      onChange={(e) => setSystemPrompt(e.target.value)}
-                    />
-                  </div>
+                  <>
+                    <div className="field" style={{ marginTop: "0.85rem", marginBottom: 0 }}>
+                      <label>System prompt</label>
+                      <textarea
+                        rows={2}
+                        value={systemPrompt}
+                        onChange={(e) => setSystemPrompt(e.target.value)}
+                      />
+                    </div>
+                    <div className="row wrap" style={{ marginTop: "0.75rem", gap: "0.65rem" }}>
+                      <div className="field" style={{ margin: 0, width: 110 }}>
+                        <label>Temperature</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={2}
+                          step={0.05}
+                          value={temperature}
+                          onChange={(e) => setTemperature(Number(e.target.value))}
+                          title="0 = greedy; &gt;0 samples"
+                        />
+                      </div>
+                      <div className="field" style={{ margin: 0, width: 100 }}>
+                        <label>Top-p</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={topP}
+                          onChange={(e) => setTopP(Number(e.target.value))}
+                        />
+                      </div>
+                      <div className="field" style={{ margin: 0, width: 90 }}>
+                        <label>Top-k</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={200}
+                          value={topK}
+                          onChange={(e) => setTopK(Number(e.target.value) || 0)}
+                        />
+                      </div>
+                      <div className="field" style={{ margin: 0, width: 110 }}>
+                        <label>Rep. penalty</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={2}
+                          step={0.05}
+                          value={repPenalty}
+                          onChange={(e) => setRepPenalty(Number(e.target.value) || 1)}
+                        />
+                      </div>
+                      <div className="field" style={{ margin: 0, width: 110 }}>
+                        <label>Seed</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="random"
+                          value={seed}
+                          onChange={(e) => setSeed(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
 

@@ -1,20 +1,21 @@
 import { DocLayout } from "@/components/DocLayout";
 import Link from "next/link";
 
-export const metadata = { title: "Dashboard" };
+export const metadata = { title: "Operator UI" };
 
 export default function Page() {
   return (
     <DocLayout
-      title="Dashboard"
+      title="Operator UI"
       active="/docs/dashboard/"
-      lede="Local and self-host operator console — chat with GGUF models, manage the model library, run doctor and benches, and expose an OpenAI-compatible API. Separate from this marketing site (lives in dashboard/)."
+      lede="Local and self-host operator console over the uaii CLI — not a signed ‘download and double-click’ consumer app. Chat with GGUF models (sampling included), manage the model library, run doctor and benches, OpenAI-compatible API. Lives in dashboard/."
     >
       <h2>What you get</h2>
       <ul>
         <li>
           <strong>LLM chat</strong> — real generate via <code>uaii generate</code> / warm{" "}
-          <code>uaii chat --jsonl</code>, streaming tokens, system prompt, max tokens, Stop
+          <code>uaii chat --jsonl</code>, streaming, system prompt, max tokens, temperature /
+          top-p / top-k / repetition penalty, Stop
         </li>
         <li>
           <strong>Any GGUF architecture</strong> with llama.cpp-style <code>blk.*</code> tensors

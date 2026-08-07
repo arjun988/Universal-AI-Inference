@@ -94,6 +94,18 @@ namespace kernels {
                                              TensorView* out,
                                              int num_experts);
 
+/// Mixtral/Qwen2MoE-style SwiGLU experts with top-k weighted merge.
+/// gate/up: [E, I, D], down: [E, D, I] (row-major, matches UAII GGUF dims_to_shape).
+/// probs: [B, E] from MoERouter. top_k<=0 → 1.
+[[nodiscard]] UAII_API Error moe_experts_swiglu_f32(const TensorView& x,
+                                                    const TensorView& gate_exps,
+                                                    const TensorView& up_exps,
+                                                    const TensorView& down_exps,
+                                                    const TensorView& probs,
+                                                    TensorView* out,
+                                                    int num_experts,
+                                                    int top_k);
+
 [[nodiscard]] UAII_API Error reshape_f32(const TensorView& in, TensorView* out);
 [[nodiscard]] UAII_API Error transpose_f32(const TensorView& in,
                                            TensorView* out,

@@ -788,6 +788,16 @@ Error Session::write_tokens_step(TensorId tokens_id, std::int64_t token) {
 }
 
 Error Session::read_argmax_token(TensorId scores_id, std::int64_t* token) const {
+  SampleParams greedy;
+  std::mt19937_64 rng{0};
+  return read_sample_token(scores_id, greedy, {}, &rng, token);
+}
+
+Error Session::read_sample_token(TensorId scores_id,
+                                 const SampleParams& sample,
+                                 const std::vector<std::int64_t>& history,
+                                 std::mt19937_64* rng,
+                                 std::int64_t* token) const {
   if (token == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "token out null");
   }
@@ -800,7 +810,6 @@ Error Session::read_argmax_token(TensorId scores_id, std::int64_t* token) const 
   if (n == 0) {
     return Error::make(ErrorCode::InvalidArgument, "scores empty");
   }
-  // Prefer last row for [batch, seq, vocab] or [seq, vocab]; else full buffer.
   std::size_t row_start = 0;
   std::size_t row_n = n;
   if (buf->shape.dims.size() >= 2) {
@@ -810,23 +819,15 @@ Error Session::read_argmax_token(TensorId scores_id, std::int64_t* token) const 
       row_start = n - row_n;
     }
   }
-  std::size_t best = row_start;
-  float best_v = data[row_start];
-  for (std::size_t i = row_start + 1; i < row_start + row_n; ++i) {
-    if (data[i] > best_v) {
-      best_v = data[i];
-      best = i;
-    }
-  }
-  *token = static_cast<std::int64_t>(best - row_start);
-  return Error::success();
+  return sample_token_f32(data + row_start, row_n, sample, history, rng, token);
 }
 
 Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
                         std::int64_t max_new_tokens,
                         std::vector<std::int64_t>* out_tokens,
                         const std::vector<std::int64_t>& stop_token_ids,
-                        const OnNewToken& on_new_token) {
+                        const OnNewToken& on_new_token,
+                        const SampleParams& sample) {
   if (!ready_) {
     return Error::make(ErrorCode::InvalidArgument, "session not ready");
   }
@@ -885,8 +886,12 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
     return Error::make(ErrorCode::NotFound, "generate: no tokens input");
   }
 
+  // Prefer logits when sampling (temperature/top-p need pre-softmax scores).
   TensorId scores_id = 0;
-  if (name_to_id_.count("probs")) {
+  const bool want_logits = !sample.greedy();
+  if (want_logits && name_to_id_.count("logits")) {
+    scores_id = name_to_id_["logits"];
+  } else if (name_to_id_.count("probs")) {
     scores_id = name_to_id_["probs"];
   } else if (name_to_id_.count("logits")) {
     scores_id = name_to_id_["logits"];
@@ -894,6 +899,14 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
     scores_id = graph_.outputs.front();
   } else {
     return Error::make(ErrorCode::NotFound, "generate: no probs/logits output");
+  }
+
+  std::mt19937_64 rng;
+  if (sample.has_seed) {
+    rng.seed(sample.seed);
+  } else {
+    std::random_device rd;
+    rng.seed((static_cast<std::uint64_t>(rd()) << 32) ^ static_cast<std::uint64_t>(rd()));
   }
 
   const std::int64_t kv_max =
@@ -917,14 +930,14 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
     out_tokens->push_back(prompt_tokens[static_cast<std::size_t>(i)]);
   }
 
-  // Decode: greedy argmax loop.
+  // Decode: sample next token (greedy when SampleParams::greedy()).
   for (std::int64_t n = 0; n < max_new_tokens; ++n) {
     const std::int64_t pos = static_cast<std::int64_t>(out_tokens->size());
     if (max_ctx > 0 && pos >= max_ctx) {
       return Error::make(ErrorCode::InvalidArgument, "context length exceeded during decode");
     }
     std::int64_t next = 0;
-    err = read_argmax_token(scores_id, &next);
+    err = read_sample_token(scores_id, sample, *out_tokens, &rng, &next);
     if (!err.ok()) return err;
     out_tokens->push_back(next);
     if (on_new_token) {

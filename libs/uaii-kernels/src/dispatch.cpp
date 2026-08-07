@@ -59,7 +59,8 @@ bool supports_cpu_op(const std::string& op_name, const std::string& /*op_version
          op_name == "Gelu" || op_name == "Silu" || op_name == "Add" || op_name == "Mul" ||
          op_name == "Neg" || op_name == "Identity" || op_name == "Embedding" ||
          op_name == "RoPE" || op_name == "Attention" || op_name == "MoERouter" ||
-         op_name == "MoEExperts" || op_name == "Reshape" || op_name == "Transpose" ||
+         op_name == "MoEExperts" || op_name == "MoEExpertsSwiGLU" ||
+         op_name == "Reshape" || op_name == "Transpose" ||
          op_name == "MLP";
 }
 
@@ -232,6 +233,16 @@ Error dispatch_cpu(const std::string& op_name,
     }
     return moe_experts_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0],
                            static_cast<int>(attr_int(attrs, "num_experts", 1)));
+  }
+  if (op_name == "MoEExpertsSwiGLU") {
+    if (inputs.size() != 5 || outputs->size() != 1) {
+      return Error::make(ErrorCode::InvalidArgument,
+                         "MoEExpertsSwiGLU expects x,gate,up,down,probs");
+    }
+    return moe_experts_swiglu_f32(
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], &(*outputs)[0],
+        static_cast<int>(attr_int(attrs, "num_experts", 1)),
+        static_cast<int>(attr_int(attrs, "top_k", 2)));
   }
   if (op_name == "Reshape") {
     if (inputs.size() != 1 || outputs->size() != 1) {

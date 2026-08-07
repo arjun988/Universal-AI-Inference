@@ -802,15 +802,7 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
   const std::string arch = lower_ascii(kv_string(file, "general.architecture"));
 
   // Capability-based import: any architecture with llama.cpp-style blk.* decoder
-  // tensors is accepted. MoE expert graphs need dedicated ops (fail closed).
-  if (emb && lm && has_blk0 && looks_like_moe(file, arch)) {
-    return Error::make(
-        ErrorCode::NotImplemented,
-        "MoE GGUF architecture '" + (arch.empty() ? std::string("unknown") : arch) +
-            "' detected (expert tensors / expert_count). Dense transformer import "
-            "only for now — convert a dense variant or wait for MoE expert ops.");
-  }
-
+  // tensors is accepted (dense SwiGLU/GELU and Mixtral/Qwen2MoE-style expert FFN).
   ir::GraphBuilder b(emb && lm ? (has_blk0 ? "gguf_transformer" : "gguf_tiny_lm")
                                : "gguf_weights");
   b.set_producer("uaii-gguf-loader");
@@ -818,6 +810,7 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
   b.set_metadata("source_path", path);
   if (!arch.empty()) b.set_metadata("architecture", arch);
   if (tied_embeddings) b.set_metadata("tied_embeddings", "1");
+  if (looks_like_moe(file, arch)) b.set_metadata("moe", "1");
   if (auto it = file.kv.find("general.name");
       it != file.kv.end() && std::holds_alternative<std::string>(it->second)) {
     b.set_metadata("model_name", std::get<std::string>(it->second));
@@ -853,11 +846,26 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       }
     }
     n_layers = apply_layer_cap(n_layers);
+    const std::int64_t n_experts_meta = kv_i64_arch(file, arch, "expert_count", 0);
+    const std::int64_t n_expert_used_meta =
+        kv_i64_arch(file, arch, "expert_used_count", 0);
+    if (n_experts_meta > 0) {
+      b.set_metadata("expert_count", std::to_string(n_experts_meta));
+    }
+    if (n_expert_used_meta > 0) {
+      b.set_metadata("expert_used_count", std::to_string(n_expert_used_meta));
+    }
     if (has_blk0) {
       log::info("gguf") << "transformer import arch="
                         << (arch.empty() ? "unspecified" : arch)
                         << " layers=" << n_layers << " heads=" << n_heads
-                        << " kv_heads=" << n_kv_heads;
+                        << " kv_heads=" << n_kv_heads
+                        << (n_experts_meta > 0
+                                ? (" moe_experts=" + std::to_string(n_experts_meta) +
+                                   " top_k=" +
+                                   std::to_string(n_expert_used_meta > 0 ? n_expert_used_meta
+                                                                       : 2))
+                                : "");
     }
 
     // seq=1 decode path: tokens [1,1], activations [1,dim] (Embedding + Session::generate).
@@ -901,6 +909,13 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       TensorId w_gate = 0;
       TensorId w_up = 0;
       TensorId w_down = 0;
+      TensorId w_gate_inp = 0;
+      TensorId w_gate_exps = 0;
+      TensorId w_up_exps = 0;
+      TensorId w_down_exps = 0;
+      TensorId w_gate_shexp = 0;
+      TensorId w_up_shexp = 0;
+      TensorId w_down_shexp = 0;
       err = add_weight_ref(pfx + "attn_norm.weight", &attn_norm);
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "attn_q.weight", &wq);
@@ -918,6 +933,20 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       err = add_weight_ref(pfx + "ffn_up.weight", &w_up);
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "ffn_down.weight", &w_down);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "ffn_gate_inp.weight", &w_gate_inp);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "ffn_gate_exps.weight", &w_gate_exps);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "ffn_up_exps.weight", &w_up_exps);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "ffn_down_exps.weight", &w_down_exps);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "ffn_gate_shexp.weight", &w_gate_shexp);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "ffn_up_shexp.weight", &w_up_shexp);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "ffn_down_shexp.weight", &w_down_shexp);
       if (!err.ok()) return err;
 
       if (!attn_norm || !wq || !wk || !wv || !wo) {
@@ -976,10 +1005,69 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         if (up_shape.dims.size() == 2) {
           return up_shape.dims[0] == dim ? up_shape.dims[1] : up_shape.dims[0];
         }
+        if (up_shape.dims.size() == 3) {
+          // Expert stack [E, I, D] after dims_to_shape.
+          return up_shape.dims[1];
+        }
         return dim * 4;
       };
 
-      if (w_gate && w_up && w_down) {
+      if (w_gate_inp && w_gate_exps && w_up_exps && w_down_exps) {
+        // Mixtral / Qwen2MoE-style: router + top-k SwiGLU experts (+ optional shared).
+        const GgufTensorInfo* exps_info = find_tensor(file, pfx + "ffn_gate_exps.weight");
+        Shape exps_shape = exps_info ? dims_to_shape(exps_info->dims) : Shape{};
+        std::int64_t n_experts = kv_i64_arch(file, arch, "expert_count", 0);
+        if (n_experts <= 0 && exps_shape.dims.size() >= 1) n_experts = exps_shape.dims[0];
+        if (n_experts <= 0) {
+          return Error::make(ErrorCode::InvalidArgument,
+                             "MoE layer " + pfx + " missing expert_count / expert dims");
+        }
+        std::int64_t top_k = kv_i64_arch(file, arch, "expert_used_count", 2);
+        if (top_k <= 0) top_k = 2;
+        if (top_k > n_experts) top_k = n_experts;
+
+        TensorId router_probs =
+            b.add_tensor(pfx + "moe_probs", DType::F32, Shape{{1, n_experts}});
+        TensorId router_top =
+            b.add_tensor(pfx + "moe_top", DType::F32, Shape{{1, 1}});
+        b.add_node(pfx + "moe_router", "MoERouter", "1", {mlp_in, w_gate_inp},
+                   {router_probs, router_top},
+                   {ir::make_int_attr("num_experts", n_experts),
+                    ir::make_int_attr("top_k", top_k)});
+
+        TensorId ff_out = b.add_tensor(pfx + "ff_out", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "moe_exps", "MoEExpertsSwiGLU", "1",
+                   {mlp_in, w_gate_exps, w_up_exps, w_down_exps, router_probs}, {ff_out},
+                   {ir::make_int_attr("num_experts", n_experts),
+                    ir::make_int_attr("top_k", top_k)});
+
+        if (w_gate_shexp && w_up_shexp && w_down_shexp) {
+          const GgufTensorInfo* shexp_up = find_tensor(file, pfx + "ffn_up_shexp.weight");
+          const std::int64_t shexp_inter = inter_dim_from_up(shexp_up);
+          TensorId sg = b.add_tensor(pfx + "shexp_gate", DType::F32, Shape{{1, shexp_inter}});
+          TensorId su = b.add_tensor(pfx + "shexp_up", DType::F32, Shape{{1, shexp_inter}});
+          b.add_node(pfx + "shexp_gate_mm", "MatMul", "1", {mlp_in, w_gate_shexp}, {sg},
+                     {ir::make_bool_attr("transpose_b", true)});
+          b.add_node(pfx + "shexp_up_mm", "MatMul", "1", {mlp_in, w_up_shexp}, {su},
+                     {ir::make_bool_attr("transpose_b", true)});
+          TensorId sga =
+              b.add_tensor(pfx + "shexp_gate_act", DType::F32, Shape{{1, shexp_inter}});
+          b.add_node(pfx + "shexp_silu", "Silu", "1", {sg}, {sga});
+          TensorId shid =
+              b.add_tensor(pfx + "shexp_hid", DType::F32, Shape{{1, shexp_inter}});
+          b.add_node(pfx + "shexp_mul", "Mul", "1", {sga, su}, {shid});
+          TensorId sout = b.add_tensor(pfx + "shexp_out", DType::F32, Shape{{1, dim}});
+          b.add_node(pfx + "shexp_down", "MatMul", "1", {shid, w_down_shexp}, {sout},
+                     {ir::make_bool_attr("transpose_b", true)});
+          TensorId merged = b.add_tensor(pfx + "ff_merged", DType::F32, Shape{{1, dim}});
+          b.add_node(pfx + "ff_add_shexp", "Add", "1", {ff_out, sout}, {merged});
+          ff_out = merged;
+        }
+
+        TensorId resid2 = b.add_tensor(pfx + "resid2", DType::F32, Shape{{1, dim}});
+        b.add_node(pfx + "add2", "Add", "1", {resid1, ff_out}, {resid2});
+        features = resid2;
+      } else if (w_gate && w_up && w_down) {
         // SwiGLU-style: silu(x@gate) * (x@up) @ down
         const GgufTensorInfo* up_info = find_tensor(file, pfx + "ffn_up.weight");
         const std::int64_t inter_dim = inter_dim_from_up(up_info);

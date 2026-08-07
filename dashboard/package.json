@@ -1,9 +1,9 @@
 {
   "name": "uaii-dashboard",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "UAII local / self-host operator dashboard (separate from website/)",
+  "description": "UAII Operator UI — local/self-host console over the uaii CLI (not a consumer installer)",
   "scripts": {
     "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:web\"",
     "dev:server": "node server/index.mjs",

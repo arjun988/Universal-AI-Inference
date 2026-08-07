@@ -37,7 +37,8 @@ export default function Page() {
                 decoder tensors — not a Llama-only allowlist. Reads{" "}
                 <code>{"{arch}.*"}</code> metadata (<code>qwen2.block_count</code>,{" "}
                 <code>gemma.attention.head_count</code>, …). RMSNorm, QKV, RoPE, Attention +
-                KV, SwiGLU or GELU MLP, tied embeddings. MoE fail-closed until expert ops.
+                KV, dense SwiGLU/GELU or MoE experts (<code>ffn_*_exps</code>), tied
+                embeddings.
               </td>
             </tr>
             <tr>
@@ -90,7 +91,7 @@ export default function Page() {
       <h2>LLM runtime</h2>
       <ul>
         <li>
-          Prefill + greedy decode via <code>Session::generate</code> /{" "}
+          Prefill + decode (greedy or temp/top-k/top-p) via <code>Session::generate</code> /{" "}
           <code>uaii_session_generate</code>
         </li>
         <li>
