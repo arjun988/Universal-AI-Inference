@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure (single-config)
         if: runner.os != 'Windows'
@@ -68,7 +68,7 @@ jobs:
   cuda-compile:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install CUDA toolkit (compile-only)
         run: |
           # Soft: skip if toolkit install fails on runner; job continues as optional matrix
@@ -89,7 +89,7 @@ jobs:
   onednn-compile:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install oneDNN if available (optional CPU GEMM path)
         run: |
           sudo apt-get update -y || true
@@ -107,7 +107,7 @@ jobs:
   docs-site:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -129,7 +129,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install vendor GEMM libs (Ubuntu)
         if: runner.os == 'Linux'
