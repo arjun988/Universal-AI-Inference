@@ -1,4 +1,5 @@
 import { DocLayout } from "@/components/DocLayout";
+import Link from "next/link";
 
 export const metadata = { title: "Configuration" };
 
@@ -175,6 +176,68 @@ export default function Page() {
 
       <h2>CLI globals</h2>
       <pre>{`uaii --config configs/uaii.toml --log-level info --load-plugins doctor`}</pre>
+
+      <h2>Dashboard configuration</h2>
+      <p>
+        The operator UI reads <code>dashboard/uaii-dash.json</code> (see{" "}
+        <code>uaii-dash.example.json</code>) and these environment variables. Full guide:{" "}
+        <Link href="/docs/dashboard/">Dashboard</Link>.
+      </p>
+      <div className="table-wrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th>Variable</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <strong>UAII_DASH_BIND</strong>
+              </td>
+              <td>
+                <code>127.0.0.1</code> local · <code>0.0.0.0</code> self-host
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>UAII_DASH_PORT</strong>
+              </td>
+              <td>HTTP port (default <code>8787</code>)</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>UAII_DASH_TOKEN</strong>
+              </td>
+              <td>Bearer token — required for non-loopback bind</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>UAII_BIN</strong> / <strong>UAII_BENCH_BIN</strong>
+              </td>
+              <td>Override detected CLI binaries</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>UAII_MODEL_DIR</strong>
+              </td>
+              <td>Model library directory</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>UAII_USE_WSL</strong> / <strong>UAII_WSL_BIN</strong>
+              </td>
+              <td>Use WSL <code>uaii</code> when Windows blocks unsigned .exe</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <pre>{`# Local
+cd dashboard && npm start
+
+# Self-host
+UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=secret npm start`}</pre>
     </DocLayout>
   );
 }

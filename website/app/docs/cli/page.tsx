@@ -61,6 +61,23 @@ export default function Page() {
             </tr>
             <tr>
               <td>
+                <code>generate</code>
+              </td>
+              <td>
+                Text generation from a GGUF (any <code>blk.*</code> arch) or{" "}
+                <code>--demo</code> tiny model; <code>--json</code> / <code>--stream</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>chat</code>
+              </td>
+              <td>
+                Warm JSONL worker (<code>--jsonl</code>) used by the dashboard
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <code>run</code>
               </td>
               <td>Execute IR or <code>--demo …</code></td>
@@ -81,6 +98,17 @@ export default function Page() {
         </table>
       </div>
 
+      <h2>Generate / chat</h2>
+      <pre>{`# One-shot (any GGUF with blk.* tensors)
+uaii generate --model path/to/model.gguf \\
+  --prompt "Hello" --max-new-tokens 64 --stream
+
+# Built-in tiny model (no download)
+uaii generate --demo --prompt "hi" --max-new-tokens 8 --json
+
+# Warm worker for dashboard / automation
+uaii chat --model path/to/model.gguf --jsonl`}</pre>
+
       <h2>Cheatsheet</h2>
       <pre>{`uaii doctor --load-plugins
 uaii validate <ir>
@@ -88,6 +116,7 @@ uaii inspect <ir>
 uaii graph <ir> --format plan
 uaii convert model.gguf -o model.uaii.json
 uaii tokenize encode hello world
+uaii generate --model model.gguf --prompt "hi" --json
 uaii run --demo toy_mlp
 uaii run <ir> --input x=1,2,3,4 --backend cpu
 uaii profile --demo --output uaii_profile.json

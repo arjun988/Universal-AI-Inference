@@ -13,12 +13,16 @@ export default function HomePage() {
             <p className="hero-brand">UAII</p>
             <h1 className="hero-title">Any model → UAII IR → any hardware.</h1>
             <p className="hero-lede">
-              The modular execution layer for AI inference. Load GGUF, ONNX, Safetensors, and
-              more into one IR — then run on CPU or GPU through CLI, C, and Python.
+              The modular execution layer for AI inference. Load GGUF of any architecture
+              (llama.cpp-style <code>blk.*</code>), ONNX, Safetensors, and more into one IR —
+              then run via CLI, C, Python, or the local/self-host dashboard.
             </p>
             <div className="hero-cta">
               <Link className="btn btn-primary" href="/docs/getting-started/">
                 Get started
+              </Link>
+              <Link className="btn btn-secondary" href="/docs/dashboard/">
+                Dashboard
               </Link>
               <a
                 className="btn btn-secondary"
@@ -55,16 +59,16 @@ export default function HomePage() {
                 {"\n"}
                 {"  "}uaii-loaders{"     "}GGUF · ONNX · Safetensors
                 {"\n\n"}
-                <span className="dim">$ </span>uaii run --demo gguf
+                <span className="dim">$ </span>uaii generate --model model.gguf --prompt &quot;hi&quot;
                 {"\n"}
                 {"  "}
                 <span className="ok">ok</span>
-                {"  "}prefill + decode · KV cache live
+                {"  "}any blk.* arch · greedy decode
                 {"\n\n"}
-                <span className="dim">$ </span>uaii convert model.gguf -o model.uaii.json
+                <span className="dim">$ </span>cd dashboard && npm start
                 {"\n"}
                 {"  "}
-                <span className="dim">wrote UAII IR</span>
+                <span className="dim">http://127.0.0.1:8787 · chat · doctor · bench</span>
               </pre>
             </div>
           </div>
@@ -152,16 +156,31 @@ export default function HomePage() {
           </p>
           <div className="bento">
             <div className="bento-item">
-              <h3>Llama-family GGUF</h3>
+              <h3>Any GGUF architecture</h3>
               <p>
-                Full blk.* stacks with RoPE, Attention + KV, SwiGLU, and fail-closed arch /
-                quant gates.
+                Capability-based import — not a Llama-only allowlist. Any{" "}
+                <code>general.architecture</code> with llama.cpp-style <code>blk.*</code>{" "}
+                tensors: RoPE, Attention + KV, SwiGLU or GELU MLP, tied embeddings.
               </p>
               <div className="chip-row">
                 <span className="chip">llama</span>
-                <span className="chip">mistral</span>
-                <span className="chip">qwen2</span>
+                <span className="chip">qwen2/3</span>
+                <span className="chip">gemma</span>
                 <span className="chip">phi3</span>
+                <span className="chip">mistral</span>
+                <span className="chip">+ more</span>
+              </div>
+            </div>
+            <div className="bento-item">
+              <h3>Operator dashboard</h3>
+              <p>
+                Local and self-host UI: chat with streaming, model library, doctor, benches,
+                OpenAI-compatible <code>/v1</code>, token auth on LAN.
+              </p>
+              <div className="chip-row">
+                <span className="chip">chat</span>
+                <span className="chip">models</span>
+                <span className="chip">/v1 API</span>
               </div>
             </div>
             <div className="bento-item">
@@ -212,7 +231,15 @@ export default function HomePage() {
                         <strong>CLI</strong>
                       </td>
                       <td>
-                        <code>uaii run · convert · tokenize</code>
+                        <code>generate · chat · run · convert</code>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>Dashboard</strong>
+                      </td>
+                      <td>
+                        <code>cd dashboard && npm start</code>
                       </td>
                     </tr>
                     <tr>
@@ -261,17 +288,18 @@ cmake --build build --config Release --parallel`}</pre>
                 <span>cli</span>
               </header>
               <pre>{`uaii doctor
-uaii run --demo toy_mlp
-uaii run --demo gguf`}</pre>
+uaii generate --demo --prompt "hi"
+uaii generate --model model.gguf --prompt "hi"`}</pre>
             </div>
             <div className="code-card">
               <header>
-                Convert
-                <span>ir</span>
+                Dashboard
+                <span>ui</span>
               </header>
-              <pre>{`uaii convert model.gguf \\
-  -o model.uaii.json
-uaii tokenize encode hello`}</pre>
+              <pre>{`cd dashboard
+npm run install:all
+npm run build && npm start
+# → http://127.0.0.1:8787`}</pre>
             </div>
           </div>
         </div>
@@ -282,12 +310,16 @@ uaii tokenize encode hello`}</pre>
           <div>
             <h2>Start building on UAII</h2>
             <p>
-              Quick start covers build, CLI smoke, Python bundling, and session configuration.
+              Quick start covers build, CLI generate, dashboard config, Python, and session
+              options.
             </p>
           </div>
           <div className="hero-cta" style={{ margin: 0 }}>
             <Link className="btn btn-primary" href="/docs/getting-started/">
               Read the quick start
+            </Link>
+            <Link className="btn btn-secondary" href="/docs/dashboard/">
+              Configure dashboard
             </Link>
             <a
               className="btn btn-secondary"

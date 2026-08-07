@@ -6,6 +6,7 @@ const groups = [
     items: [
       { href: "/docs/getting-started/", label: "Quick start" },
       { href: "/docs/features/", label: "Features" },
+      { href: "/docs/dashboard/", label: "Dashboard" },
       { href: "/docs/benchmarks/", label: "Benchmarks" },
       { href: "/docs/examples/", label: "Examples" },
       { href: "/docs/configuration/", label: "Configuration" },

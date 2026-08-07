@@ -35,8 +35,26 @@ uaii doctor --load-plugins
 
 uaii validate examples/ir/toy_mlp.uaii.json
 uaii run --demo toy_mlp
-uaii run --demo gguf
-uaii run --demo parity`}</pre>
+uaii generate --demo --prompt "hi" --max-new-tokens 4 --json
+uaii generate --model path/to/model.gguf --prompt "hi" --max-new-tokens 64`}</pre>
+      <p>
+        GGUF import is capability-based: any <code>general.architecture</code> with
+        llama.cpp-style <code>blk.*</code> tensors (not limited to Llama). See{" "}
+        <Link href="/docs/features/">Features</Link>.
+      </p>
+
+      <h2>Dashboard (optional UI)</h2>
+      <pre>{`cd dashboard
+npm run install:all
+npm run build && npm start
+# → http://127.0.0.1:8787
+
+# Self-host
+UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=secret npm start`}</pre>
+      <p>
+        Chat, models, doctor, benches, OpenAI-compatible <code>/v1</code>. Configure with env
+        or Settings — full guide: <Link href="/docs/dashboard/">Dashboard</Link>.
+      </p>
 
       <h2>Run a graph</h2>
       <pre>{`uaii run examples/ir/toy_mlp.uaii.json \\
@@ -59,13 +77,16 @@ python examples/python/load_run_profile.py`}</pre>
       <h2>Next</h2>
       <ul>
         <li>
-          <Link href="/docs/features/">Features</Link> — formats, quants, backends
+          <Link href="/docs/features/">Features</Link> — formats, multi-arch GGUF, quants
+        </li>
+        <li>
+          <Link href="/docs/dashboard/">Dashboard</Link> — local / self-host UI config
         </li>
         <li>
           <Link href="/docs/configuration/">Configuration</Link> — TOML, env, CMake flags
         </li>
         <li>
-          <Link href="/docs/examples/">Examples</Link> — CLI, IR, generate, profile
+          <Link href="/docs/cli/">CLI</Link> — <code>generate</code>, <code>chat</code>, run
         </li>
       </ul>
     </DocLayout>

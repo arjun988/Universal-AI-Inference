@@ -194,15 +194,16 @@ uaii cache status
 
 ### Dashboard (local / self-host UI)
 
-Separate from the public `website/` docs site. Thin UI over the `uaii` CLI:
+Separate from the public `website/` docs site. Thin UI over the `uaii` CLI — real GGUF chat, models, doctor, benches, OpenAI `/v1`, light/dark theme:
 
 ```bash
 cd dashboard
 npm run install:all
-npm run dev          # UI :5174 · API :8787
+npm run build && npm start   # → http://127.0.0.1:8787
+# Self-host: UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=secret npm start
 ```
 
-See [dashboard/README.md](dashboard/README.md) and [docs/prd-dashboard.md](docs/prd-dashboard.md).
+Docs: website `/docs/dashboard/` · [dashboard/README.md](dashboard/README.md) · [docs/prd-dashboard.md](docs/prd-dashboard.md).
 
 ### Tests
 
@@ -222,6 +223,8 @@ ctest --test-dir build -C Release --output-on-failure
 | `uaii graph <path> [--format text\|dot\|json\|plan]` | Dump or visualize the graph |
 | `uaii convert <model> -o <out.uaii.json>` | GGUF / Safetensors / ONNX / MLX / PyTorch sidecar → IR |
 | `uaii tokenize encode\|decode …` | Simple / BPE / SentencePiece / GGUF tokenizer |
+| `uaii generate …` | Text gen from GGUF (any `blk.*` arch) or `--demo`; `--json` / `--stream` |
+| `uaii chat --jsonl …` | Warm chat worker for the dashboard |
 | `uaii run …` | Run IR or built-in demos (`--backend`, `--weight-init`, …) |
 | `uaii profile` | Chrome-trace JSON |
 | `uaii benchmark` | Timing harness |

@@ -33,9 +33,11 @@ export default function Page() {
                 <strong>GGUF</strong>
               </td>
               <td>
-                Llama-family transformer import (<code>llama</code>, <code>llama3</code>,{" "}
-                <code>mistral</code>, <code>qwen2</code>, <code>phi3</code>) with RMSNorm,
-                QKV, RoPE, Attention + KV, SwiGLU, lm_head
+                <strong>Any architecture</strong> with llama.cpp-style <code>blk.*</code>{" "}
+                decoder tensors — not a Llama-only allowlist. Reads{" "}
+                <code>{"{arch}.*"}</code> metadata (<code>qwen2.block_count</code>,{" "}
+                <code>gemma.attention.head_count</code>, …). RMSNorm, QKV, RoPE, Attention +
+                KV, SwiGLU or GELU MLP, tied embeddings. MoE fail-closed until expert ops.
               </td>
             </tr>
             <tr>
@@ -91,12 +93,24 @@ export default function Page() {
           Prefill + greedy decode via <code>Session::generate</code> /{" "}
           <code>uaii_session_generate</code>
         </li>
+        <li>
+          CLI: <code>uaii generate</code> (one-shot) and <code>uaii chat --jsonl</code> (warm
+          session for the dashboard)
+        </li>
         <li>First-class KV cache with context limits from model metadata</li>
         <li>
           Tokenizers: BPE, SentencePiece (optional), GGUF <code>tokenizer.ggml.*</code>,
           SimpleTokenizer for demos
         </li>
       </ul>
+
+      <h2>Dashboard</h2>
+      <p>
+        Operator UI in <code>dashboard/</code> — local or self-host. Chat with streaming,
+        model library, doctor, benches, settings, Bearer auth on LAN, OpenAI-compatible{" "}
+        <code>/v1/chat/completions</code>. See{" "}
+        <Link href="/docs/dashboard/">Dashboard</Link> for install and configuration.
+      </p>
 
       <h2>Hardware</h2>
       <p>
