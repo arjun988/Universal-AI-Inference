@@ -70,6 +70,12 @@ class UAII_API HostExecutableBackend : public IBackend {
  protected:
   [[nodiscard]] bool initialized() const noexcept { return initialized_; }
 
+  /// True when `p` is memory owned by the device backend (not host malloc).
+  [[nodiscard]] virtual bool pointer_on_device(const void* p) const noexcept {
+    (void)p;
+    return false;
+  }
+
   /// D2H inputs → CPU kernels → H2D outputs (for device buffers + host op path).
   [[nodiscard]] Error dispatch_via_host_staging(
       const std::string& op_name,

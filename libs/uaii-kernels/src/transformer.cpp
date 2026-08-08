@@ -1,5 +1,7 @@
 #include "uaii/kernels/kernels.hpp"
 #include "uaii/kernels/view_util.hpp"
+#include "uaii/quant/formats.hpp"
+#include "uaii/quant/gguf_dequant.hpp"
 #include "uaii/runtime/kv_cache.hpp"
 
 #include <algorithm>
@@ -63,20 +65,19 @@ Error embedding_f32(const TensorView& tokens,
       out->data == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "embedding null");
   }
-  if (tokens.dtype != DType::F32 || weight.dtype != DType::F32 ||
-      out->dtype != DType::F32) {
-    return Error::make(ErrorCode::InvalidArgument, "embedding requires f32");
+  if (tokens.dtype != DType::F32 || out->dtype != DType::F32) {
+    return Error::make(ErrorCode::InvalidArgument, "embedding requires f32 tokens/out");
   }
   if (weight.rank != 2 || tokens.rank != 2) {
     return Error::make(ErrorCode::InvalidArgument, "embedding rank (tokens/weight)");
   }
   Error err = check_view_bytes(tokens, "tokens");
   if (!err.ok()) return err;
-  err = check_view_bytes(weight, "weight");
-  if (!err.ok()) return err;
 
-  const std::int64_t vocab = weight.dim(0);
-  const std::int64_t dim = weight.dim(1);
+  const std::int64_t vocab =
+      weight.quant_rows > 0 ? weight.quant_rows : weight.dim(0);
+  const std::int64_t dim =
+      weight.quant_cols > 0 ? weight.quant_cols : weight.dim(1);
   const std::int64_t batch = tokens.dim(0);
   const std::int64_t seq = tokens.dim(1);
   // out: [batch, seq, dim] or flattened [batch*seq, dim]
@@ -102,8 +103,21 @@ Error embedding_f32(const TensorView& tokens,
   if (!err.ok()) return err;
 
   const float* ids = tokens.f32();
-  const float* w = weight.f32();
   float* y = out->f32();
+  const bool quantized = quant::is_gguf_block_quant(weight.quant_format);
+  if (!quantized) {
+    if (weight.dtype != DType::F32) {
+      return Error::make(ErrorCode::InvalidArgument, "embedding weight requires f32");
+    }
+    err = check_view_bytes(weight, "weight");
+    if (!err.ok()) return err;
+  }
+
+  const float* w = quantized ? nullptr : weight.f32();
+  const auto* packed = quantized ? static_cast<const std::uint8_t*>(weight.data) : nullptr;
+  const std::size_t row_stride =
+      quantized ? quant::packed_nbytes(weight.quant_format, static_cast<std::size_t>(dim)) : 0;
+
   for (std::int64_t b = 0; b < batch; ++b) {
     for (std::int64_t s = 0; s < seq; ++s) {
       const int id = static_cast<int>(ids[b * seq + s]);
@@ -113,8 +127,15 @@ Error embedding_f32(const TensorView& tokens,
                                " vocab=" + std::to_string(vocab));
       }
       const std::int64_t row = b * seq + s;
-      std::memcpy(y + row * dim, w + static_cast<std::int64_t>(id) * dim,
-                  static_cast<std::size_t>(dim) * sizeof(float));
+      float* dst = y + row * dim;
+      if (quantized) {
+        err = quant::dequant_gguf_row(weight.quant_format, packed + static_cast<std::size_t>(id) * row_stride,
+                                      dim, dst);
+        if (!err.ok()) return err;
+      } else {
+        std::memcpy(dst, w + static_cast<std::int64_t>(id) * dim,
+                    static_cast<std::size_t>(dim) * sizeof(float));
+      }
     }
   }
   return Error::success();
@@ -123,7 +144,9 @@ Error embedding_f32(const TensorView& tokens,
 Error rope_f32(const TensorView& in,
                const TensorView* positions,
                TensorView* out,
-               float theta) {
+               float theta,
+               std::int64_t head_dim,
+               int mode) {
   if (out == nullptr || in.data == nullptr || out->data == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "rope null");
   }
@@ -137,26 +160,60 @@ Error rope_f32(const TensorView& in,
   if (dim % 2 != 0) {
     return Error::make(ErrorCode::InvalidArgument, "rope dim must be even");
   }
+  // Apply RoPE per head when head_dim is set (Qwen/Llama MHA+GQA).
+  std::int64_t rope_dim = head_dim > 0 ? head_dim : dim;
+  if (rope_dim <= 0 || dim % rope_dim != 0 || rope_dim % 2 != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "rope head_dim invalid");
+  }
+  const bool neox = (mode == 2);
+  const std::int64_t n_chunks = dim / rope_dim;
+  const std::int64_t half = rope_dim / 2;
   std::size_t rows = in.numel() / static_cast<std::size_t>(dim);
   const float* x = in.f32();
   float* y = out->f32();
+
+  // Default position: KV cache length (seq=1 decode) or row index.
+  const std::int64_t base_pos =
+      (active_kv_cache() != nullptr) ? active_kv_cache()->past_len() : 0;
+
   for (std::size_t r = 0; r < rows; ++r) {
-    float pos = static_cast<float>(r);
+    float pos = static_cast<float>(base_pos + static_cast<std::int64_t>(r));
     if (positions && positions->data && positions->numel() > r) {
       pos = positions->f32()[r];
     }
     const float* row = x + r * static_cast<std::size_t>(dim);
     float* out_row = y + r * static_cast<std::size_t>(dim);
-    for (std::int64_t i = 0; i < dim; i += 2) {
-      const float freq =
-          1.0f / std::pow(theta, static_cast<float>(i) / static_cast<float>(dim));
-      const float angle = pos * freq;
-      const float c = std::cos(angle);
-      const float s = std::sin(angle);
-      const float a = row[i];
-      const float b = row[i + 1];
-      out_row[i] = a * c - b * s;
-      out_row[i + 1] = a * s + b * c;
+    for (std::int64_t h = 0; h < n_chunks; ++h) {
+      const float* head = row + static_cast<std::size_t>(h * rope_dim);
+      float* out_head = out_row + static_cast<std::size_t>(h * rope_dim);
+      if (neox) {
+        // NeoX / GPT-NeoX: pair (i, i + half) — required by Qwen2/Phi/Falcon.
+        for (std::int64_t i = 0; i < half; ++i) {
+          const float freq =
+              1.0f / std::pow(theta, (2.0f * static_cast<float>(i)) /
+                                         static_cast<float>(rope_dim));
+          const float angle = pos * freq;
+          const float c = std::cos(angle);
+          const float s = std::sin(angle);
+          const float a = head[i];
+          const float b = head[i + half];
+          out_head[i] = a * c - b * s;
+          out_head[i + half] = a * s + b * c;
+        }
+      } else {
+        // Interleaved pairs (i, i+1) — llama.cpp NORMAL / GPT-J style.
+        for (std::int64_t i = 0; i < rope_dim; i += 2) {
+          const float freq = 1.0f / std::pow(theta, static_cast<float>(i) /
+                                                         static_cast<float>(rope_dim));
+          const float angle = pos * freq;
+          const float c = std::cos(angle);
+          const float s = std::sin(angle);
+          const float a = head[i];
+          const float b = head[i + 1];
+          out_head[i] = a * c - b * s;
+          out_head[i + 1] = a * s + b * c;
+        }
+      }
     }
   }
   return Error::success();

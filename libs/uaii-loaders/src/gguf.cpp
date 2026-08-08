@@ -856,6 +856,15 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     const std::int64_t q_dim = n_heads * head_dim;
     const std::int64_t kv_dim = n_kv_heads * head_dim;
     const float rope_theta = kv_float_arch(file, arch, "rope.freq_base", 10000.f);
+    // llama.cpp rope type: 0=NORMAL (interleaved), 2=NEOX (half pairing).
+    // Qwen2/Phi/Falcon and many non-Llama GGUFs need NeoX.
+    const int rope_mode =
+        (arch == "qwen2" || arch == "qwen2moe" || arch == "qwen3" || arch == "qwen" ||
+         arch == "phi2" || arch == "phi3" || arch == "falcon" || arch == "stablelm" ||
+         arch == "starcoder2" || arch == "olmo2" || arch == "gemma" || arch == "gemma2" ||
+         arch == "gemma3")
+            ? 2
+            : 0;
     const float rms_eps =
         kv_float_arch(file, arch, "attention.layer_norm_rms_epsilon", 1e-5f);
     std::int64_t n_layers = kv_i64_arch(file, arch, "block_count", 0);
@@ -949,6 +958,15 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "attn_v.weight", &wv);
       if (!err.ok()) return err;
+      TensorId bq = 0;
+      TensorId bk = 0;
+      TensorId bv = 0;
+      err = add_weight_ref(pfx + "attn_q.bias", &bq);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_k.bias", &bk);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_v.bias", &bv);
+      if (!err.ok()) return err;
       err = add_weight_ref(pfx + "attn_output.weight", &wo);
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "ffn_norm.weight", &ffn_norm);
@@ -983,22 +1001,43 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       b.add_node(pfx + "rms1", "RMSNorm", "1", {features, attn_norm}, {n1},
                  {ir::make_float_attr("eps", rms_eps)});
 
-      TensorId q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, q_dim}});
-      TensorId k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, kv_dim}});
-      TensorId v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, kv_dim}});
-      b.add_node(pfx + "q_proj", "MatMul", "1", {n1, wq}, {q},
+      TensorId q_proj = b.add_tensor(pfx + "q_proj", DType::F32, Shape{{1, q_dim}});
+      TensorId k_proj = b.add_tensor(pfx + "k_proj", DType::F32, Shape{{1, kv_dim}});
+      TensorId v_proj = b.add_tensor(pfx + "v_proj", DType::F32, Shape{{1, kv_dim}});
+      b.add_node(pfx + "q_mm", "MatMul", "1", {n1, wq}, {q_proj},
                  {ir::make_bool_attr("transpose_b", true)});
-      b.add_node(pfx + "k_proj", "MatMul", "1", {n1, wk}, {k},
+      b.add_node(pfx + "k_mm", "MatMul", "1", {n1, wk}, {k_proj},
                  {ir::make_bool_attr("transpose_b", true)});
-      b.add_node(pfx + "v_proj", "MatMul", "1", {n1, wv}, {v},
+      b.add_node(pfx + "v_mm", "MatMul", "1", {n1, wv}, {v_proj},
                  {ir::make_bool_attr("transpose_b", true)});
+
+      // Qwen2 (and similar) ship F32 Q/K/V biases; Add is numel-matched with [1, D].
+      TensorId q = q_proj;
+      TensorId k = k_proj;
+      TensorId v = v_proj;
+      if (bq) {
+        q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, q_dim}});
+        b.add_node(pfx + "q_bias", "Add", "1", {q_proj, bq}, {q});
+      }
+      if (bk) {
+        k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, kv_dim}});
+        b.add_node(pfx + "k_bias", "Add", "1", {k_proj, bk}, {k});
+      }
+      if (bv) {
+        v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, kv_dim}});
+        b.add_node(pfx + "v_bias", "Add", "1", {v_proj, bv}, {v});
+      }
 
       TensorId q_rope = b.add_tensor(pfx + "q_rope", DType::F32, Shape{{1, q_dim}});
       TensorId k_rope = b.add_tensor(pfx + "k_rope", DType::F32, Shape{{1, kv_dim}});
       b.add_node(pfx + "q_rope", "RoPE", "1", {q}, {q_rope},
-                 {ir::make_float_attr("theta", rope_theta)});
+                 {ir::make_float_attr("theta", rope_theta),
+                  ir::make_int_attr("head_dim", head_dim),
+                  ir::make_int_attr("mode", rope_mode)});
       b.add_node(pfx + "k_rope", "RoPE", "1", {k}, {k_rope},
-                 {ir::make_float_attr("theta", rope_theta)});
+                 {ir::make_float_attr("theta", rope_theta),
+                  ir::make_int_attr("head_dim", head_dim),
+                  ir::make_int_attr("mode", rope_mode)});
 
       TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, q_dim}});
       b.add_node(pfx + "attn", "Attention", "1", {q_rope, k_rope, v}, {attn},
@@ -1178,6 +1217,7 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.set_metadata("q_dim", std::to_string(q_dim));
     b.set_metadata("kv_dim", std::to_string(kv_dim));
     b.set_metadata("rope_theta", std::to_string(rope_theta));
+    b.set_metadata("rope_mode", std::to_string(rope_mode));
     b.set_metadata("embedding_length", std::to_string(dim));
     b.set_metadata("rms_eps", std::to_string(rms_eps));
     const std::int64_t ctx = kv_i64_arch(file, arch, "context_length", 0);

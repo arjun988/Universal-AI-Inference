@@ -23,6 +23,8 @@ void cuda_shutdown() noexcept;
 [[nodiscard]] Error cuda_copy_h2d(const void* host, void* device, std::size_t bytes);
 [[nodiscard]] Error cuda_copy_h2d_async(const void* host, void* device, std::size_t bytes);
 [[nodiscard]] bool cuda_probe_device() noexcept;
+/// True when `p` is CUDA device (or managed) memory.
+[[nodiscard]] bool cuda_is_device_ptr(const void* p) noexcept;
 [[nodiscard]] Error cuda_copy_d2h(const void* device, void* host, std::size_t bytes);
 [[nodiscard]] Error cuda_copy_d2d(const void* src, void* dst, std::size_t bytes);
 [[nodiscard]] Error cuda_synchronize();

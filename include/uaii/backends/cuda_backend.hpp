@@ -42,6 +42,9 @@ class UAII_API CudaBackend : public HostExecutableBackend {
   /// True when built with CUDA and at least one device is present.
   [[nodiscard]] static bool native_device_available() noexcept;
 
+ protected:
+  [[nodiscard]] bool pointer_on_device(const void* p) const noexcept override;
+
  private:
   bool force_host_fallback_ = false;
   bool native_ready_ = false;

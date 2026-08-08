@@ -21,6 +21,10 @@ bool CudaBackend::native_compiled() noexcept {
   return native::cuda_compiled();
 }
 
+bool CudaBackend::pointer_on_device(const void* p) const noexcept {
+  return native_ready_ && native::cuda_is_device_ptr(p);
+}
+
 bool CudaBackend::native_device_available() noexcept {
   if (!native::cuda_compiled()) {
     return false;
@@ -44,9 +48,12 @@ Error CudaBackend::initialize() {
     if (err.ok()) {
       native_ready_ = true;
       set_native_available(true);
-      // MatMul + Add + RMSNorm on device ⇒ not a pure host-fallback backend.
+      // MatMul + Add + RMSNorm on device when tensors are device-resident.
+      // Session still allocates host RAM today — dispatch falls back to CPU kernels
+      // in place until device upload is wired (avoids CUDA D2H invalid argument).
       set_host_fallback(false);
-      set_details(std::string("CUDA backend (native); ") + native::cuda_capability_details());
+      set_details(std::string("CUDA backend (native); ") + native::cuda_capability_details() +
+                  " | note: host-resident session tensors use CPU kernels until device upload");
       return Error::success();
     }
     set_details("CUDA backend (host-fallback; native init failed: " + err.message() + ")");
@@ -111,11 +118,18 @@ Error CudaBackend::copy_h2d(const void* host, void* device, std::size_t bytes) {
   if (!native_ready_) {
     return HostExecutableBackend::copy_h2d(host, device, bytes);
   }
+  // Session may still pass host destinations before device upload exists.
+  if (!native::cuda_is_device_ptr(device)) {
+    return HostExecutableBackend::copy_h2d(host, device, bytes);
+  }
   return native::cuda_copy_h2d(host, device, bytes);
 }
 
 Error CudaBackend::copy_h2d_async(const void* host, void* device, std::size_t bytes) {
   if (!native_ready_) {
+    return HostExecutableBackend::copy_h2d_async(host, device, bytes);
+  }
+  if (!native::cuda_is_device_ptr(device)) {
     return HostExecutableBackend::copy_h2d_async(host, device, bytes);
   }
   return native::cuda_copy_h2d_async(host, device, bytes);
@@ -125,11 +139,18 @@ Error CudaBackend::copy_d2h(const void* device, void* host, std::size_t bytes) {
   if (!native_ready_) {
     return HostExecutableBackend::copy_d2h(device, host, bytes);
   }
+  // Host-resident tensors must not be passed to cudaMemcpy DeviceToHost.
+  if (!native::cuda_is_device_ptr(device)) {
+    return HostExecutableBackend::copy_d2h(device, host, bytes);
+  }
   return native::cuda_copy_d2h(device, host, bytes);
 }
 
 Error CudaBackend::copy_d2d(const void* src, void* dst, std::size_t bytes) {
   if (!native_ready_) {
+    return HostExecutableBackend::copy_d2d(src, dst, bytes);
+  }
+  if (!native::cuda_is_device_ptr(src) || !native::cuda_is_device_ptr(dst)) {
     return HostExecutableBackend::copy_d2d(src, dst, bytes);
   }
   return native::cuda_copy_d2d(src, dst, bytes);
@@ -148,6 +169,33 @@ Error CudaBackend::dispatch(const std::string& op_name,
                             std::vector<kernels::TensorView>* outputs,
                             const std::vector<ir::Attribute>& attrs) {
   if (native_ready_) {
+    auto on_device = [](const kernels::TensorView& t) {
+      return t.data != nullptr && t.nbytes > 0 && native::cuda_is_device_ptr(t.data);
+    };
+    bool any_host = false;
+    bool any_device = false;
+    for (const auto& t : inputs) {
+      if (t.data == nullptr || t.nbytes == 0) continue;
+      if (on_device(t)) any_device = true;
+      else any_host = true;
+    }
+    if (outputs) {
+      for (const auto& t : *outputs) {
+        if (t.data == nullptr || t.nbytes == 0) continue;
+        if (on_device(t)) any_device = true;
+        else any_host = true;
+      }
+    }
+
+    // Host-resident session buffers: run CPU kernels in place (do not cudaMemcpy).
+    if (!any_device) {
+      return HostExecutableBackend::dispatch(op_name, op_version, inputs, outputs, attrs);
+    }
+    if (any_host && any_device) {
+      // Mixed residency — stage everything through host.
+      return dispatch_via_host_staging(op_name, op_version, inputs, outputs, attrs);
+    }
+
     Error err = native::cuda_dispatch(op_name, op_version, inputs, outputs, attrs);
     if (err.ok()) {
       return err;

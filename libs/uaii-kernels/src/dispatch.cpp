@@ -183,7 +183,9 @@ Error dispatch_cpu(const std::string& op_name,
       return Error::make(ErrorCode::InvalidArgument, "RoPE arity");
     }
     const TensorView* pos = inputs.size() > 1 ? &inputs[1] : nullptr;
-    return rope_f32(inputs[0], pos, &(*outputs)[0], attr_float(attrs, "theta", 10000.f));
+    return rope_f32(inputs[0], pos, &(*outputs)[0], attr_float(attrs, "theta", 10000.f),
+                    attr_int(attrs, "head_dim", 0),
+                    static_cast<int>(attr_int(attrs, "mode", 0)));
   }
   if (op_name == "Attention") {
     if (inputs.size() < 3 || outputs->empty()) {

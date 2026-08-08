@@ -9,6 +9,7 @@
 #include "uaii/tokenizers/gguf_tokenizer.hpp"
 #include "uaii/tokenizers/simple_tokenizer.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -302,6 +303,18 @@ Error load_generator(const std::string& model_path,
   opts.weight_init = runtime::WeightInit::None;
   opts.backend_name = backend.empty() ? "cpu" : backend;
   opts.max_context = max_context;
+  const std::string device = (opts.backend_name == "cpu") ? "cpu" : "gpu";
+  opts.on_load_progress = [backend = opts.backend_name, device](std::size_t loaded,
+                                                                std::size_t total,
+                                                                const std::string& tensor) {
+    const int pct =
+        total == 0 ? 100 : static_cast<int>((loaded * 100) / total);
+    std::cout << "{\"event\":\"load_progress\",\"loaded\":" << loaded << ",\"total\":" << total
+              << ",\"pct\":" << pct << ",\"tensor\":\"" << json_escape(tensor)
+              << "\",\"backend\":\"" << json_escape(backend) << "\",\"device\":\"" << device
+              << "\"}\n";
+    std::cout.flush();
+  };
   out->session = std::make_unique<runtime::Session>();
   err = out->session->create(std::move(out->graph), opts);
   if (!err.ok()) {
@@ -313,8 +326,26 @@ Error load_generator(const std::string& model_path,
 }
 
 std::string build_prompt(const std::string& system, const std::string& user) {
-  if (system.empty()) return user;
-  return "System: " + system + "\n\nUser: " + user + "\n\nAssistant:";
+  // Dashboard may already send a full ChatML transcript — don't wrap twice.
+  if (user.find("<|im_start|>") != std::string::npos) {
+    if (user.find("<|im_start|>assistant") != std::string::npos) return user;
+    std::string out = user;
+    if (!out.empty() && out.back() != '\n') out.push_back('\n');
+    out += "<|im_start|>assistant\n";
+    return out;
+  }
+  // ChatML used by Qwen2.5-Instruct and similar GGUF chat models.
+  std::string out;
+  if (!system.empty()) {
+    out += "<|im_start|>system\n";
+    out += system;
+    out += "<|im_end|>\n";
+  }
+  out += "<|im_start|>user\n";
+  out += user;
+  out += "<|im_end|>\n";
+  out += "<|im_start|>assistant\n";
+  return out;
 }
 
 Error append_stop_strings(ITokenizer* tok, const std::vector<std::string>& stops,
@@ -360,6 +391,9 @@ Error run_text_generate(LoadedGen* gen,
   err = gen->session->generate(
       prompt_tokens, max_new_tokens, &generated, stop_ids,
       [&](std::int64_t token_id) {
+        for (const auto s : stop_ids) {
+          if (token_id == s) return true;  // omit stop tokens from streamed text
+        }
         std::vector<std::int64_t> one{token_id};
         std::string piece;
         Error de = gen->tok->decode(one, &piece);
@@ -536,14 +570,35 @@ int cmd_chat(const std::vector<std::string>& args) {
     return 1;
   }
 
+  const std::string device = (backend == "cpu") ? "cpu" : "gpu";
+  std::cout << "{\"event\":\"load_start\",\"model\":\"" << json_escape(model)
+            << "\",\"backend\":\"" << json_escape(backend) << "\",\"device\":\"" << device
+            << "\"}\n";
+  std::cout.flush();
+
   LoadedGen gen;
   Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen);
   if (!err.ok()) {
     std::cout << "{\"event\":\"error\",\"error\":\"" << json_escape(err.to_string()) << "\"}\n";
     return 1;
   }
+
+  // Prefer ChatML / EOS stops when present in the tokenizer vocab.
+  auto stops = default_stops;
+  if (gen.tok) {
+    for (const char* s : {"<|im_end|>", "<|endoftext|>"}) {
+      std::vector<std::int64_t> ids;
+      if (gen.tok->encode(s, &ids).ok() && ids.size() == 1) {
+        const std::int64_t id = ids.front();
+        if (std::find(stops.begin(), stops.end(), id) == stops.end()) {
+          stops.push_back(id);
+        }
+      }
+    }
+  }
+
   std::cout << "{\"event\":\"ready\",\"model\":\"" << json_escape(model) << "\",\"backend\":\""
-            << json_escape(backend) << "\"}\n";
+            << json_escape(backend) << "\",\"device\":\"" << device << "\"}\n";
   std::cout.flush();
 
   std::string line;
@@ -589,7 +644,7 @@ int cmd_chat(const std::vector<std::string>& args) {
     std::size_t prompt_n = 0;
     std::size_t new_n = 0;
     std::int64_t ms = 0;
-    err = run_text_generate(&gen, prompt, max_new, default_stops, sample, stream,
+    err = run_text_generate(&gen, prompt, max_new, stops, sample, stream,
                             /*json_mode=*/true, id, &reply, &prompt_n, &new_n, &ms);
     if (!err.ok()) {
       std::cout << "{\"event\":\"error\",\"id\":\"" << json_escape(id) << "\",\"error\":\""

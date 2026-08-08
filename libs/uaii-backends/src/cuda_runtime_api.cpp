@@ -583,6 +583,23 @@ bool cuda_probe_device() noexcept {
   return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
 }
 
+bool cuda_is_device_ptr(const void* p) noexcept {
+  if (p == nullptr) {
+    return false;
+  }
+  cudaPointerAttributes attr{};
+  const cudaError_t st = cudaPointerGetAttributes(&attr, p);
+  if (st != cudaSuccess) {
+    (void)cudaGetLastError();  // clear sticky error from host pointer probe
+    return false;
+  }
+#if CUDART_VERSION >= 10000
+  return attr.type == cudaMemoryTypeDevice || attr.type == cudaMemoryTypeManaged;
+#else
+  return attr.memoryType == cudaMemoryTypeDevice;
+#endif
+}
+
 }  // namespace native
 }  // namespace backends
 }  // namespace uaii

@@ -382,6 +382,14 @@ Error Session::load_or_init_weights() {
     return &ins_it->second;
   };
 
+  std::size_t total_weights = 0;
+  for (const auto& t : graph_.tensors) {
+    if (!t.is_weight) continue;
+    if (streaming_ && streaming_->is_streamed(t.id)) continue;
+    ++total_weights;
+  }
+  std::size_t loaded_weights = 0;
+
   for (const auto& t : graph_.tensors) {
     if (!t.is_weight) continue;
     if (streaming_ && streaming_->is_streamed(t.id)) {
@@ -499,40 +507,45 @@ Error Session::load_or_init_weights() {
       }
     }
 
-    if (loaded) continue;
-
-    // Fail closed: missing weight_ref with weight_init=None is an error.
-    // Explicit weight_init (zeros/ones/sequence) is an opt-in synthetic fill.
-    if (!t.weight_ref.empty() && options_.weight_init == WeightInit::None &&
-        !options_.allow_missing_weights) {
-      return Error::make(ErrorCode::NotFound,
-                         "failed to load required weight '" + t.name + "' from '" +
-                             t.weight_ref + "': " + load_err.to_string());
-    }
-
-    if (data == nullptr) {
-      return Error::make(ErrorCode::NotFound,
-                         "failed to load packed weight '" + t.name + "'");
-    }
-    switch (options_.weight_init) {
-      case WeightInit::Zeros:
-        std::memset(data, 0, buf.nbytes);
-        break;
-      case WeightInit::Ones:
-        for (std::size_t i = 0; i < n; ++i) data[i] = 1.0f;
-        break;
-      case WeightInit::Sequence:
-        for (std::size_t i = 0; i < n; ++i) data[i] = static_cast<float>(i) * 0.01f;
-        break;
-      case WeightInit::None:
-        if (t.weight_ref.empty()) {
-          return Error::make(ErrorCode::NotFound,
-                             "weight tensor '" + t.name +
-                                 "' has no weight_ref and weight_init=None");
-        }
+    if (!loaded) {
+      // Fail closed: missing weight_ref with weight_init=None is an error.
+      // Explicit weight_init (zeros/ones/sequence) is an opt-in synthetic fill.
+      if (!t.weight_ref.empty() && options_.weight_init == WeightInit::None &&
+          !options_.allow_missing_weights) {
         return Error::make(ErrorCode::NotFound,
-                           "failed to load weight '" + t.name + "' from '" +
-                               t.weight_ref + "'");
+                           "failed to load required weight '" + t.name + "' from '" +
+                               t.weight_ref + "': " + load_err.to_string());
+      }
+
+      if (data == nullptr) {
+        return Error::make(ErrorCode::NotFound,
+                           "failed to load packed weight '" + t.name + "'");
+      }
+      switch (options_.weight_init) {
+        case WeightInit::Zeros:
+          std::memset(data, 0, buf.nbytes);
+          break;
+        case WeightInit::Ones:
+          for (std::size_t i = 0; i < n; ++i) data[i] = 1.0f;
+          break;
+        case WeightInit::Sequence:
+          for (std::size_t i = 0; i < n; ++i) data[i] = static_cast<float>(i) * 0.01f;
+          break;
+        case WeightInit::None:
+          if (t.weight_ref.empty()) {
+            return Error::make(ErrorCode::NotFound,
+                               "weight tensor '" + t.name +
+                                   "' has no weight_ref and weight_init=None");
+          }
+          return Error::make(ErrorCode::NotFound,
+                             "failed to load weight '" + t.name + "' from '" +
+                                 t.weight_ref + "'");
+      }
+    }
+
+    ++loaded_weights;
+    if (options_.on_load_progress) {
+      options_.on_load_progress(loaded_weights, total_weights, t.name);
     }
   }
   return Error::success();

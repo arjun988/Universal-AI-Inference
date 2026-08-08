@@ -1,4 +1,4 @@
-import { spawnSync } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -134,6 +134,14 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
     return r.status === 0 && h ? h : "/home/arjun";
   }
 
+  function stageScript(src, dst, cacheDir) {
+    return [
+      `mkdir -p '${cacheDir}'`,
+      `if [ ! -f '${dst}' ] || [ "$(stat -c%s '${dst}' 2>/dev/null || echo 0)" != "$(stat -c%s '${src}' 2>/dev/null || echo 1)" ]; then cp -f '${src}' '${dst}'; fi`,
+      `test -f '${dst}' && printf '%s' '${dst}'`,
+    ].join(" && ");
+  }
+
   function stageModelPath(hostPath) {
     const L = resolve();
     if (L.mode !== "wsl" || !hostPath) return L.toModelPath(hostPath);
@@ -146,13 +154,7 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
       "",
     );
     const dst = `${cacheDir}/${base}`;
-    // Avoid $VAR in the bash string — Windows/WSL arg passing can strip them.
-    const bash = [
-      `mkdir -p '${cacheDir}'`,
-      `if [ ! -f '${dst}' ] || [ "$(stat -c%s '${dst}' 2>/dev/null || echo 0)" != "$(stat -c%s '${src}' 2>/dev/null || echo 1)" ]; then cp -f '${src}' '${dst}'; fi`,
-      `test -f '${dst}' && printf '%s' '${dst}'`,
-    ].join(" && ");
-    const ready = spawnSync("wsl", ["-d", distro, "--", "bash", "-lc", bash], {
+    const ready = spawnSync("wsl", ["-d", distro, "--", "bash", "-lc", stageScript(src, dst, cacheDir)], {
       windowsHide: true,
       encoding: "utf8",
       timeout: 600000,
@@ -163,7 +165,45 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
     return src;
   }
 
-  return { resolve, spawnArgs, winToWsl, stageModelPath };
+  function stageModelPathAsync(hostPath) {
+    const L = resolve();
+    if (L.mode !== "wsl" || !hostPath) {
+      return Promise.resolve(L.toModelPath(hostPath));
+    }
+    const src = L.toModelPath(hostPath);
+    if (!src.startsWith("/mnt/")) return Promise.resolve(src);
+    const base = path.posix.basename(src.replace(/\\/g, "/"));
+    const distro = process.env.UAII_WSL_DISTRO || "Ubuntu";
+    const cacheDir = (process.env.UAII_WSL_MODEL_DIR || `${wslHome(distro)}/uaii-models`).replace(
+      /\/$/,
+      "",
+    );
+    const dst = `${cacheDir}/${base}`;
+    return new Promise((resolvePromise) => {
+      const child = spawn("wsl", ["-d", distro, "--", "bash", "-lc", stageScript(src, dst, cacheDir)], {
+        windowsHide: true,
+      });
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (d) => {
+        out += d.toString();
+      });
+      child.stderr.on("data", (d) => {
+        err += d.toString();
+      });
+      child.on("close", (code) => {
+        const staged = out.trim();
+        if (code === 0 && staged) resolvePromise(staged);
+        else {
+          console.warn("[uaii-launch] WSL model stage failed; using /mnt path:", err || out);
+          resolvePromise(src);
+        }
+      });
+      child.on("error", () => resolvePromise(src));
+    });
+  }
+
+  return { resolve, spawnArgs, winToWsl, stageModelPath, stageModelPathAsync };
 }
 
 export function createBenchLauncher({ repoRoot, configuredBin = "" }) {

@@ -50,11 +50,18 @@ namespace kernels {
                                            const TensorView& weight,
                                            TensorView* out);
 
-/// Apply RoPE in-place style: out = rotate(in); optional positions [seq]
+/// Apply RoPE: out = rotate(in). Optional positions [rows].
+/// When head_dim > 0, RoPE is applied per head chunk (required for MHA/GQA).
+/// When positions is null and a KV cache is active, uses cache past_len as position
+/// for each row (seq=1 decode) or past_len+row for multi-row tensors.
+/// mode: 0 = interleaved pairs (i, i+1); 2 = NeoX pairs (i, i+head_dim/2)
+/// (llama.cpp convention; Qwen2/Phi/Falcon need mode=2).
 [[nodiscard]] UAII_API Error rope_f32(const TensorView& in,
                                       const TensorView* positions,
                                       TensorView* out,
-                                      float theta = 10000.0f);
+                                      float theta = 10000.0f,
+                                      std::int64_t head_dim = 0,
+                                      int mode = 0);
 
 /// Simplified MHA: Q,K,V are [batch, seq, dim] or [batch, dim]; out same.
 [[nodiscard]] UAII_API Error attention_f32(const TensorView& q,

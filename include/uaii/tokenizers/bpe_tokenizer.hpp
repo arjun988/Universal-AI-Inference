@@ -3,6 +3,7 @@
 #include "uaii/export.hpp"
 #include "uaii/interfaces/tokenizer.hpp"
 
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -11,9 +12,11 @@
 namespace uaii {
 namespace tokenizers {
 
-/// GPT-2 style BPE (vocab.json + merges.txt).
+/// GPT-2 / Qwen style BPE (vocab + merges) with byte↔unicode mapping.
 class UAII_API BpeTokenizer : public ITokenizer {
  public:
+  BpeTokenizer();
+
   [[nodiscard]] Error load(const std::string& vocab_json_path,
                            const std::string& merges_path);
 
@@ -29,9 +32,16 @@ class UAII_API BpeTokenizer : public ITokenizer {
                              std::string* out_text) const override;
 
  private:
+  void ensure_specials();
+  [[nodiscard]] Error bpe_encode_piece(const std::string& piece,
+                                       std::vector<std::int64_t>* out_tokens) const;
+
   std::unordered_map<std::string, std::int64_t> token_to_id_;
   std::vector<std::string> id_to_token_;
   std::vector<std::pair<std::string, std::string>> merges_;
+  std::vector<std::string> special_tokens_;
+  std::array<char32_t, 256> byte_encoder_{};
+  std::unordered_map<char32_t, unsigned char> byte_decoder_;
 };
 
 }  // namespace tokenizers

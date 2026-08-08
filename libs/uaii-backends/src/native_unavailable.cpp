@@ -32,6 +32,7 @@ namespace backends {
 namespace native {
 UAII_NATIVE_UNAVAIL(cuda, "CUDA")
 bool cuda_probe_device() noexcept { return false; }
+bool cuda_is_device_ptr(const void*) noexcept { return false; }
 Error cuda_copy_h2d_async(const void*, void*, std::size_t) { return cuda_init(); }
 }  // namespace native
 }  // namespace backends

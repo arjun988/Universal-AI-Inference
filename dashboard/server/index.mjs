@@ -7,7 +7,13 @@ import path from "path";
 import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
-import { ChatWorker, getChatWorker, stopAllChatWorkers } from "./chat_worker.mjs";
+import {
+  ChatWorker,
+  getChatWorker,
+  listChatWorkers,
+  peekChatWorker,
+  stopAllChatWorkers,
+} from "./chat_worker.mjs";
 import { createBenchLauncher, createUaiiLauncher } from "./uaii_launch.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,40 +53,72 @@ const DEMOS = [
 let detectedBackend = null;        // null = not yet probed
 let detectedBackendDetails = "";   // human-readable details for /api/health
 
+function hostGpuPresent() {
+  try {
+    if (process.platform === "win32") {
+      const r = spawnSync("nvidia-smi", ["-L"], {
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+      });
+      if (r.status === 0 && /GPU\s+\d+:/i.test(r.stdout || "")) return (r.stdout || "").trim().split("\n")[0];
+    }
+    const distro = process.env.UAII_WSL_DISTRO || "Ubuntu";
+    const r = spawnSync(
+      "wsl",
+      ["-d", distro, "--", "nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+      { encoding: "utf8", timeout: 8000, windowsHide: true },
+    );
+    if (r.status === 0 && (r.stdout || "").trim()) return (r.stdout || "").trim().split("\n")[0];
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
 function probeGpuBackend(launcherDisplay) {
   if (detectedBackend !== null) return detectedBackend;
 
   const L = uaiiLauncher.resolve();
   const cmd = L.cmd;
   const args = [...(L.prefix || []), "doctor"];
+  const gpuName = hostGpuPresent();
 
   try {
     const r = spawnSync(cmd, args, {
       encoding: "utf8",
-      timeout: 15000,
+      timeout: 20000,
       windowsHide: true,
       env: { ...process.env },
     });
     const out = (r.stdout || "") + (r.stderr || "");
 
     // Parse `uaii doctor` backend lines:
-    //   cuda: Cuda create=ok native_compiled=yes — ... host_fallback=no ...
-    // The backends in priority order we want to try:
+    //   cuda: ... create=ok native_compiled=yes — ... host_fallback=no ...
     const priority = ["cuda", "rocm", "metal", "vulkan"];
     for (const name of priority) {
-      // Match lines like:  cuda: ... create=ok ... host_fallback=no
       const re = new RegExp(`${name}:.*create=ok.*host_fallback=no`, "i");
       if (re.test(out)) {
-        // Extract details snippet
         const lineMatch = out.match(new RegExp(`${name}:.*`, "i"));
-        detectedBackendDetails = lineMatch ? lineMatch[0].trim().slice(0, 120) : name;
+        detectedBackendDetails = lineMatch ? lineMatch[0].trim().slice(0, 160) : name;
+        if (gpuName) detectedBackendDetails = `${gpuName} via ${name}`;
         detectedBackend = name;
         console.log(`[uaii] GPU detected: ${name} — ${detectedBackendDetails}`);
         return detectedBackend;
       }
     }
-    // All gpu backends have host_fallback=yes or failed — use cpu
-    detectedBackendDetails = "no GPU backend with native device found; using CPU";
+
+    const cudaStub = /cuda:.*create=ok.*host_fallback=yes/i.test(out);
+    if (cudaStub && gpuName) {
+      detectedBackendDetails =
+        `${gpuName} found, but this uaii binary has no native CUDA ` +
+        `(built with UAII_WITH_CUDA=OFF). Rebuild: scripts/rebuild_uaii_cuda_wsl.sh — using CPU until then`;
+    } else if (gpuName) {
+      detectedBackendDetails =
+        `${gpuName} found, but no native GPU backend in this uaii build — using CPU`;
+    } else {
+      detectedBackendDetails = "no native GPU backend in this uaii build; using CPU";
+    }
     detectedBackend = "cpu";
   } catch (e) {
     detectedBackendDetails = `probe failed: ${e.message}`;
@@ -568,28 +606,30 @@ app.post("/api/run/model", async (req, res) => {
 });
 
 function formatChatPrompt(messages, fallbackPrompt, system) {
-  const parts = [];
-  if (system) parts.push(`System: ${system}`);
+  // ChatML (Qwen2.5-Instruct / common GGUF chat templates).
+  let out = "";
+  const sys = String(system || "").trim();
+  if (sys) {
+    out += `<|im_start|>system\n${sys}<|im_end|>\n`;
+  }
   const msgs = Array.isArray(messages) ? messages : [];
   if (msgs.length === 0 && fallbackPrompt) {
-    parts.push(`User: ${fallbackPrompt}`);
-    parts.push("Assistant:");
-    return parts.join("\n\n");
+    out += `<|im_start|>user\n${fallbackPrompt}<|im_end|>\n`;
+    out += `<|im_start|>assistant\n`;
+    return out;
   }
   for (const m of msgs) {
-    const role = (m.role || "user").toLowerCase();
+    const role = String(m.role || "user").toLowerCase();
     const content = String(m.content || "");
-    if (role === "system") parts.push(`System: ${content}`);
-    else if (role === "assistant") parts.push(`Assistant: ${content}`);
-    else parts.push(`User: ${content}`);
+    const tag = role === "assistant" ? "assistant" : role === "system" ? "system" : "user";
+    // Skip duplicate system if already emitted from `system` arg.
+    if (tag === "system" && sys) continue;
+    out += `<|im_start|>${tag}\n${content}<|im_end|>\n`;
   }
-  if (!parts.some((p) => p.startsWith("Assistant:") && p === parts[parts.length - 1])) {
-    // Ensure the model continues as assistant
-    if (parts.length && !parts[parts.length - 1].startsWith("Assistant:")) {
-      parts.push("Assistant:");
-    }
+  if (!out.endsWith("<|im_start|>assistant\n")) {
+    out += `<|im_start|>assistant\n`;
   }
-  return parts.join("\n\n");
+  return out;
 }
 
 function resolveChatModel(body) {
@@ -623,39 +663,162 @@ function resolveChatModel(body) {
   return { error: "unsupported model type (use .gguf)", path: full };
 }
 
-function workerForModel(resolved) {
-  const key = resolved.kind === "demo" ? "__demo__" : resolved.path;
+/** In-flight staging / prepare state so the UI can poll while copies run. */
+const loadUiStatus = {
+  phase: "idle",
+  model: "",
+  message: "",
+  pct: 0,
+  loaded: 0,
+  total: 0,
+  tensor: "",
+  backend: "cpu",
+  device: "cpu",
+  error: "",
+  updatedAt: Date.now(),
+};
+const prepareJobs = new Map(); // host model path -> Promise
+
+function setLoadUiStatus(patch) {
+  Object.assign(loadUiStatus, patch, { updatedAt: Date.now() });
+}
+
+function workerKey(resolved) {
+  return resolved.kind === "demo" ? "__demo__" : resolved.path;
+}
+
+async function ensureWorker(resolved) {
+  const key = workerKey(resolved);
+  const existing = peekChatWorker(key);
+  if (existing) return existing;
+
   const L = uaiiLauncher.resolve();
-  let modelPath;
-  if (resolved.kind === "demo") {
-    modelPath = "";
-  } else if (uaiiLauncher.stageModelPath) {
-    // NOTE: stageModelPath may copy the GGUF into WSL (~/.uaii-models/) synchronously.
-    // This blocks the Node event loop for large models; the chat request will appear
-    // to hang until the copy finishes. This only runs once per model — subsequent
-    // requests use the cached worker and skip staging.
-    if (L.mode === "wsl") {
-      console.log(`[uaii-launch] Staging model into WSL filesystem (one-time copy): ${resolved.path}`);
+  const backend = effectiveBackend();
+  const device = backend === "cpu" ? "cpu" : "gpu";
+  let modelPath = "";
+
+  if (resolved.kind !== "demo") {
+    setLoadUiStatus({
+      phase: "staging",
+      model: resolved.label,
+      message:
+        L.mode === "wsl"
+          ? "Copying model into WSL for faster load…"
+          : "Preparing model path…",
+      pct: 0,
+      loaded: 0,
+      total: 0,
+      tensor: "",
+      backend,
+      device,
+      error: "",
+    });
+    if (uaiiLauncher.stageModelPathAsync) {
+      if (L.mode === "wsl") {
+        console.log(`[uaii-launch] Staging model into WSL filesystem: ${resolved.path}`);
+      }
+      modelPath = await uaiiLauncher.stageModelPathAsync(resolved.path);
+    } else if (uaiiLauncher.stageModelPath) {
+      modelPath = uaiiLauncher.stageModelPath(resolved.path);
+    } else if (L.toModelPath) {
+      modelPath = L.toModelPath(resolved.path);
+    } else {
+      modelPath = resolved.path;
     }
-    modelPath = uaiiLauncher.stageModelPath(resolved.path);
-  } else if (L.toModelPath) {
-    modelPath = L.toModelPath(resolved.path);
-  } else {
-    modelPath = resolved.path;
   }
+
+  setLoadUiStatus({
+    phase: "starting",
+    model: resolved.label,
+    message: `Starting runtime on ${device === "gpu" ? "GPU" : "CPU"} (${backend})…`,
+    backend,
+    device,
+  });
+
   return getChatWorker(key, () =>
     new ChatWorker({
       launch: L,
       modelPath,
+      modelLabel: resolved.label,
       demo: resolved.kind === "demo",
-      backend: effectiveBackend(),
+      backend,
       maxContext: Number(config.maxContext || 0),
       env: childEnv(),
     }),
   );
 }
 
-async function runLlmChat(body, { onToken = null } = {}) {
+function statusForModel(resolvedOrName) {
+  let resolved = resolvedOrName;
+  if (typeof resolvedOrName === "string" || !resolvedOrName) {
+    resolved = resolveChatModel({ model: resolvedOrName || "" });
+  }
+  if (resolved?.error) {
+    return { phase: "idle", error: resolved.error, model: resolvedOrName };
+  }
+  const key = workerKey(resolved);
+  const worker = peekChatWorker(key);
+  if (worker) return worker.status();
+  if (
+    loadUiStatus.model === resolved.label &&
+    (loadUiStatus.phase === "staging" || loadUiStatus.phase === "starting")
+  ) {
+    return { ...loadUiStatus, ready: false, busy: false, alive: false };
+  }
+  return {
+    phase: "idle",
+    model: resolved.label,
+    message: "Model not loaded yet — send a message or wait for prepare.",
+    pct: 0,
+    loaded: 0,
+    total: 0,
+    backend: effectiveBackend(),
+    device: effectiveBackend() === "cpu" ? "cpu" : "gpu",
+    ready: false,
+    busy: false,
+    alive: false,
+    updatedAt: Date.now(),
+  };
+}
+
+function startPrepare(resolved) {
+  const key = workerKey(resolved);
+  if (peekChatWorker(key)?.ready) {
+    return Promise.resolve(peekChatWorker(key));
+  }
+  if (prepareJobs.has(key)) return prepareJobs.get(key);
+  const job = (async () => {
+    const worker = await ensureWorker(resolved);
+    worker.start();
+    await worker.waitReady(600000);
+    setLoadUiStatus({
+      phase: "ready",
+      model: resolved.label,
+      message: worker.status().message,
+      pct: 100,
+      backend: worker.status().backend,
+      device: worker.status().device,
+      error: "",
+    });
+    return worker;
+  })()
+    .catch((e) => {
+      setLoadUiStatus({
+        phase: "error",
+        model: resolved.label,
+        error: e.message,
+        message: e.message,
+      });
+      throw e;
+    })
+    .finally(() => {
+      prepareJobs.delete(key);
+    });
+  prepareJobs.set(key, job);
+  return job;
+}
+
+async function runLlmChat(body, { onToken = null, onStatus = null } = {}) {
   const mode = body.mode || "gguf";
   const prompt = String(body.prompt || "").trim();
   const system = String(body.system || "").trim();
@@ -731,7 +894,11 @@ async function runLlmChat(body, { onToken = null } = {}) {
   if (!fullPrompt.trim()) return { ok: false, status: 400, error: "prompt or messages required" };
 
   try {
-    const worker = workerForModel(resolved);
+    if (onStatus) onStatus(statusForModel(resolved));
+    const worker = await ensureWorker(resolved);
+    if (onStatus) {
+      onStatus(worker.status());
+    }
     const ev = await worker.generate({
       prompt: fullPrompt,
       system: "", // already folded into fullPrompt
@@ -743,6 +910,7 @@ async function runLlmChat(body, { onToken = null } = {}) {
       seed,
       stream: Boolean(onToken || body.stream),
       onToken,
+      onStatus,
     });
     pushLog({
       kind: "ok",
@@ -790,6 +958,7 @@ app.post("/api/chat/stream", async (req, res) => {
       { ...body, stream: true },
       {
         onToken: (ev) => writeEv({ type: "token", text: ev.text || "", token: ev.token }),
+        onStatus: (st) => writeEv({ type: "status", ...st }),
       },
     );
     if (!result.ok) {
@@ -811,11 +980,38 @@ app.post("/api/chat/stream", async (req, res) => {
   }
 });
 
+app.get("/api/chat/status", (req, res) => {
+  const model = String(req.query.model || "");
+  if (!model) {
+    return res.json({
+      ok: true,
+      workers: listChatWorkers(),
+      staging: loadUiStatus,
+    });
+  }
+  const resolved = resolveChatModel({ model });
+  if (resolved.error) return res.status(404).json({ ok: false, ...resolved });
+  res.json({ ok: true, status: statusForModel(resolved) });
+});
+
+app.post("/api/chat/prepare", async (req, res) => {
+  const resolved = resolveChatModel(req.body || {});
+  if (resolved.error) return res.status(404).json(resolved);
+  // Kick off load in the background so the UI can poll /api/chat/status.
+  void startPrepare(resolved).catch(() => {});
+  res.json({
+    ok: true,
+    started: true,
+    model: resolved.label,
+    status: statusForModel(resolved),
+  });
+});
+
 app.post("/api/chat/reset", async (req, res) => {
   const resolved = resolveChatModel(req.body || {});
   if (resolved.error) return res.status(404).json(resolved);
   try {
-    const worker = workerForModel(resolved);
+    const worker = await ensureWorker(resolved);
     await worker.reset();
     res.json({ ok: true, model: resolved.label });
   } catch (e) {

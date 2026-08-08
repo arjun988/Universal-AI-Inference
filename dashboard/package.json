@@ -6,10 +6,10 @@
   "description": "UAII Operator UI — local/self-host console over the uaii CLI (not a consumer installer)",
   "scripts": {
     "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:web\"",
-    "dev:server": "node server/index.mjs",
+    "dev:server": "cross-env UAII_USE_WSL=1 node server/index.mjs",
     "dev:web": "npm run dev --prefix web",
     "build": "npm run build --prefix web",
-    "start": "cross-env NODE_ENV=production node server/index.mjs",
+    "start": "cross-env NODE_ENV=production UAII_USE_WSL=1 node server/index.mjs",
     "start:local": "node scripts/run-local.mjs",
     "install:all": "npm install && npm install --prefix web"
   },

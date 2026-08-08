@@ -66,6 +66,11 @@ struct SessionOptions {
   bool keep_quantized_weights = true;
   /// Max context length for generate / KV (0 = from graph metadata or unlimited).
   std::int64_t max_context = 0;
+  /// Optional progress callback while weights are loaded onto the device/host.
+  /// Arguments: loaded count (1-based after each tensor), total weight tensors, tensor name.
+  using LoadProgressFn =
+      std::function<void(std::size_t loaded, std::size_t total, const std::string& tensor_name)>;
+  LoadProgressFn on_load_progress;
 };
 
 struct OptimizeReport {

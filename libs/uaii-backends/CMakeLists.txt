@@ -20,9 +20,10 @@ if(UAII_WITH_CUDA)
   if(CMAKE_CUDA_COMPILER)
     # Required by CMake 3.18+ when enabling CUDA (empty arch list fails generate).
     if(NOT CMAKE_CUDA_ARCHITECTURES)
-      # Portable defaults for CI / toolkit builds without a local GPU.
+      # Turing→Ada defaults. For RTX 50 / Blackwell (sm_120) use CUDA toolkit
+      # >= 12.8 and pass -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89;120".
       set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89" CACHE STRING
-          "CUDA architectures for UAII" FORCE)
+          "CUDA architectures for UAII")
     endif()
     enable_language(CUDA)
   else()
@@ -38,7 +39,10 @@ if(UAII_WITH_CUDA)
   target_compile_definitions(uaii_backends PUBLIC UAII_WITH_CUDA=1)
   target_link_libraries(uaii_backends PUBLIC CUDA::cudart CUDA::cublas CUDA::cublasLt)
   set_target_properties(uaii_backends PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
+    # Keep device code self-contained in the static lib so final link of `uaii`
+    # does not need a separate CUDA device-link step.
+    CUDA_SEPARABLE_COMPILATION OFF
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON
     CUDA_STANDARD 17
     CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
   )

@@ -207,6 +207,7 @@ export default function App() {
   const [theme, setTheme] = useState(() => readTheme());
   const [chatConfigOpen, setChatConfigOpen] = useState(false);
   const [backends, setBackends] = useState(null);
+  const [loadStatus, setLoadStatus] = useState(null);
   const chatEndRef = useRef(null);
 
   const SUGGESTIONS = [
@@ -226,7 +227,72 @@ export default function App() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, streamPreview, page]);
+  }, [messages, streamPreview, page, loadStatus?.pct, loadStatus?.phase]);
+
+  const refreshLoadStatus = useCallback(async (modelName) => {
+    const name = modelName || selectedModel;
+    if (!name) {
+      setLoadStatus(null);
+      return null;
+    }
+    try {
+      const data = await api(`/api/chat/status?model=${encodeURIComponent(name)}`);
+      const st = data.status || null;
+      setLoadStatus(st);
+      return st;
+    } catch {
+      return null;
+    }
+  }, [selectedModel]);
+
+  // Warm-load the selected GGUF and poll progress so the user sees why chat waits.
+  useEffect(() => {
+    if (page !== "chat" || chatMode !== "gguf" || !selectedModel || !authorized) {
+      return undefined;
+    }
+    let cancelled = false;
+    let timer = null;
+
+    (async () => {
+      try {
+        await api("/api/chat/prepare", {
+          method: "POST",
+          body: JSON.stringify({ model: selectedModel }),
+        });
+      } catch {
+        /* prepare is best-effort */
+      }
+      if (cancelled) return;
+
+      const tick = async () => {
+        if (cancelled) return;
+        const st = await refreshLoadStatus(selectedModel);
+        if (cancelled) return;
+        const phase = st?.phase;
+        const active =
+          phase === "staging" ||
+          phase === "starting" ||
+          phase === "loading" ||
+          phase === "generating";
+        timer = setTimeout(tick, active ? 400 : 2500);
+      };
+      tick();
+    })();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [page, chatMode, selectedModel, authorized, refreshLoadStatus]);
+
+  // While a request is in flight, poll load/generate status more aggressively.
+  useEffect(() => {
+    if (!busy || chatMode !== "gguf" || !selectedModel) return undefined;
+    const id = setInterval(() => {
+      refreshLoadStatus(selectedModel);
+    }, 400);
+    return () => clearInterval(id);
+  }, [busy, chatMode, selectedModel, refreshLoadStatus]);
 
   function toggleTheme() {
     setTheme((t) => (t === "dark" ? "light" : "dark"));
@@ -418,7 +484,9 @@ export default function App() {
             } catch {
               continue;
             }
-            if (ev.type === "token") {
+            if (ev.type === "status") {
+              setLoadStatus(ev);
+            } else if (ev.type === "token") {
               full += ev.text || "";
               setStreamPreview(full);
             } else if (ev.type === "done") {
@@ -621,6 +689,26 @@ export default function App() {
   const ggufModels = models.filter((m) => m.kind === "gguf");
   const ggufCount = ggufModels.length;
   const hasChatModel = chatMode !== "gguf" || Boolean(selectedModel && ggufCount);
+  const loadPhase = loadStatus?.phase || "idle";
+  const modelLoading =
+    chatMode === "gguf" &&
+    (loadPhase === "staging" ||
+      loadPhase === "starting" ||
+      loadPhase === "loading" ||
+      (busy && loadPhase !== "generating" && loadPhase !== "ready" && !streamPreview));
+  const modelGenerating = busy && (loadPhase === "generating" || Boolean(streamPreview));
+  const loadPct = Math.max(0, Math.min(100, Number(loadStatus?.pct) || 0));
+  const loadDeviceLabel =
+    loadStatus?.device === "gpu"
+      ? `GPU (${(loadStatus?.backend || "gpu").toUpperCase()})`
+      : `CPU (${(loadStatus?.backend || health?.effectiveBackend || "cpu").toUpperCase()})`;
+  const loadBannerText =
+    loadStatus?.message ||
+    (modelLoading
+      ? `Loading model onto ${loadDeviceLabel}… replies wait until weights are ready.`
+      : modelGenerating
+        ? "Generating…"
+        : "");
 
   return (
     <div className="app">
@@ -702,7 +790,16 @@ export default function App() {
             <span className="pill">
               {health?.bind}:{health?.port}
             </span>
-            {busy ? <span className="pill">busy</span> : null}
+            {modelLoading ? (
+              <span className="pill load">
+                Loading {loadPct > 0 ? `${loadPct}%` : "…"} on {loadStatus?.device === "gpu" ? "GPU" : "CPU"}
+              </span>
+            ) : null}
+            {modelGenerating ? <span className="pill">generating</span> : null}
+            {busy && !modelLoading && !modelGenerating ? <span className="pill">busy</span> : null}
+            {loadPhase === "ready" && !busy ? (
+              <span className="pill ok">ready · {loadStatus?.device === "gpu" ? "GPU" : "CPU"}</span>
+            ) : null}
           </div>
         </header>
 
@@ -875,6 +972,58 @@ export default function App() {
                 </div>
               </div>
 
+              {(modelLoading || (busy && !streamPreview) || loadPhase === "error") && (
+                <div
+                  className={`load-banner ${loadPhase === "error" ? "error" : ""}`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  <div className="load-banner-top">
+                    <div className="load-spinner" aria-hidden="true" />
+                    <div className="load-banner-copy">
+                      <strong>
+                        {loadPhase === "error"
+                          ? "Model load failed"
+                          : modelGenerating
+                            ? "Generating reply"
+                            : `Loading model onto ${loadDeviceLabel}`}
+                      </strong>
+                      <div className="load-banner-msg">
+                        {loadPhase === "error"
+                          ? loadStatus?.error || loadBannerText
+                          : loadBannerText ||
+                            "Your message is queued — answers start after weights finish loading."}
+                      </div>
+                      {loadStatus?.tensor && loadPhase === "loading" ? (
+                        <div className="load-banner-tensor">{loadStatus.tensor}</div>
+                      ) : null}
+                    </div>
+                    <div className="load-banner-pct">
+                      {loadPhase === "loading" || loadPhase === "ready"
+                        ? `${loadPct}%`
+                        : loadPhase === "staging"
+                          ? "copy"
+                          : "…"}
+                    </div>
+                  </div>
+                  <div className="load-bar" aria-hidden="true">
+                    <div
+                      className={`load-bar-fill ${loadPhase === "loading" || loadPhase === "ready" ? "" : "indeterminate"}`}
+                      style={
+                        loadPhase === "loading" || loadPhase === "ready"
+                          ? { width: `${loadPct}%` }
+                          : undefined
+                      }
+                    />
+                  </div>
+                  {loadStatus?.total > 0 && loadPhase === "loading" ? (
+                    <div className="load-banner-meta">
+                      {loadStatus.loaded}/{loadStatus.total} weight tensors
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
               {chatConfigOpen && (
                 <div className="chat-config">
                   <div className="chat-config-grid">
@@ -1023,6 +1172,42 @@ export default function App() {
                           </div>
                         </div>
                       ) : null}
+                      {busy && !streamPreview ? (
+                        <div className="msg assistant loading-msg">
+                          <div className="msg-avatar">UA</div>
+                          <div className="msg-body">
+                            <div className="msg-role">
+                              <span className="live" />
+                              {modelLoading ? "Loading model" : "Assistant"}
+                            </div>
+                            <div className="load-inline">
+                              <div className="load-spinner sm" aria-hidden="true" />
+                              <div>
+                                <div>
+                                  {modelLoading
+                                    ? `Waiting for weights on ${loadDeviceLabel}${loadPct > 0 ? ` · ${loadPct}%` : ""}`
+                                    : "Thinking…"}
+                                </div>
+                                {modelLoading ? (
+                                  <div className="load-inline-hint">
+                                    Chat cannot answer until the model is fully loaded.
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                            {modelLoading ? (
+                              <div className="load-bar inline" aria-hidden="true">
+                                <div
+                                  className={`load-bar-fill ${loadPhase === "loading" ? "" : "indeterminate"}`}
+                                  style={
+                                    loadPhase === "loading" ? { width: `${loadPct}%` } : undefined
+                                  }
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
                       <div ref={chatEndRef} />
                     </div>
                   )}
@@ -1073,7 +1258,13 @@ export default function App() {
                         disabled={busy || !prompt.trim() || (chatMode === "gguf" && !hasChatModel)}
                         onClick={sendChat}
                       >
-                        {busy ? "Running…" : "Run"}
+                        {modelLoading
+                          ? loadPct > 0
+                            ? `Loading ${loadPct}%`
+                            : "Loading…"
+                          : busy
+                            ? "Running…"
+                            : "Run"}
                       </button>
                     </div>
                   </div>

@@ -15,11 +15,12 @@ Error DeviceScheduler::schedule_plan(const ir::ExecutionPlan& plan,
     ScheduleDecision d;
     d.node_id = op.node_id;
     d.priority = priority--;
-    const bool attn = op.op_name == "Attention" || op.op_name == "RoPE";
+    const bool host_op = op.op_name == "Attention" || op.op_name == "RoPE" ||
+                         op.op_name == "Embedding";
     if (preferred_ == DeviceType::Cpu) {
       d.device = DeviceType::Cpu;
       d.reason = "cpu";
-    } else if (attn && attention_host_fallback_) {
+    } else if (host_op && attention_host_fallback_) {
       d.device = DeviceType::Cpu;
       d.reason = "attention-host-fallback";
     } else {

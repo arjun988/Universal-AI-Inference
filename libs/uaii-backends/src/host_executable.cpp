@@ -140,7 +140,27 @@ Error HostExecutableBackend::dispatch_on_host_path(
     const std::vector<kernels::TensorView>& inputs,
     std::vector<kernels::TensorView>* outputs,
     const std::vector<ir::Attribute>& attrs) {
+  // Only stage through D2H/H2D when tensors actually live on the device.
+  // Session currently allocates host RAM even for CUDA — staging host pointers
+  // as device memory yields cudaMemcpy "invalid argument".
+  bool need_stage = false;
   if (device_type_ != DeviceType::Cpu && native_available_) {
+    for (const auto& t : inputs) {
+      if (t.data != nullptr && t.nbytes > 0 && pointer_on_device(t.data)) {
+        need_stage = true;
+        break;
+      }
+    }
+    if (!need_stage && outputs != nullptr) {
+      for (const auto& t : *outputs) {
+        if (t.data != nullptr && t.nbytes > 0 && pointer_on_device(t.data)) {
+          need_stage = true;
+          break;
+        }
+      }
+    }
+  }
+  if (need_stage) {
     return dispatch_via_host_staging(op_name, op_version, inputs, outputs, attrs);
   }
   return dispatch(op_name, op_version, inputs, outputs, attrs);
@@ -162,6 +182,10 @@ Error HostExecutableBackend::dispatch_via_host_staging(
     if (inputs[i].data == nullptr || inputs[i].nbytes == 0) {
       continue;
     }
+    if (!pointer_on_device(inputs[i].data)) {
+      // Already host-resident — run in place.
+      continue;
+    }
     in_storage[i].resize(inputs[i].nbytes);
     Error err = copy_d2h(inputs[i].data, in_storage[i].data(), inputs[i].nbytes);
     if (!err.ok()) {
@@ -171,11 +195,16 @@ Error HostExecutableBackend::dispatch_via_host_staging(
   }
 
   std::vector<std::vector<std::uint8_t>> out_storage(outputs->size());
+  std::vector<bool> out_on_device(outputs->size(), false);
   std::vector<kernels::TensorView> host_outputs = *outputs;
   for (std::size_t i = 0; i < outputs->size(); ++i) {
     if ((*outputs)[i].data == nullptr || (*outputs)[i].nbytes == 0) {
       continue;
     }
+    if (!pointer_on_device((*outputs)[i].data)) {
+      continue;
+    }
+    out_on_device[i] = true;
     out_storage[i].resize((*outputs)[i].nbytes);
     // Seed with device contents when kernels may read-modify-write.
     Error err = copy_d2h((*outputs)[i].data, out_storage[i].data(), (*outputs)[i].nbytes);
@@ -192,7 +221,7 @@ Error HostExecutableBackend::dispatch_via_host_staging(
   }
 
   for (std::size_t i = 0; i < outputs->size(); ++i) {
-    if ((*outputs)[i].data == nullptr || (*outputs)[i].nbytes == 0) {
+    if (!out_on_device[i] || (*outputs)[i].data == nullptr || (*outputs)[i].nbytes == 0) {
       continue;
     }
     err = copy_h2d(out_storage[i].data(), (*outputs)[i].data, (*outputs)[i].nbytes);

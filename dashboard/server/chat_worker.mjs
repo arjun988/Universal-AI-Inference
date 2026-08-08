@@ -11,6 +11,7 @@ export class ChatWorker {
     launch,
     uaiiBin,
     modelPath,
+    modelLabel = "",
     demo = false,
     backend = "cpu",
     maxContext = 0,
@@ -18,6 +19,7 @@ export class ChatWorker {
   }) {
     this.launch = launch || { cmd: uaiiBin || "uaii", prefix: [], mode: "native" };
     this.modelPath = modelPath || "";
+    this.modelLabel = modelLabel || modelPath || (demo ? "__demo__" : "");
     this.demo = demo;
     this.backend = backend;
     this.maxContext = maxContext;
@@ -26,14 +28,70 @@ export class ChatWorker {
     this.ready = false;
     this.busy = false;
     this.pending = new Map();
+    this._listeners = new Set();
+    this._status = {
+      phase: "idle", // idle | starting | loading | ready | generating | error
+      model: this.modelLabel,
+      modelPath: this.modelPath,
+      backend: this.backend,
+      device: this.backend === "cpu" ? "cpu" : "gpu",
+      loaded: 0,
+      total: 0,
+      pct: 0,
+      tensor: "",
+      message: "",
+      error: "",
+      startedAt: null,
+      readyAt: null,
+      updatedAt: Date.now(),
+    };
   }
 
   key() {
     return this.demo ? "__demo__" : this.modelPath;
   }
 
+  status() {
+    return { ...this._status, ready: this.ready, busy: this.busy, alive: Boolean(this.child) };
+  }
+
+  onStatus(fn) {
+    this._listeners.add(fn);
+    return () => this._listeners.delete(fn);
+  }
+
+  #setStatus(patch) {
+    this._status = {
+      ...this._status,
+      ...patch,
+      updatedAt: Date.now(),
+    };
+    for (const fn of this._listeners) {
+      try {
+        fn(this.status());
+      } catch {
+        /* ignore listener errors */
+      }
+    }
+  }
+
   start() {
     if (this.child) return;
+    this.ready = false;
+    this.#setStatus({
+      phase: "starting",
+      message: `Starting runtime on ${this.backend}…`,
+      error: "",
+      loaded: 0,
+      total: 0,
+      pct: 0,
+      tensor: "",
+      startedAt: Date.now(),
+      readyAt: null,
+      backend: this.backend,
+      device: this.backend === "cpu" ? "cpu" : "gpu",
+    });
+
     const uaiiArgs = ["chat", "--jsonl", "--backend", this.backend || "cpu", "--log-level", "error"];
     if (this.demo) uaiiArgs.push("--demo");
     else uaiiArgs.push("--model", this.modelPath);
@@ -60,6 +118,11 @@ export class ChatWorker {
     });
     this.child.on("error", (err) => {
       this._lastError = err.message;
+      this.#setStatus({
+        phase: "error",
+        error: err.message,
+        message: `Failed to start: ${err.message}`,
+      });
       this.#failAll(err.message);
       this.child = null;
       this.ready = false;
@@ -72,6 +135,11 @@ export class ChatWorker {
       const msg = detail
         ? `chat worker exited (${code}): ${detail.slice(0, 400)}`
         : `chat worker exited (${code})`;
+      if (!this.ready) {
+        this.#setStatus({ phase: "error", error: msg, message: msg });
+      } else {
+        this.#setStatus({ phase: "idle", message: "Worker stopped", readyAt: null });
+      }
       this.#failAll(msg);
       this.child = null;
       this.ready = false;
@@ -93,10 +161,14 @@ export class ChatWorker {
     }
     this.child = null;
     this.ready = false;
+    this.#setStatus({ phase: "idle", message: "Stopped", pct: 0, loaded: 0, total: 0 });
   }
 
   #failAll(msg) {
-    for (const [, p] of this.pending) p.reject(new Error(msg));
+    for (const [, p] of this.pending) {
+      if (p._timer) clearTimeout(p._timer);
+      p.reject(new Error(msg));
+    }
     this.pending.clear();
   }
 
@@ -107,21 +179,69 @@ export class ChatWorker {
     } catch {
       return;
     }
+    if (ev.event === "load_start") {
+      this.#setStatus({
+        phase: "loading",
+        message: `Loading model onto ${ev.device === "gpu" ? "GPU" : "CPU"} (${ev.backend || this.backend})…`,
+        backend: ev.backend || this.backend,
+        device: ev.device || (this.backend === "cpu" ? "cpu" : "gpu"),
+        pct: 0,
+        loaded: 0,
+        total: 0,
+        tensor: "",
+      });
+      return;
+    }
+    if (ev.event === "load_progress") {
+      const loaded = Number(ev.loaded) || 0;
+      const total = Number(ev.total) || 0;
+      const pct = Number.isFinite(Number(ev.pct))
+        ? Number(ev.pct)
+        : total > 0
+          ? Math.round((loaded * 100) / total)
+          : 0;
+      this.#setStatus({
+        phase: "loading",
+        loaded,
+        total,
+        pct,
+        tensor: ev.tensor || "",
+        backend: ev.backend || this.backend,
+        device: ev.device || (this.backend === "cpu" ? "cpu" : "gpu"),
+        message:
+          total > 0
+            ? `Loading weights onto ${ev.device === "gpu" ? "GPU" : "CPU"} — ${pct}% (${loaded}/${total})`
+            : `Loading weights onto ${ev.device === "gpu" ? "GPU" : "CPU"}…`,
+      });
+      return;
+    }
     if (ev.event === "ready") {
       this.ready = true;
+      this.#setStatus({
+        phase: "ready",
+        pct: 100,
+        message: `Model ready on ${ev.device === "gpu" ? "GPU" : "CPU"} (${ev.backend || this.backend})`,
+        backend: ev.backend || this.backend,
+        device: ev.device || (this.backend === "cpu" ? "cpu" : "gpu"),
+        readyAt: Date.now(),
+        error: "",
+      });
       return;
     }
     if (ev.event === "error" && !ev.id) {
-      // Startup / load failure before any request id — fail all pending.
       this._lastError = ev.error || "uaii chat error";
       console.error("[uaii-chat]", this._lastError);
+      this.#setStatus({
+        phase: "error",
+        error: this._lastError,
+        message: this._lastError,
+      });
       this.#failAll(this._lastError);
       return;
     }
     const id = ev.id;
     const p = id ? this.pending.get(id) : null;
     if (!p) {
-      // Unknown id — log but don't crash; may be a late token from a cancelled request.
       if (ev.event === "error") {
         console.error("[uaii-chat] unmatched error event:", ev.error || ev);
       }
@@ -135,6 +255,7 @@ export class ChatWorker {
       this.pending.delete(id);
       this.busy = false;
       if (p._timer) clearTimeout(p._timer);
+      this.#setStatus({ phase: "ready", message: "Model ready" });
       p.resolve(ev);
       return;
     }
@@ -142,6 +263,7 @@ export class ChatWorker {
       this.pending.delete(id);
       this.busy = false;
       if (p._timer) clearTimeout(p._timer);
+      this.#setStatus({ phase: "ready", message: "Model ready (last generate failed)" });
       p.reject(new Error(ev.error || "generate failed"));
       return;
     }
@@ -149,11 +271,12 @@ export class ChatWorker {
       this.pending.delete(id);
       this.busy = false;
       if (p._timer) clearTimeout(p._timer);
+      this.#setStatus({ phase: "ready", message: "Session reset" });
       p.resolve(ev);
     }
   }
 
-  async waitReady(timeoutMs = 180000) {
+  async waitReady(timeoutMs = 600000) {
     this.start();
     const t0 = Date.now();
     while (!this.ready) {
@@ -168,10 +291,11 @@ export class ChatWorker {
       const elapsed = Date.now() - t0;
       if (elapsed > timeoutMs) {
         const detail = this._lastError || (this._stderr && this._stderr.trim().slice(0, 400));
+        const pct = this._status.pct || 0;
         throw new Error(
           detail
             ? `chat worker ready timeout (${timeoutMs}ms): ${detail}`
-            : `chat worker ready timeout after ${timeoutMs}ms — model may still be loading; check Logs`,
+            : `chat worker ready timeout after ${timeoutMs}ms — still loading (${pct}%). Check Logs.`,
         );
       }
       await new Promise((r) => setTimeout(r, 50));
@@ -189,57 +313,64 @@ export class ChatWorker {
     seed,
     stream = false,
     onToken = null,
+    onStatus = null,
   }) {
-    await this.waitReady();
-    // Wait for any in-flight request, but cap at 5 minutes to avoid deadlock.
-    const busyDeadline = Date.now() + 300000;
-    while (this.busy) {
-      if (Date.now() > busyDeadline) throw new Error("chat worker busy timeout — previous request stalled");
-      await new Promise((r) => setTimeout(r, 25));
+    let unsub = null;
+    if (onStatus) {
+      unsub = this.onStatus(onStatus);
+      onStatus(this.status());
     }
-    this.busy = true;
-    const id = randomUUID();
-    const req = {
-      cmd: "generate",
-      id,
-      prompt,
-      system,
-      max_new_tokens: maxNewTokens,
-      stream: Boolean(stream || onToken),
-    };
-    if (temperature != null && Number.isFinite(Number(temperature))) {
-      req.temperature = Number(temperature);
-    }
-    if (topP != null && Number.isFinite(Number(topP))) req.top_p = Number(topP);
-    if (topK != null && Number.isFinite(Number(topK))) req.top_k = Number(topK);
-    if (repetitionPenalty != null && Number.isFinite(Number(repetitionPenalty))) {
-      req.repetition_penalty = Number(repetitionPenalty);
-    }
-    if (seed != null && seed !== "" && Number.isFinite(Number(seed))) {
-      req.seed = Number(seed);
-    }
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, onToken });
-      // Safety timeout: if the C++ side stalls and never emits done/error, reject
-      // after 10 minutes so the UI unblocks.
-      const timer = setTimeout(() => {
-        if (this.pending.has(id)) {
+    try {
+      await this.waitReady();
+      const busyDeadline = Date.now() + 300000;
+      while (this.busy) {
+        if (Date.now() > busyDeadline) throw new Error("chat worker busy timeout — previous request stalled");
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      this.busy = true;
+      this.#setStatus({ phase: "generating", message: "Generating…" });
+      const id = randomUUID();
+      const req = {
+        cmd: "generate",
+        id,
+        prompt,
+        system,
+        max_new_tokens: maxNewTokens,
+        stream: Boolean(stream || onToken),
+      };
+      if (temperature != null && Number.isFinite(Number(temperature))) {
+        req.temperature = Number(temperature);
+      }
+      if (topP != null && Number.isFinite(Number(topP))) req.top_p = Number(topP);
+      if (topK != null && Number.isFinite(Number(topK))) req.top_k = Number(topK);
+      if (repetitionPenalty != null && Number.isFinite(Number(repetitionPenalty))) {
+        req.repetition_penalty = Number(repetitionPenalty);
+      }
+      if (seed != null && seed !== "" && Number.isFinite(Number(seed))) {
+        req.seed = Number(seed);
+      }
+      return await new Promise((resolve, reject) => {
+        this.pending.set(id, { resolve, reject, onToken });
+        const timer = setTimeout(() => {
+          if (this.pending.has(id)) {
+            this.pending.delete(id);
+            this.busy = false;
+            reject(new Error("generate request timed out after 10 minutes — check Logs"));
+          }
+        }, 600000);
+        try {
+          this.child.stdin.write(JSON.stringify(req) + "\n");
+        } catch (e) {
+          clearTimeout(timer);
           this.pending.delete(id);
           this.busy = false;
-          reject(new Error("generate request timed out after 10 minutes — check Logs"));
+          reject(e);
         }
-      }, 600000);
-      try {
-        this.child.stdin.write(JSON.stringify(req) + "\n");
-      } catch (e) {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        this.busy = false;
-        reject(e);
-      }
-      // Attach timer so we can clear it in #onLine when done/error arrives
-      this.pending.get(id) && (this.pending.get(id)._timer = timer);
-    });
+        this.pending.get(id) && (this.pending.get(id)._timer = timer);
+      });
+    } finally {
+      if (unsub) unsub();
+    }
   }
 
   async reset() {
@@ -268,6 +399,22 @@ export function getChatWorker(key, factory) {
     workers.set(key, w);
   }
   return w;
+}
+
+export function peekChatWorker(key) {
+  return workers.get(key) || null;
+}
+
+export function listChatWorkers() {
+  return [...workers.values()].map((w) => w.status());
+}
+
+export function findChatWorkerStatus(predicate) {
+  for (const w of workers.values()) {
+    const s = w.status();
+    if (predicate(s, w)) return s;
+  }
+  return null;
 }
 
 export function stopAllChatWorkers() {
