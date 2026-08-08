@@ -206,6 +206,7 @@ export default function App() {
   const [streamPreview, setStreamPreview] = useState("");
   const [theme, setTheme] = useState(() => readTheme());
   const [chatConfigOpen, setChatConfigOpen] = useState(false);
+  const [backends, setBackends] = useState(null);
   const chatEndRef = useRef(null);
 
   const SUGGESTIONS = [
@@ -266,6 +267,14 @@ export default function App() {
     setSettings(await api("/api/settings"));
   }, []);
 
+  const refreshBackends = useCallback(async () => {
+    try {
+      setBackends(await api("/api/backends"));
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       await refreshHealth();
@@ -276,13 +285,14 @@ export default function App() {
             refreshModels().catch(() => {}),
             refreshLogs().catch(() => {}),
             refreshSettings().catch(() => {}),
+            refreshBackends().catch(() => {}),
           ]);
         }
       } catch (e) {
         setError(e.message);
       }
     })();
-  }, [refreshHealth, refreshAuth, refreshModels, refreshLogs, refreshSettings]);
+  }, [refreshHealth, refreshAuth, refreshModels, refreshLogs, refreshSettings, refreshBackends]);
 
   async function doLogin(e) {
     e?.preventDefault();
@@ -353,6 +363,7 @@ export default function App() {
     const userMsg = { role: "user", content: prompt };
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
+    setPrompt("");
 
     const payload = {
       mode: chatMode,
@@ -551,6 +562,7 @@ export default function App() {
       await api("/api/settings", { method: "PUT", body: JSON.stringify(body) });
       if (tok) setToken(String(tok));
       await refreshSettings();
+      await refreshBackends();
       await refreshHealth();
       await refreshAuth();
     } catch (e) {
@@ -683,6 +695,10 @@ export default function App() {
               {health?.uaiiBinExists ? "uaii ready" : "uaii missing"}
             </span>
             {health?.uaiiLaunchMode ? <span className="pill">{health.uaiiLaunchMode}</span> : null}
+            <span className={`pill ${health?.effectiveBackend && health.effectiveBackend !== "cpu" ? "ok" : ""}`}>
+              {health?.effectiveBackend && health.effectiveBackend !== "cpu" ? "⚡ " : ""}
+              {health?.effectiveBackend || health?.backend || "cpu"}
+            </span>
             <span className="pill">
               {health?.bind}:{health?.port}
             </span>
@@ -705,6 +721,19 @@ export default function App() {
 
           {page === "chat" && (
             <div className="chat-stage">
+              {/* GPU acceleration notice — shown once when a GPU backend is active */}
+              {health?.effectiveBackend && health.effectiveBackend !== "cpu" && (
+                <div className="alert" role="status" style={{ marginBottom: "0.5rem", borderColor: "var(--accent, #4ade80)", background: "color-mix(in srgb, var(--accent, #4ade80) 8%, transparent)" }}>
+                  <div>
+                    <strong>⚡ GPU acceleration active — {health.effectiveBackend.toUpperCase()}</strong>
+                    <div style={{ fontSize: "0.82rem", marginTop: "0.2rem", opacity: 0.8 }}>
+                      {health.backendDetails
+                        ? health.backendDetails.slice(0, 120)
+                        : `Inference is running on ${health.effectiveBackend}. Token generation will be significantly faster than CPU.`}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="chat-bar">
                 <div className="chat-bar-left">
                   <div className="seg seg-tight" role="group" aria-label="Primary mode">
@@ -1339,12 +1368,35 @@ export default function App() {
                     </div>
                     <div className="field">
                       <label>Backend</label>
-                      <select name="backend" defaultValue={settings.backend || "cpu"}>
-                        <option value="cpu">cpu</option>
-                        <option value="cuda">cuda</option>
-                        <option value="metal">metal</option>
-                        <option value="vulkan">vulkan</option>
+                      <select name="backend" defaultValue={settings.backend || "auto"}>
+                        {backends?.available
+                          ? backends.available.map((b) => (
+                              <option key={b.name} value={b.name}>
+                                {b.label}
+                                {backends.effective === b.name && b.name !== "auto"
+                                  ? " ✓ active"
+                                  : ""}
+                              </option>
+                            ))
+                          : (
+                            <>
+                              <option value="auto">Auto-detect GPU</option>
+                              <option value="cpu">CPU</option>
+                              <option value="cuda">CUDA (NVIDIA)</option>
+                              <option value="rocm">ROCm (AMD)</option>
+                              <option value="metal">Metal (Apple)</option>
+                              <option value="vulkan">Vulkan (cross-platform)</option>
+                            </>
+                          )}
                       </select>
+                      {(settings?.effectiveBackend || backends?.effective) && (
+                        <p style={{ margin: "0.3rem 0 0", fontSize: "0.78rem", opacity: 0.7 }}>
+                          Active: <strong>{settings?.effectiveBackend || backends?.effective}</strong>
+                          {(settings?.backendDetails || backends?.details)
+                            ? ` — ${(settings?.backendDetails || backends?.details).slice(0, 100)}`
+                            : ""}
+                        </p>
+                      )}
                     </div>
                     <div className="field">
                       <label>UAII_GEMM</label>

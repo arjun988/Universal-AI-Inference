@@ -241,11 +241,23 @@ ValidationResult validate_graph(const Graph& graph,
             const std::int64_t b1 = tb ? b->shape.dims[0] : b->shape.dims[1];
             if (a1 != b0) {
               add_issue(&result, ValidationSeverity::Error, "shape.matmul",
-                        "MatMul inner dims mismatch", n.id);
+                        "MatMul inner dims mismatch: A" +
+                            std::to_string(a->shape.dims[0]) + "x" + std::to_string(a->shape.dims[1]) +
+                            (ta?" transposed":"") + " B" +
+                            std::to_string(b->shape.dims[0]) + "x" + std::to_string(b->shape.dims[1]) +
+                            (tb?" transposed":""), n.id);
             }
             if (c->shape.dims[0] != a0 || c->shape.dims[1] != b1) {
               add_issue(&result, ValidationSeverity::Error, "shape.matmul_out",
-                        "MatMul output shape mismatch", n.id);
+                        "MatMul output shape mismatch: expected " +
+                            std::to_string(a0) + "x" + std::to_string(b1) +
+                            " got " + std::to_string(c->shape.dims[0]) + "x" +
+                            std::to_string(c->shape.dims[1]) +
+                            " (A=[" + std::to_string(a->shape.dims[0]) + "," + std::to_string(a->shape.dims[1]) + "]" +
+                            (ta?" ta":"") + " B=[" + std::to_string(b->shape.dims[0]) + "," +
+                            std::to_string(b->shape.dims[1]) + "]" + (tb?" tb":"") + ")" +
+                            " node='" + n.name + "'",
+                        n.id);
             }
           }
         }

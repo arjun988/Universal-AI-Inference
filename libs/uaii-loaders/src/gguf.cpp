@@ -3,6 +3,8 @@
 #include "binary_io.hpp"
 #include "uaii/core/log.hpp"
 #include "uaii/ir/graph.hpp"
+#include "uaii/quant/formats.hpp"
+#include "uaii/quant/gguf_dequant.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -522,11 +524,29 @@ Error gguf_load_tensor_f32(const GgufFile& file,
     err = r.read_bytes(tmp.data(), n);
     if (!err.ok()) return err;
     for (std::size_t i = 0; i < n; ++i) (*out)[i] = static_cast<float>(tmp[i]);
+  } else if (info->type == GgufType::Q4_1 || info->type == GgufType::Q5_0 ||
+             info->type == GgufType::Q5_1 || info->type == GgufType::Q2_K ||
+             info->type == GgufType::Q3_K || info->type == GgufType::Q4_K ||
+             info->type == GgufType::Q5_K || info->type == GgufType::Q6_K) {
+    // K-quants / extra block quants: load packed bytes then dequant to f32.
+    const auto qf = gguf_type_to_quant(info->type);
+    if (!quant::supports_gguf_dequant(qf)) {
+      return Error::make(ErrorCode::NotImplemented,
+                         "no dequant for GGUF dtype: " + std::string(to_string(info->type)));
+    }
+    std::vector<std::uint8_t> packed;
+    Shape shape;
+    GgufType ty = info->type;
+    err = gguf_load_tensor_raw(file, tensor_name, &packed, &shape, &ty);
+    if (!err.ok()) return err;
+    err = quant::dequant_gguf_row(qf, packed.data(), static_cast<std::int64_t>(n),
+                                  out->data());
+    if (!err.ok()) return err;
   } else {
     return Error::make(ErrorCode::NotImplemented,
                        "unsupported GGUF dtype for f32 load: " +
                            std::string(to_string(info->type)) +
-                           " (supported: F32/F16/Q4_0/Q8_0/I8)");
+                           " (supported: F32/F16/Q4_0/Q4_1/Q5_*/Q8_0/Q*_K/I8)");
   }
 
   if (out_shape) {
@@ -828,8 +848,13 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     std::int64_t n_kv_heads = kv_i64_arch(file, arch, "attention.head_count_kv", n_heads);
     if (n_kv_heads <= 0) n_kv_heads = n_heads;
     const std::int64_t emb_len = kv_i64_arch(file, arch, "embedding_length", dim);
-    const std::int64_t head_dim =
-        n_heads > 0 ? (emb_len > 0 ? emb_len : dim) / n_heads : dim;
+    // Prefer explicit key/value length when present (GQA); else emb/n_heads.
+    std::int64_t head_dim = kv_i64_arch(file, arch, "attention.key_length", 0);
+    if (head_dim <= 0) {
+      head_dim = n_heads > 0 ? (emb_len > 0 ? emb_len : dim) / n_heads : dim;
+    }
+    const std::int64_t q_dim = n_heads * head_dim;
+    const std::int64_t kv_dim = n_kv_heads * head_dim;
     const float rope_theta = kv_float_arch(file, arch, "rope.freq_base", 10000.f);
     const float rms_eps =
         kv_float_arch(file, arch, "attention.layer_norm_rms_epsilon", 1e-5f);
@@ -958,9 +983,9 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       b.add_node(pfx + "rms1", "RMSNorm", "1", {features, attn_norm}, {n1},
                  {ir::make_float_attr("eps", rms_eps)});
 
-      TensorId q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, dim}});
-      TensorId k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, dim}});
-      TensorId v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, dim}});
+      TensorId q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, q_dim}});
+      TensorId k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, kv_dim}});
+      TensorId v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, kv_dim}});
       b.add_node(pfx + "q_proj", "MatMul", "1", {n1, wq}, {q},
                  {ir::make_bool_attr("transpose_b", true)});
       b.add_node(pfx + "k_proj", "MatMul", "1", {n1, wk}, {k},
@@ -968,15 +993,14 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       b.add_node(pfx + "v_proj", "MatMul", "1", {n1, wv}, {v},
                  {ir::make_bool_attr("transpose_b", true)});
 
-      TensorId q_rope = b.add_tensor(pfx + "q_rope", DType::F32, Shape{{1, dim}});
-      TensorId k_rope = b.add_tensor(pfx + "k_rope", DType::F32, Shape{{1, dim}});
+      TensorId q_rope = b.add_tensor(pfx + "q_rope", DType::F32, Shape{{1, q_dim}});
+      TensorId k_rope = b.add_tensor(pfx + "k_rope", DType::F32, Shape{{1, kv_dim}});
       b.add_node(pfx + "q_rope", "RoPE", "1", {q}, {q_rope},
                  {ir::make_float_attr("theta", rope_theta)});
       b.add_node(pfx + "k_rope", "RoPE", "1", {k}, {k_rope},
                  {ir::make_float_attr("theta", rope_theta)});
 
-      TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, dim}});
-      // kv_heads is recorded for GQA metadata; Attention kernel uses num_heads today.
+      TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, q_dim}});
       b.add_node(pfx + "attn", "Attention", "1", {q_rope, k_rope, v}, {attn},
                  {ir::make_int_attr("num_heads", n_heads),
                   ir::make_int_attr("kv_heads", n_kv_heads),
@@ -1151,6 +1175,8 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.set_metadata("n_heads", std::to_string(n_heads));
     b.set_metadata("n_kv_heads", std::to_string(n_kv_heads));
     b.set_metadata("head_dim", std::to_string(head_dim));
+    b.set_metadata("q_dim", std::to_string(q_dim));
+    b.set_metadata("kv_dim", std::to_string(kv_dim));
     b.set_metadata("rope_theta", std::to_string(rope_theta));
     b.set_metadata("embedding_length", std::to_string(dim));
     b.set_metadata("rms_eps", std::to_string(rms_eps));

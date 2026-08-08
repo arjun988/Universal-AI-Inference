@@ -195,19 +195,30 @@ Error attention_kv_f32(const TensorView& q,
   err = check_view_bytes(*out, "attn_out");
   if (!err.ok()) return err;
 
+  // Q/out share q_dim; K/V share kv_dim (GQA: kv_dim may be < q_dim).
   if (qs.batch != ks.batch || qs.batch != vs.batch || qs.batch != os.batch ||
-      qs.dim != ks.dim || qs.dim != vs.dim || qs.dim != os.dim ||
-      qs.seq != os.seq || ks.seq != vs.seq || qs.seq != ks.seq) {
+      qs.dim != os.dim || ks.dim != vs.dim || qs.seq != os.seq || ks.seq != vs.seq ||
+      qs.seq != ks.seq) {
     return Error::make(ErrorCode::InvalidArgument, "attention shape mismatch");
   }
 
   const std::int64_t batch = qs.batch;
   const std::int64_t q_seq = qs.seq;
   const std::int64_t new_kv_seq = ks.seq;
-  const std::int64_t dim = qs.dim;
-  if (num_heads <= 0 || dim % num_heads != 0) {
+  const std::int64_t q_dim = qs.dim;
+  const std::int64_t kv_dim = ks.dim;
+  if (num_heads <= 0 || q_dim % num_heads != 0) {
     return Error::make(ErrorCode::InvalidArgument, "invalid num_heads");
   }
+  const std::int64_t head_dim = q_dim / num_heads;
+  if (kv_dim % head_dim != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "kv_dim not divisible by head_dim");
+  }
+  const int num_kv_heads = static_cast<int>(kv_dim / head_dim);
+  if (num_kv_heads <= 0 || num_heads % num_kv_heads != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "invalid GQA head grouping");
+  }
+  const int heads_per_kv = num_heads / num_kv_heads;
 
   std::int64_t past_seq = 0;
   const float* PK = nullptr;
@@ -222,7 +233,7 @@ Error attention_kv_f32(const TensorView& q,
     if (!err.ok()) return err;
     err = parse_attn_shape(*past_v, &pvs, "past_v");
     if (!err.ok()) return err;
-    if (pks.batch != batch || pvs.batch != batch || pks.dim != dim || pvs.dim != dim ||
+    if (pks.batch != batch || pvs.batch != batch || pks.dim != kv_dim || pvs.dim != kv_dim ||
         pks.seq != pvs.seq) {
       return Error::make(ErrorCode::InvalidArgument, "attention past shape mismatch");
     }
@@ -237,33 +248,33 @@ Error attention_kv_f32(const TensorView& q,
 
   const std::int64_t kv_seq = past_seq + new_kv_seq;
   if (scale <= 0) {
-    scale = 1.0f / std::sqrt(static_cast<float>(dim / num_heads));
+    scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
   }
 
-  const std::int64_t head_dim = dim / num_heads;
   const float* Q = q.f32();
   const float* K = k.f32();
   const float* V = v.f32();
   float* O = out->f32();
   std::vector<float> scores(static_cast<std::size_t>(q_seq * kv_seq));
 
-  auto k_at = [&](std::int64_t b, std::int64_t j, int h, std::int64_t d) -> float {
+  auto k_at = [&](std::int64_t b, std::int64_t j, int kv_h, std::int64_t d) -> float {
     if (j < past_seq) {
-      return PK[static_cast<std::size_t>(((b * past_seq + j) * dim) + h * head_dim + d)];
+      return PK[static_cast<std::size_t>(((b * past_seq + j) * kv_dim) + kv_h * head_dim + d)];
     }
     const std::int64_t jj = j - past_seq;
-    return K[static_cast<std::size_t>(((b * new_kv_seq + jj) * dim) + h * head_dim + d)];
+    return K[static_cast<std::size_t>(((b * new_kv_seq + jj) * kv_dim) + kv_h * head_dim + d)];
   };
-  auto v_at = [&](std::int64_t b, std::int64_t j, int h, std::int64_t d) -> float {
+  auto v_at = [&](std::int64_t b, std::int64_t j, int kv_h, std::int64_t d) -> float {
     if (j < past_seq) {
-      return PV[static_cast<std::size_t>(((b * past_seq + j) * dim) + h * head_dim + d)];
+      return PV[static_cast<std::size_t>(((b * past_seq + j) * kv_dim) + kv_h * head_dim + d)];
     }
     const std::int64_t jj = j - past_seq;
-    return V[static_cast<std::size_t>(((b * new_kv_seq + jj) * dim) + h * head_dim + d)];
+    return V[static_cast<std::size_t>(((b * new_kv_seq + jj) * kv_dim) + kv_h * head_dim + d)];
   };
 
   for (std::int64_t b = 0; b < batch; ++b) {
     for (int h = 0; h < num_heads; ++h) {
+      const int kv_h = h / heads_per_kv;
       for (std::int64_t i = 0; i < q_seq; ++i) {
         const std::int64_t abs_i = past_seq + i;
         float max_v = -std::numeric_limits<float>::infinity();
@@ -275,8 +286,8 @@ Error attention_kv_f32(const TensorView& q,
           float dot = 0;
           for (std::int64_t d = 0; d < head_dim; ++d) {
             const std::size_t qi =
-                static_cast<std::size_t>(((b * q_seq + i) * dim) + h * head_dim + d);
-            dot += Q[qi] * k_at(b, j, h, d);
+                static_cast<std::size_t>(((b * q_seq + i) * q_dim) + h * head_dim + d);
+            dot += Q[qi] * k_at(b, j, kv_h, d);
           }
           dot *= scale;
           scores[static_cast<std::size_t>(i * kv_seq + j)] = dot;
@@ -297,10 +308,10 @@ Error attention_kv_f32(const TensorView& q,
         for (std::int64_t d = 0; d < head_dim; ++d) {
           float acc = 0;
           for (std::int64_t j = 0; j < kv_seq; ++j) {
-            acc += scores[static_cast<std::size_t>(i * kv_seq + j)] * v_at(b, j, h, d);
+            acc += scores[static_cast<std::size_t>(i * kv_seq + j)] * v_at(b, j, kv_h, d);
           }
           const std::size_t oi =
-              static_cast<std::size_t>(((b * q_seq + i) * dim) + h * head_dim + d);
+              static_cast<std::size_t>(((b * q_seq + i) * q_dim) + h * head_dim + d);
           O[oi] = acc;
         }
       }
@@ -316,7 +327,7 @@ Error attention_kv_f32(const TensorView& q,
         past_k != nullptr && past_v != nullptr && present_k->data == past_k->data &&
         present_v->data == past_v->data;
     const std::size_t need =
-        static_cast<std::size_t>(batch * kv_seq * dim) * sizeof(float);
+        static_cast<std::size_t>(batch * kv_seq * kv_dim) * sizeof(float);
     if (present_k->nbytes < need || present_v->nbytes < need) {
       return Error::make(ErrorCode::InvalidArgument, "present buffer too small");
     }
@@ -325,7 +336,7 @@ Error attention_kv_f32(const TensorView& q,
     // Stride for in-place capacity buffers uses max capacity inferred from nbytes.
     const std::int64_t stride_seq =
         inplace ? static_cast<std::int64_t>(present_k->nbytes /
-                                           (static_cast<std::size_t>(batch * dim) *
+                                           (static_cast<std::size_t>(batch * kv_dim) *
                                             sizeof(float)))
                 : kv_seq;
     if (stride_seq < kv_seq) {
@@ -334,29 +345,29 @@ Error attention_kv_f32(const TensorView& q,
     if (!inplace) {
       for (std::int64_t b = 0; b < batch; ++b) {
         if (past_seq > 0) {
-          std::memcpy(pk + static_cast<std::size_t>(b * kv_seq * dim),
-                      PK + static_cast<std::size_t>(b * past_seq * dim),
-                      static_cast<std::size_t>(past_seq * dim) * sizeof(float));
-          std::memcpy(pv + static_cast<std::size_t>(b * kv_seq * dim),
-                      PV + static_cast<std::size_t>(b * past_seq * dim),
-                      static_cast<std::size_t>(past_seq * dim) * sizeof(float));
+          std::memcpy(pk + static_cast<std::size_t>(b * kv_seq * kv_dim),
+                      PK + static_cast<std::size_t>(b * past_seq * kv_dim),
+                      static_cast<std::size_t>(past_seq * kv_dim) * sizeof(float));
+          std::memcpy(pv + static_cast<std::size_t>(b * kv_seq * kv_dim),
+                      PV + static_cast<std::size_t>(b * past_seq * kv_dim),
+                      static_cast<std::size_t>(past_seq * kv_dim) * sizeof(float));
         }
-        std::memcpy(pk + static_cast<std::size_t>((b * kv_seq + past_seq) * dim),
-                    K + static_cast<std::size_t>(b * new_kv_seq * dim),
-                    static_cast<std::size_t>(new_kv_seq * dim) * sizeof(float));
-        std::memcpy(pv + static_cast<std::size_t>((b * kv_seq + past_seq) * dim),
-                    V + static_cast<std::size_t>(b * new_kv_seq * dim),
-                    static_cast<std::size_t>(new_kv_seq * dim) * sizeof(float));
+        std::memcpy(pk + static_cast<std::size_t>((b * kv_seq + past_seq) * kv_dim),
+                    K + static_cast<std::size_t>(b * new_kv_seq * kv_dim),
+                    static_cast<std::size_t>(new_kv_seq * kv_dim) * sizeof(float));
+        std::memcpy(pv + static_cast<std::size_t>((b * kv_seq + past_seq) * kv_dim),
+                    V + static_cast<std::size_t>(b * new_kv_seq * kv_dim),
+                    static_cast<std::size_t>(new_kv_seq * kv_dim) * sizeof(float));
       }
     } else {
       for (std::int64_t b = 0; b < batch; ++b) {
         for (std::int64_t s = 0; s < new_kv_seq; ++s) {
           const std::size_t src =
-              static_cast<std::size_t>((b * new_kv_seq + s) * dim);
+              static_cast<std::size_t>((b * new_kv_seq + s) * kv_dim);
           const std::size_t dst =
-              static_cast<std::size_t>((b * stride_seq + past_seq + s) * dim);
-          std::memcpy(pk + dst, K + src, static_cast<std::size_t>(dim) * sizeof(float));
-          std::memcpy(pv + dst, V + src, static_cast<std::size_t>(dim) * sizeof(float));
+              static_cast<std::size_t>((b * stride_seq + past_seq + s) * kv_dim);
+          std::memcpy(pk + dst, K + src, static_cast<std::size_t>(kv_dim) * sizeof(float));
+          std::memcpy(pv + dst, V + src, static_cast<std::size_t>(kv_dim) * sizeof(float));
         }
       }
     }

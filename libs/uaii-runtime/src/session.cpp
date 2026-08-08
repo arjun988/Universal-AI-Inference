@@ -8,6 +8,7 @@
 #include "uaii/ir/validator.hpp"
 #include "uaii/kernels/gemm.hpp"
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/loaders/gguf.hpp"
 #include "uaii/loaders/registry.hpp"
 #include "uaii/quant/quantizer.hpp"
 
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 namespace uaii {
 namespace runtime {
@@ -365,6 +367,21 @@ Error Session::allocate_all_tensors() {
 }
 
 Error Session::load_or_init_weights() {
+  // Cache parsed GGUF headers: re-opening the file + re-parsing the header for every
+  // tensor (291 tensors in a typical 0.5B model) dominates load time. Read each unique
+  // GGUF file once and reuse the parsed GgufFile for all weight refs into it.
+  std::unordered_map<std::string, loaders::GgufFile> gguf_cache;
+
+  auto get_gguf = [&](const std::string& file_path) -> const loaders::GgufFile* {
+    auto it = gguf_cache.find(file_path);
+    if (it != gguf_cache.end()) return &it->second;
+    loaders::GgufFile gf;
+    Error err = loaders::gguf_read_header(file_path, &gf);
+    if (!err.ok()) return nullptr;
+    auto [ins_it, ok] = gguf_cache.emplace(file_path, std::move(gf));
+    return &ins_it->second;
+  };
+
   for (const auto& t : graph_.tensors) {
     if (!t.is_weight) continue;
     if (streaming_ && streaming_->is_streamed(t.id)) {
@@ -383,6 +400,45 @@ Error Session::load_or_init_weights() {
     bool loaded = false;
     Error load_err = Error::success();
     if (!t.weight_ref.empty()) {
+      // Fast path: use cached GGUF header to avoid re-opening the file per tensor.
+      const auto hash_pos = t.weight_ref.find('#');
+      if (hash_pos != std::string::npos) {
+        const std::string file_part = join_path(options_.weights_dir, t.weight_ref.substr(0, hash_pos));
+        const std::string tensor_name = t.weight_ref.substr(hash_pos + 1);
+        const auto ext_pos = file_part.rfind('.');
+        const std::string ext = ext_pos != std::string::npos ? file_part.substr(ext_pos) : "";
+        const bool is_gguf = (ext == ".gguf" || ext == ".GGUF");
+
+        if (is_gguf) {
+          const loaders::GgufFile* gf = get_gguf(file_part);
+          if (gf) {
+            if (options_.keep_quantized_weights && quant::is_gguf_block_quant(t.quant_format)) {
+              loaders::GgufType gt = loaders::GgufType::F32;
+              Shape shape;
+              std::vector<std::uint8_t> packed;
+              load_err = loaders::gguf_load_tensor_raw(*gf, tensor_name, &packed, &shape, &gt);
+              if (load_err.ok() && packed.size() == buf.nbytes) {
+                std::memcpy(buf.data, packed.data(), packed.size());
+                buf.quant_format = loaders::gguf_type_to_quant(gt);
+                loaded = true;
+              }
+            }
+            if (!loaded && data != nullptr) {
+              std::vector<float> values;
+              Shape shape;
+              load_err = loaders::gguf_load_tensor_f32(*gf, tensor_name, &values, &shape);
+              if (load_err.ok() && values.size() * sizeof(float) == buf.nbytes) {
+                std::memcpy(data, values.data(), buf.nbytes);
+                buf.quant_format = quant::QuantFormat::F32;
+                loaded = true;
+              }
+            }
+          }
+        }
+      }
+
+      if (!loaded) {
+        // Fallback: original path-based loading (non-GGUF, raw .bin, etc.)
       if (options_.keep_quantized_weights && quant::is_gguf_block_quant(t.quant_format)) {
         std::vector<std::uint8_t> packed;
         quant::QuantFormat fmt = t.quant_format;
@@ -402,6 +458,7 @@ Error Session::load_or_init_weights() {
           buf.quant_format = quant::QuantFormat::F32;
         }
       }
+      } // end fallback
       if (!loaded) {
         std::string path = join_path(options_.weights_dir, t.weight_ref);
         const auto hash = path.find('#');
@@ -711,31 +768,41 @@ Error Session::ensure_kv_cache(std::int64_t max_seq) {
       if (n.op_name == "Attention") ++n_layers;
     }
   }
+  // KV cache stores K/V activations (GQA: kv_dim / n_kv_heads), not Q/embedding dim.
+  std::int64_t n_kv_heads = meta_i64(graph_, "n_kv_heads", 0);
   std::int64_t n_heads = meta_i64(graph_, "n_heads", 0);
-  if (n_heads <= 0) {
+  if (n_heads <= 0 || n_kv_heads <= 0) {
     for (const auto& n : graph_.nodes) {
       if (n.op_name != "Attention") continue;
       for (const auto& a : n.attributes) {
-        if (a.key == "num_heads" && a.type == ir::AttributeType::Int) {
+        if (a.key == "num_heads" && a.type == ir::AttributeType::Int && n_heads <= 0) {
           n_heads = std::get<std::int64_t>(a.value);
-          break;
+        }
+        if (a.key == "kv_heads" && a.type == ir::AttributeType::Int && n_kv_heads <= 0) {
+          n_kv_heads = std::get<std::int64_t>(a.value);
         }
       }
       if (n_heads > 0) break;
     }
   }
   if (n_heads <= 0) n_heads = 1;
+  if (n_kv_heads <= 0) n_kv_heads = n_heads;
 
-  std::int64_t dim = meta_i64(graph_, "embedding_length", 0);
-  if (dim <= 0) dim = meta_i64(graph_, "dim", 0);
+  std::int64_t dim = meta_i64(graph_, "kv_dim", 0);
   if (dim <= 0) {
+    // Prefer K activation width (GQA-correct).
     for (const auto& t : graph_.tensors) {
-      if (t.name.find("emb") != std::string::npos && t.shape.dims.size() == 2) {
-        dim = t.shape.dims[1];
-        break;
+      if (!t.is_weight && t.shape.dims.size() >= 2) {
+        const auto& n = t.name;
+        if (n.size() >= 2 && (n.compare(n.size() - 2, 2, ".k") == 0 || n == "k")) {
+          dim = t.shape.dims.back();
+          break;
+        }
       }
     }
   }
+  if (dim <= 0) dim = meta_i64(graph_, "embedding_length", 0);
+  if (dim <= 0) dim = meta_i64(graph_, "dim", 0);
   if (dim <= 0) {
     for (const auto& t : graph_.tensors) {
       if (t.name == "hidden" && t.shape.dims.size() >= 2) {
@@ -745,7 +812,6 @@ Error Session::ensure_kv_cache(std::int64_t max_seq) {
     }
   }
   if (dim <= 0) {
-    // Fall back to Attention activation tensors (…/q, …/k, …/attn).
     for (const auto& t : graph_.tensors) {
       if (!t.is_weight && t.shape.dims.size() >= 2) {
         const auto& n = t.name;
@@ -759,12 +825,18 @@ Error Session::ensure_kv_cache(std::int64_t max_seq) {
     }
   }
   if (n_layers <= 0 || dim <= 0 || max_seq <= 0) {
-    // No transformer stack — leave kv_ unset; Attention falls back to no-cache path.
+    // No transformer stack detected (pure MLP or missing metadata) —
+    // leave kv_ unset; Attention kernels fall back to no-cache path.
+    if (n_layers > 0 && dim <= 0) {
+      log::warn("session") << "ensure_kv_cache: found " << n_layers
+                           << " Attention node(s) but could not determine kv_dim — "
+                              "running without KV cache (add kv_dim metadata to the model)";
+    }
     kv_.reset();
     return Error::success();
   }
   if (!kv_) kv_ = std::make_unique<KvCache>();
-  Error err = kv_->configure(n_layers, /*batch=*/1, max_seq, dim, n_heads);
+  Error err = kv_->configure(n_layers, /*batch=*/1, max_seq, dim, n_kv_heads);
   if (!err.ok()) return err;
   kv_->reset();
   return Error::success();

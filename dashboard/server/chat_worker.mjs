@@ -51,17 +51,28 @@ export class ChatWorker {
     const rl = readline.createInterface({ input: this.child.stdout });
     rl.on("line", (line) => this.#onLine(line));
 
+    this._stderr = "";
+    this._lastError = "";
     this.child.stderr.on("data", (d) => {
       const s = d.toString();
+      this._stderr += s;
       if (s.trim()) console.error("[uaii-chat]", s.trim());
     });
     this.child.on("error", (err) => {
+      this._lastError = err.message;
       this.#failAll(err.message);
       this.child = null;
       this.ready = false;
     });
     this.child.on("close", (code) => {
-      this.#failAll(`chat worker exited (${code})`);
+      const detail =
+        this._lastError ||
+        (this._stderr && this._stderr.trim()) ||
+        "";
+      const msg = detail
+        ? `chat worker exited (${code}): ${detail.slice(0, 400)}`
+        : `chat worker exited (${code})`;
+      this.#failAll(msg);
       this.child = null;
       this.ready = false;
       this.busy = false;
@@ -100,9 +111,22 @@ export class ChatWorker {
       this.ready = true;
       return;
     }
+    if (ev.event === "error" && !ev.id) {
+      // Startup / load failure before any request id — fail all pending.
+      this._lastError = ev.error || "uaii chat error";
+      console.error("[uaii-chat]", this._lastError);
+      this.#failAll(this._lastError);
+      return;
+    }
     const id = ev.id;
     const p = id ? this.pending.get(id) : null;
-    if (!p) return;
+    if (!p) {
+      // Unknown id — log but don't crash; may be a late token from a cancelled request.
+      if (ev.event === "error") {
+        console.error("[uaii-chat] unmatched error event:", ev.error || ev);
+      }
+      return;
+    }
     if (ev.event === "token") {
       if (p.onToken) p.onToken(ev);
       return;
@@ -110,18 +134,21 @@ export class ChatWorker {
     if (ev.event === "done") {
       this.pending.delete(id);
       this.busy = false;
+      if (p._timer) clearTimeout(p._timer);
       p.resolve(ev);
       return;
     }
     if (ev.event === "error") {
       this.pending.delete(id);
       this.busy = false;
+      if (p._timer) clearTimeout(p._timer);
       p.reject(new Error(ev.error || "generate failed"));
       return;
     }
     if (ev.event === "reset") {
       this.pending.delete(id);
       this.busy = false;
+      if (p._timer) clearTimeout(p._timer);
       p.resolve(ev);
     }
   }
@@ -130,8 +157,23 @@ export class ChatWorker {
     this.start();
     const t0 = Date.now();
     while (!this.ready) {
-      if (!this.child) throw new Error("chat worker failed to start");
-      if (Date.now() - t0 > timeoutMs) throw new Error("chat worker ready timeout");
+      if (!this.child) {
+        const detail = this._lastError || (this._stderr && this._stderr.trim().slice(0, 400));
+        throw new Error(
+          detail
+            ? `chat worker failed to start: ${detail}`
+            : "chat worker failed to start (process exited before emitting ready)",
+        );
+      }
+      const elapsed = Date.now() - t0;
+      if (elapsed > timeoutMs) {
+        const detail = this._lastError || (this._stderr && this._stderr.trim().slice(0, 400));
+        throw new Error(
+          detail
+            ? `chat worker ready timeout (${timeoutMs}ms): ${detail}`
+            : `chat worker ready timeout after ${timeoutMs}ms — model may still be loading; check Logs`,
+        );
+      }
       await new Promise((r) => setTimeout(r, 50));
     }
   }
@@ -149,7 +191,12 @@ export class ChatWorker {
     onToken = null,
   }) {
     await this.waitReady();
-    while (this.busy) await new Promise((r) => setTimeout(r, 25));
+    // Wait for any in-flight request, but cap at 5 minutes to avoid deadlock.
+    const busyDeadline = Date.now() + 300000;
+    while (this.busy) {
+      if (Date.now() > busyDeadline) throw new Error("chat worker busy timeout — previous request stalled");
+      await new Promise((r) => setTimeout(r, 25));
+    }
     this.busy = true;
     const id = randomUUID();
     const req = {
@@ -173,13 +220,25 @@ export class ChatWorker {
     }
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, onToken });
+      // Safety timeout: if the C++ side stalls and never emits done/error, reject
+      // after 10 minutes so the UI unblocks.
+      const timer = setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          this.busy = false;
+          reject(new Error("generate request timed out after 10 minutes — check Logs"));
+        }
+      }, 600000);
       try {
         this.child.stdin.write(JSON.stringify(req) + "\n");
       } catch (e) {
+        clearTimeout(timer);
         this.pending.delete(id);
         this.busy = false;
         reject(e);
       }
+      // Attach timer so we can clear it in #onLine when done/error arrives
+      this.pending.get(id) && (this.pending.get(id)._timer = timer);
     });
   }
 

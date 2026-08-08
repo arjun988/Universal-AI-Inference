@@ -22,6 +22,7 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
     const r = spawnSync("wsl", ["-d", distro, "--", "test", "-x", linuxPath], {
       windowsHide: true,
       encoding: "utf8",
+      timeout: 10000,
     });
     return r.status === 0;
   }
@@ -71,10 +72,25 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
   function resolve() {
     if (cached) return cached;
     const forceWsl = process.env.UAII_USE_WSL === "1";
+    const forceNative = process.env.UAII_USE_WSL === "0";
     const native = resolveNative(configuredBin);
     const distro = process.env.UAII_WSL_DISTRO || "Ubuntu";
 
-    if (forceWsl || (process.platform === "win32" && !nativeRunnable(native))) {
+    // On Windows, try native first unless UAII_USE_WSL=1 forces WSL.
+    // Fall back to WSL only when the native binary is missing or blocked by App Control.
+    if (!forceWsl && (forceNative || nativeRunnable(native))) {
+      cached = {
+        mode: "native",
+        cmd: native,
+        prefix: [],
+        display: native,
+        toModelPath: (p) => p,
+      };
+      return cached;
+    }
+
+    // Try WSL when forced or native is unavailable/blocked.
+    if (process.platform === "win32" || forceWsl) {
       const linux = findWslUaii();
       if (linux) {
         cached = {
@@ -88,6 +104,7 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
       }
     }
 
+    // Last resort: use whatever native resolved to (may not be runnable).
     cached = {
       mode: "native",
       cmd: native,
@@ -103,7 +120,50 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
     return { cmd: L.cmd, args: [...L.prefix, ...uaiiArgs], display: L.display, toModelPath: L.toModelPath };
   }
 
-  return { resolve, spawnArgs, winToWsl };
+  /**
+   * For WSL launches, copy large GGUFs onto the Linux filesystem once.
+   * Reading weights via /mnt/c is often too slow for chat ready timeouts.
+   */
+  function wslHome(distro) {
+    const r = spawnSync("wsl", ["-d", distro, "--", "printenv", "HOME"], {
+      windowsHide: true,
+      encoding: "utf8",
+      timeout: 15000,
+    });
+    const h = (r.stdout || "").trim();
+    return r.status === 0 && h ? h : "/home/arjun";
+  }
+
+  function stageModelPath(hostPath) {
+    const L = resolve();
+    if (L.mode !== "wsl" || !hostPath) return L.toModelPath(hostPath);
+    const src = L.toModelPath(hostPath);
+    if (!src.startsWith("/mnt/")) return src;
+    const base = path.posix.basename(src.replace(/\\/g, "/"));
+    const distro = process.env.UAII_WSL_DISTRO || "Ubuntu";
+    const cacheDir = (process.env.UAII_WSL_MODEL_DIR || `${wslHome(distro)}/uaii-models`).replace(
+      /\/$/,
+      "",
+    );
+    const dst = `${cacheDir}/${base}`;
+    // Avoid $VAR in the bash string — Windows/WSL arg passing can strip them.
+    const bash = [
+      `mkdir -p '${cacheDir}'`,
+      `if [ ! -f '${dst}' ] || [ "$(stat -c%s '${dst}' 2>/dev/null || echo 0)" != "$(stat -c%s '${src}' 2>/dev/null || echo 1)" ]; then cp -f '${src}' '${dst}'; fi`,
+      `test -f '${dst}' && printf '%s' '${dst}'`,
+    ].join(" && ");
+    const ready = spawnSync("wsl", ["-d", distro, "--", "bash", "-lc", bash], {
+      windowsHide: true,
+      encoding: "utf8",
+      timeout: 600000,
+    });
+    const staged = (ready.stdout || "").trim();
+    if (ready.status === 0 && staged) return staged;
+    console.warn("[uaii-launch] WSL model stage failed; using /mnt path:", ready.stderr || ready.stdout);
+    return src;
+  }
+
+  return { resolve, spawnArgs, winToWsl, stageModelPath };
 }
 
 export function createBenchLauncher({ repoRoot, configuredBin = "" }) {

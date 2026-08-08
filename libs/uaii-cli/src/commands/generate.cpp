@@ -18,6 +18,11 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#  include <fcntl.h>
+#  include <io.h>
+#endif
+
 namespace uaii {
 namespace cli {
 namespace {
@@ -501,6 +506,14 @@ int cmd_chat(const std::vector<std::string>& args) {
     return 1;
   }
 
+  // Ensure stdout is not block-buffered so JSON events flush immediately.
+  std::cout.setf(std::ios::unitbuf);
+  // On Windows the CRT may buffer stdout in binary mode; force line-buffered.
+#if defined(_WIN32)
+  _setmode(_fileno(stdout), _O_TEXT);
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+#endif
+
   const bool demo = has_flag(args, "--demo");
   std::string model = get_opt(args, "--model");
   std::string tokenizer_gguf = get_opt(args, "--tokenizer-gguf");
@@ -536,6 +549,10 @@ int cmd_chat(const std::vector<std::string>& args) {
   std::string line;
   while (std::getline(std::cin, line)) {
     if (line.empty()) continue;
+    if (std::cin.bad()) {
+      // Unrecoverable I/O error — exit the loop.
+      break;
+    }
     const std::string cmd = extract_json_string(line, "cmd");
     const std::string id = extract_json_string(line, "id");
     if (cmd == "quit" || cmd == "exit") {

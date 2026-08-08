@@ -4,7 +4,7 @@ import fs from "fs";
 import multer from "multer";
 import os from "os";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import { ChatWorker, getChatWorker, stopAllChatWorkers } from "./chat_worker.mjs";
@@ -31,6 +31,75 @@ const DEMOS = [
   "profile",
   "quant",
 ];
+
+// ---------------------------------------------------------------------------
+// GPU auto-detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Probe which GPU backends are natively available by running `uaii doctor`
+ * and parsing its output. Returns the best backend name to use.
+ * Priority: cuda > rocm > metal > vulkan > cpu
+ *
+ * This runs once at server startup (synchronously, with a short timeout).
+ * Result is cached in `detectedBackend`.
+ */
+let detectedBackend = null;        // null = not yet probed
+let detectedBackendDetails = "";   // human-readable details for /api/health
+
+function probeGpuBackend(launcherDisplay) {
+  if (detectedBackend !== null) return detectedBackend;
+
+  const L = uaiiLauncher.resolve();
+  const cmd = L.cmd;
+  const args = [...(L.prefix || []), "doctor"];
+
+  try {
+    const r = spawnSync(cmd, args, {
+      encoding: "utf8",
+      timeout: 15000,
+      windowsHide: true,
+      env: { ...process.env },
+    });
+    const out = (r.stdout || "") + (r.stderr || "");
+
+    // Parse `uaii doctor` backend lines:
+    //   cuda: Cuda create=ok native_compiled=yes — ... host_fallback=no ...
+    // The backends in priority order we want to try:
+    const priority = ["cuda", "rocm", "metal", "vulkan"];
+    for (const name of priority) {
+      // Match lines like:  cuda: ... create=ok ... host_fallback=no
+      const re = new RegExp(`${name}:.*create=ok.*host_fallback=no`, "i");
+      if (re.test(out)) {
+        // Extract details snippet
+        const lineMatch = out.match(new RegExp(`${name}:.*`, "i"));
+        detectedBackendDetails = lineMatch ? lineMatch[0].trim().slice(0, 120) : name;
+        detectedBackend = name;
+        console.log(`[uaii] GPU detected: ${name} — ${detectedBackendDetails}`);
+        return detectedBackend;
+      }
+    }
+    // All gpu backends have host_fallback=yes or failed — use cpu
+    detectedBackendDetails = "no GPU backend with native device found; using CPU";
+    detectedBackend = "cpu";
+  } catch (e) {
+    detectedBackendDetails = `probe failed: ${e.message}`;
+    detectedBackend = "cpu";
+  }
+  console.log(`[uaii] Backend: ${detectedBackend} (${detectedBackendDetails})`);
+  return detectedBackend;
+}
+
+/**
+ * Return the effective backend to use for inference.
+ * If user explicitly set a backend in config/env (not "auto"), honour it.
+ * Otherwise fall back to auto-detected GPU or CPU.
+ */
+function effectiveBackend() {
+  if (config.backend && config.backend !== "auto") return config.backend;
+  return probeGpuBackend();
+}
+
 
 function pushLog(entry) {
   logs.unshift({ ts: new Date().toISOString(), ...entry });
@@ -62,7 +131,7 @@ function loadConfig() {
     token,
     threads: Number(process.env.UAII_NUM_THREADS || file.threads || 0),
     gemm: process.env.UAII_GEMM || file.gemm || "",
-    backend: process.env.UAII_BACKEND || file.backend || "cpu",
+    backend: process.env.UAII_BACKEND || file.backend || "auto",
     maxContext: Number(process.env.UAII_MAX_CONTEXT || file.maxContext || 0),
     configPath: cfgPath,
     loopback,
@@ -272,6 +341,26 @@ app.get("/api/health", (_req, res) => {
     "uaii-cli",
     process.platform === "win32" ? "uaii.exe" : "uaii",
   );
+
+  // For WSL mode, cmd is "wsl" which always exists — check the actual linux binary instead.
+  let uaiiBinExists = false;
+  if (L.mode === "wsl") {
+    // prefix is ["-d", distro, "--", linuxPath]; last element is the binary
+    const linuxBin = L.prefix && L.prefix[L.prefix.length - 1];
+    uaiiBinExists = Boolean(linuxBin && linuxBin.startsWith("/"));
+  } else {
+    uaiiBinExists = Boolean(L.cmd && fs.existsSync(L.cmd));
+  }
+
+  let hint = null;
+  if (L.mode === "wsl" && !uaiiBinExists) {
+    hint = "WSL binary not found. Build uaii inside WSL or set UAII_WSL_BIN.";
+  } else if (L.mode === "native" && !uaiiBinExists) {
+    hint = "Set UAII_BIN or build uaii (cmake --build build --target uaii).";
+  } else if (L.mode === "native" && fs.existsSync(nativePath) && !uaiiBinExists) {
+    hint = "Set UAII_BIN / UAII_USE_WSL=1, or build uaii (see scripts/test_generate_wsl.sh)";
+  }
+
   res.json({
     ok: true,
     service: "uaii-dashboard",
@@ -280,7 +369,7 @@ app.get("/api/health", (_req, res) => {
     port: config.port,
     uaiiBin: L.display,
     uaiiLaunchMode: L.mode,
-    uaiiBinExists: L.mode === "wsl" || fs.existsSync(L.cmd),
+    uaiiBinExists,
     benchBin: bench.display || null,
     benchBinExists: Boolean(bench.display),
     modelDir: config.modelDir,
@@ -290,12 +379,10 @@ app.get("/api/health", (_req, res) => {
     authRequired: config.authRequired,
     demos: DEMOS,
     mode: config.loopback ? "local" : "self-host",
-    hint:
-      L.mode === "wsl"
-        ? "Using WSL uaii (Windows App Control often blocks unsigned .exe)"
-        : fs.existsSync(nativePath)
-          ? null
-          : "Set UAII_BIN / UAII_USE_WSL=1, or build uaii (see scripts/test_generate_wsl.sh)",
+    backend: config.backend,
+    effectiveBackend: effectiveBackend(),
+    backendDetails: detectedBackendDetails || null,
+    hint,
   });
 });
 
@@ -326,7 +413,8 @@ app.get("/api/settings", (_req, res) => {
     modelDir: config.modelDir,
     threads: config.threads,
     gemm: config.gemm,
-    backend: config.backend,
+    backend: config.backend,  // stored value ("auto" or explicit)
+    effectiveBackend: effectiveBackend(),
     tokenSet: Boolean(config.token),
     authRequired: config.authRequired,
     configPath: config.configPath,
@@ -343,7 +431,12 @@ app.put("/api/settings", (req, res) => {
   }
   if (body.threads !== undefined) config.threads = Number(body.threads) || 0;
   if (typeof body.gemm === "string") config.gemm = body.gemm;
-  if (typeof body.backend === "string") config.backend = body.backend;
+  if (typeof body.backend === "string") {
+    config.backend = body.backend;
+    // Reset detection cache so next effectiveBackend() call re-probes.
+    detectedBackend = null;
+    detectedBackendDetails = "";
+  }
   if (typeof body.token === "string" && body.token.length > 0) config.token = body.token;
   if (typeof body.bind === "string" && body.bind) config.bind = body.bind;
   if (body.port !== undefined) config.port = Number(body.port) || config.port;
@@ -362,6 +455,7 @@ app.put("/api/settings", (req, res) => {
     threads: config.threads,
     gemm: config.gemm,
     backend: config.backend,
+    effectiveBackend: effectiveBackend(),
   };
   try {
     fs.writeFileSync(config.configPath, JSON.stringify(out, null, 2));
@@ -382,6 +476,25 @@ app.put("/api/settings", (req, res) => {
 app.get("/api/doctor", async (_req, res) => {
   const result = await runUaii(["doctor", "--load-plugins"]);
   res.status(result.ok ? 200 : 502).json(result);
+});
+
+// Returns detected GPU info + what backend is currently active.
+// The frontend uses this to show the backend pill and Settings hint.
+app.get("/api/backends", (_req, res) => {
+  const active = effectiveBackend();
+  res.json({
+    configured: config.backend,        // "auto" or explicit name
+    effective: active,                  // what will actually be used
+    details: detectedBackendDetails,
+    available: [
+      { name: "auto",   label: "Auto-detect GPU" },
+      { name: "cpu",    label: "CPU" },
+      { name: "cuda",   label: "CUDA (NVIDIA)" },
+      { name: "rocm",   label: "ROCm (AMD)" },
+      { name: "metal",  label: "Metal (Apple)" },
+      { name: "vulkan", label: "Vulkan (cross-platform)" },
+    ],
+  });
 });
 
 app.get("/api/models", (_req, res) => {
@@ -411,7 +524,7 @@ app.post("/api/run/demo", async (req, res) => {
   if (!DEMOS.includes(demo)) {
     return res.status(400).json({ error: "unknown demo", allowed: DEMOS });
   }
-  const result = await runUaii(["run", "--demo", demo, "--backend", config.backend || "cpu"]);
+  const result = await runUaii(["run", "--demo", demo, "--backend", effectiveBackend()]);
   res.status(result.ok ? 200 : 502).json(result);
 });
 
@@ -428,7 +541,7 @@ app.post("/api/run/model", async (req, res) => {
       "run",
       full,
       "--backend",
-      config.backend || "cpu",
+      effectiveBackend(),
       "--weight-init",
       req.body?.weightInit || "ones",
     ];
@@ -513,14 +626,29 @@ function resolveChatModel(body) {
 function workerForModel(resolved) {
   const key = resolved.kind === "demo" ? "__demo__" : resolved.path;
   const L = uaiiLauncher.resolve();
-  const modelPath =
-    resolved.kind === "demo" ? "" : L.toModelPath ? L.toModelPath(resolved.path) : resolved.path;
+  let modelPath;
+  if (resolved.kind === "demo") {
+    modelPath = "";
+  } else if (uaiiLauncher.stageModelPath) {
+    // NOTE: stageModelPath may copy the GGUF into WSL (~/.uaii-models/) synchronously.
+    // This blocks the Node event loop for large models; the chat request will appear
+    // to hang until the copy finishes. This only runs once per model — subsequent
+    // requests use the cached worker and skip staging.
+    if (L.mode === "wsl") {
+      console.log(`[uaii-launch] Staging model into WSL filesystem (one-time copy): ${resolved.path}`);
+    }
+    modelPath = uaiiLauncher.stageModelPath(resolved.path);
+  } else if (L.toModelPath) {
+    modelPath = L.toModelPath(resolved.path);
+  } else {
+    modelPath = resolved.path;
+  }
   return getChatWorker(key, () =>
     new ChatWorker({
       launch: L,
       modelPath,
       demo: resolved.kind === "demo",
-      backend: config.backend || "cpu",
+      backend: effectiveBackend(),
       maxContext: Number(config.maxContext || 0),
       env: childEnv(),
     }),
@@ -566,7 +694,7 @@ async function runLlmChat(body, { onToken = null } = {}) {
     if (!name) return { ok: false, status: 400, error: "model required for ir mode" };
     const full = path.join(config.modelDir, path.basename(name));
     if (!fs.existsSync(full)) return { ok: false, status: 404, error: "model not found" };
-    const args = ["run", full, "--backend", config.backend || "cpu", "--weight-init", "ones"];
+    const args = ["run", full, "--backend", effectiveBackend(), "--weight-init", "ones"];
     if (body.input) args.push("--input", body.input);
     else if (prompt) args.push("--input", `x=${prompt.split(/\s+/).slice(0, 8).join(",") || "1,2,3,4"}`);
     const result = await runUaii(args);
@@ -583,7 +711,7 @@ async function runLlmChat(body, { onToken = null } = {}) {
   if (mode === "cli-demo") {
     const demo = body.demo || "gguf";
     if (!DEMOS.includes(demo)) return { ok: false, status: 400, error: "bad demo" };
-    const result = await runUaii(["run", "--demo", demo, "--backend", config.backend || "cpu"]);
+    const result = await runUaii(["run", "--demo", demo, "--backend", effectiveBackend()]);
     return {
       ok: result.ok,
       status: result.ok ? 200 : 502,
@@ -923,6 +1051,17 @@ const server = app.listen(config.port, config.bind, () => {
   console.log(`  uaii:   ${resolveUaiiBin()}`);
   console.log(`  bench:  ${resolveBenchBin() || "(not found)"}`);
   console.log(`  models: ${config.modelDir}`);
+
+  // Run GPU probe immediately on startup (synchronous, 15s cap) so the first
+  // chat request doesn't pay the detection cost.
+  if (config.backend === "auto" || !config.backend) {
+    setImmediate(() => {
+      const be = probeGpuBackend();
+      console.log(`  backend: ${be}${detectedBackendDetails ? " — " + detectedBackendDetails : ""}`);
+    });
+  } else {
+    console.log(`  backend: ${config.backend} (explicit)`);
+  }
 });
 
 server.on("error", (err) => {
