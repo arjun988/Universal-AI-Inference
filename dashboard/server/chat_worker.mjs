@@ -26,6 +26,7 @@ export class ChatWorker {
     this.env = env;
     this.child = null;
     this.ready = false;
+    this.chatTemplate = "chatml";
     this.busy = false;
     this.pending = new Map();
     this._listeners = new Set();
@@ -217,12 +218,14 @@ export class ChatWorker {
     }
     if (ev.event === "ready") {
       this.ready = true;
+      this.chatTemplate = ev.chat_template || "chatml";
       this.#setStatus({
         phase: "ready",
         pct: 100,
         message: `Model ready on ${ev.device === "gpu" ? "GPU" : "CPU"} (${ev.backend || this.backend})`,
         backend: ev.backend || this.backend,
         device: ev.device || (this.backend === "cpu" ? "cpu" : "gpu"),
+        chatTemplate: this.chatTemplate,
         readyAt: Date.now(),
         error: "",
       });

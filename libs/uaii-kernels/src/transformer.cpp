@@ -229,7 +229,8 @@ Error attention_kv_f32(const TensorView& q,
                        const TensorView* past_k,
                        const TensorView* past_v,
                        TensorView* present_k,
-                       TensorView* present_v) {
+                       TensorView* present_v,
+                       float logit_softcap) {
   if (out == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "attention out null");
   }
@@ -347,6 +348,9 @@ Error attention_kv_f32(const TensorView& q,
             dot += Q[qi] * k_at(b, j, kv_h, d);
           }
           dot *= scale;
+          if (logit_softcap > 0.f) {
+            dot = logit_softcap * std::tanh(dot / logit_softcap);
+          }
           scores[static_cast<std::size_t>(i * kv_seq + j)] = dot;
           max_v = std::max(max_v, dot);
         }
@@ -438,9 +442,10 @@ Error attention_f32(const TensorView& q,
                     TensorView* out,
                     int num_heads,
                     float scale,
-                    bool causal) {
+                    bool causal,
+                    float logit_softcap) {
   return attention_kv_f32(q, k, v, out, num_heads, scale, causal, nullptr, nullptr,
-                          nullptr, nullptr);
+                          nullptr, nullptr, logit_softcap);
 }
 
 Error moe_router_f32(const TensorView& x,
@@ -620,6 +625,34 @@ Error reshape_f32(const TensorView& in, TensorView* out) {
   }
   if (in.data != out->data) {
     std::memcpy(out->data, in.data, in.nbytes);
+  }
+  return Error::success();
+}
+
+Error slice_f32(const TensorView& in,
+                TensorView* out,
+                std::int64_t start,
+                std::int64_t end) {
+  if (out == nullptr || in.data == nullptr || out->data == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "slice null");
+  }
+  if (in.dtype != DType::F32 || out->dtype != DType::F32 || in.rank != 2 || out->rank != 2) {
+    return Error::make(ErrorCode::InvalidArgument, "slice requires f32 rank-2");
+  }
+  if (in.dim(0) != out->dim(0)) {
+    return Error::make(ErrorCode::InvalidArgument, "slice batch mismatch");
+  }
+  const std::int64_t in_dim = in.dim(1);
+  const std::int64_t out_dim = out->dim(1);
+  if (start < 0 || end <= start || end > in_dim || out_dim != end - start) {
+    return Error::make(ErrorCode::InvalidArgument, "slice range/shape mismatch");
+  }
+  const float* src = in.f32();
+  float* dst = out->f32();
+  for (std::int64_t b = 0; b < in.dim(0); ++b) {
+    std::memcpy(dst + static_cast<std::size_t>(b * out_dim),
+                src + static_cast<std::size_t>(b * in_dim + start),
+                static_cast<std::size_t>(out_dim) * sizeof(float));
   }
   return Error::success();
 }

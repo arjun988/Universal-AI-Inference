@@ -2,6 +2,8 @@ uaii_add_module(tokenizers
   SOURCES
     src/simple_tokenizer.cpp
     src/bpe_tokenizer.cpp
+    src/spm_tokenizer.cpp
+    src/chat_template.cpp
     src/sentencepiece_tokenizer.cpp
     src/gguf_tokenizer.cpp
   DEPS uaii::core uaii::loaders

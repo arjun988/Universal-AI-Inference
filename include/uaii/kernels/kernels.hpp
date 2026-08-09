@@ -70,11 +70,10 @@ namespace kernels {
                                            TensorView* out,
                                            int num_heads,
                                            float scale,
-                                           bool causal);
+                                           bool causal,
+                                           float logit_softcap = 0.f);
 
-/// MHA with optional past K/V ([batch, past_seq, dim]) and optional present outputs.
-/// If present_* aliases past_* (same data pointer), appends new K/V in-place when capacity allows.
-/// Supports rank-2 ([batch, dim] ⇒ seq=1) and rank-3 Q/K/V.
+/// MHA with optional past K/V. logit_softcap > 0 applies Gemma-2-style tanh capping.
 [[nodiscard]] UAII_API Error attention_kv_f32(const TensorView& q,
                                               const TensorView& k,
                                               const TensorView& v,
@@ -85,7 +84,8 @@ namespace kernels {
                                               const TensorView* past_k,
                                               const TensorView* past_v,
                                               TensorView* present_k,
-                                              TensorView* present_v);
+                                              TensorView* present_v,
+                                              float logit_softcap = 0.f);
 
 /// MoE router: logits = x @ gate_w^T ; probs = softmax; returns top-1 expert index in out_index (f32)
 [[nodiscard]] UAII_API Error moe_router_f32(const TensorView& x,
@@ -114,6 +114,12 @@ namespace kernels {
                                                     int top_k);
 
 [[nodiscard]] UAII_API Error reshape_f32(const TensorView& in, TensorView* out);
+
+/// Slice contiguous range [start, end) on the last dimension (rank-2 [B,D] only).
+[[nodiscard]] UAII_API Error slice_f32(const TensorView& in,
+                                       TensorView* out,
+                                       std::int64_t start,
+                                       std::int64_t end);
 [[nodiscard]] UAII_API Error transpose_f32(const TensorView& in,
                                            TensorView* out,
                                            const std::vector<std::int64_t>& perm);

@@ -605,14 +605,69 @@ app.post("/api/run/model", async (req, res) => {
   return res.status(400).json({ error: "unsupported type; use .uaii.json or .gguf" });
 });
 
-function formatChatPrompt(messages, fallbackPrompt, system) {
-  // ChatML (Qwen2.5-Instruct / common GGUF chat templates).
-  let out = "";
-  const sys = String(system || "").trim();
-  if (sys) {
-    out += `<|im_start|>system\n${sys}<|im_end|>\n`;
-  }
+function formatChatPrompt(messages, fallbackPrompt, system, chatTemplate = "chatml") {
+  const tpl = String(chatTemplate || "chatml").toLowerCase();
   const msgs = Array.isArray(messages) ? messages : [];
+  const sys = String(system || "").trim();
+  const userText =
+    msgs.length === 0
+      ? String(fallbackPrompt || "")
+      : msgs
+          .filter((m) => {
+            const role = String(m.role || "user").toLowerCase();
+            return !(role === "system" && sys);
+          })
+          .map((m) => {
+            const role = String(m.role || "user").toLowerCase();
+            const content = String(m.content || "");
+            if (role === "assistant") return { role: "assistant", content };
+            if (role === "system") return { role: "system", content };
+            return { role: "user", content };
+          });
+
+  if (tpl === "llama3") {
+    let out = "<|begin_of_text|>";
+    if (sys) {
+      out += "<|start_header_id|>system<|end_header_id|>\n\n";
+      out += sys;
+      out += "<|eot_id|>";
+    }
+    for (const m of userText) {
+      const tag = m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user";
+      out += `<|start_header_id|>${tag}<|end_header_id|>\n\n`;
+      out += m.content;
+      out += "<|eot_id|>";
+    }
+    if (!out.endsWith("<|start_header_id|>assistant<|end_header_id|>\n\n")) {
+      out += "<|start_header_id|>assistant<|end_header_id|>\n\n";
+    }
+    return out;
+  }
+
+  if (tpl === "gemma") {
+    let out = "";
+    const parts = sys ? [{ role: "user", content: `${sys}\n\n${userText[0]?.content || ""}` }] : userText;
+    for (const m of parts.length ? parts : userText) {
+      if (m.role === "assistant") continue;
+      out += `<start_of_turn>${m.role === "system" ? "user" : m.role}\n`;
+      out += m.content;
+      out += "<end_of_turn>\n";
+    }
+    out += "<start_of_turn>model\n";
+    return out;
+  }
+
+  if (tpl === "mistral") {
+    const body =
+      sys && userText.length
+        ? `${sys}\n\n${userText[userText.length - 1].content}`
+        : userText.map((m) => m.content).join("\n\n");
+    return `<s>[INST] ${body} [/INST]`;
+  }
+
+  // ChatML default
+  let out = "";
+  if (sys) out += `<|im_start|>system\n${sys}<|im_end|>\n`;
   if (msgs.length === 0 && fallbackPrompt) {
     out += `<|im_start|>user\n${fallbackPrompt}<|im_end|>\n`;
     out += `<|im_start|>assistant\n`;
@@ -622,13 +677,10 @@ function formatChatPrompt(messages, fallbackPrompt, system) {
     const role = String(m.role || "user").toLowerCase();
     const content = String(m.content || "");
     const tag = role === "assistant" ? "assistant" : role === "system" ? "system" : "user";
-    // Skip duplicate system if already emitted from `system` arg.
     if (tag === "system" && sys) continue;
     out += `<|im_start|>${tag}\n${content}<|im_end|>\n`;
   }
-  if (!out.endsWith("<|im_start|>assistant\n")) {
-    out += `<|im_start|>assistant\n`;
-  }
+  if (!out.endsWith("<|im_start|>assistant\n")) out += `<|im_start|>assistant\n`;
   return out;
 }
 
@@ -890,7 +942,12 @@ async function runLlmChat(body, { onToken = null, onStatus = null } = {}) {
   const resolved = resolveChatModel(body);
   if (resolved.error) return { ok: false, status: 404, error: resolved.error, path: resolved.path };
 
-  const fullPrompt = formatChatPrompt(body.messages, prompt, system);
+  const fullPrompt = formatChatPrompt(
+    body.messages,
+    prompt,
+    system,
+    body.chatTemplate || peekChatWorker(workerKey(resolved))?.chatTemplate || "chatml",
+  );
   if (!fullPrompt.trim()) return { ok: false, status: 400, error: "prompt or messages required" };
 
   try {

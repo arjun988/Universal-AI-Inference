@@ -6,6 +6,7 @@
 #include "uaii/loaders/registry.hpp"
 #include "uaii/runtime/sampling.hpp"
 #include "uaii/runtime/session.hpp"
+#include "uaii/tokenizers/chat_template.hpp"
 #include "uaii/tokenizers/gguf_tokenizer.hpp"
 #include "uaii/tokenizers/simple_tokenizer.hpp"
 
@@ -267,6 +268,7 @@ struct LoadedGen {
   std::unique_ptr<ITokenizer> tok;
   std::string model_path;
   std::string tokenizer_path;
+  std::string chat_template = "chatml";
   std::unique_ptr<runtime::Session> session;
   bool ready = false;
 
@@ -274,6 +276,7 @@ struct LoadedGen {
     session.reset();
     tok.reset();
     graph = ir::Graph{};
+    chat_template = "chatml";
     ready = false;
   }
 };
@@ -282,7 +285,8 @@ Error load_generator(const std::string& model_path,
                      const std::string& tokenizer_gguf,
                      const std::string& backend,
                      std::int64_t max_context,
-                     LoadedGen* out) {
+                     LoadedGen* out,
+                     bool demo_mode = false) {
   if (!out) return Error::make(ErrorCode::InvalidArgument, "out null");
   out->clear();
   out->model_path = model_path;
@@ -291,11 +295,19 @@ Error load_generator(const std::string& model_path,
   Error err = loaders::load_model(model_path, &out->graph);
   if (!err.ok()) return err;
 
+  if (auto it = out->graph.metadata.find("chat_template");
+      it != out->graph.metadata.end()) {
+    out->chat_template = it->second;
+  }
+
   out->tok = tokenizers::load_gguf_tokenizer(out->tokenizer_path, &err);
   if (!out->tok) {
-    // Tiny demo / missing tokenizer metadata → simple demo vocab.
-    out->tok = std::make_unique<tokenizers::SimpleTokenizer>(
-        tokenizers::SimpleTokenizer::demo_vocab());
+    if (demo_mode) {
+      out->tok = std::make_unique<tokenizers::SimpleTokenizer>(
+          tokenizers::SimpleTokenizer::demo_vocab());
+    } else {
+      return err;
+    }
   }
 
   runtime::SessionOptions opts;
@@ -325,27 +337,10 @@ Error load_generator(const std::string& model_path,
   return Error::success();
 }
 
-std::string build_prompt(const std::string& system, const std::string& user) {
-  // Dashboard may already send a full ChatML transcript — don't wrap twice.
-  if (user.find("<|im_start|>") != std::string::npos) {
-    if (user.find("<|im_start|>assistant") != std::string::npos) return user;
-    std::string out = user;
-    if (!out.empty() && out.back() != '\n') out.push_back('\n');
-    out += "<|im_start|>assistant\n";
-    return out;
-  }
-  // ChatML used by Qwen2.5-Instruct and similar GGUF chat models.
-  std::string out;
-  if (!system.empty()) {
-    out += "<|im_start|>system\n";
-    out += system;
-    out += "<|im_end|>\n";
-  }
-  out += "<|im_start|>user\n";
-  out += user;
-  out += "<|im_end|>\n";
-  out += "<|im_start|>assistant\n";
-  return out;
+std::string build_prompt(const std::string& chat_template,
+                         const std::string& system,
+                         const std::string& user) {
+  return tokenizers::format_chat_prompt(chat_template, system, user);
 }
 
 Error append_stop_strings(ITokenizer* tok, const std::vector<std::string>& stops,
@@ -472,12 +467,11 @@ int cmd_generate(const std::vector<std::string>& args) {
     std::cerr << "--prompt or --prompt-file required\n";
     return 1;
   }
-  prompt = build_prompt(system, prompt);
 
   if (demo) {
-    Error err = runtime::materialize_tiny_gguf_demo(&model);
-    if (!err.ok()) {
-      std::cerr << err.to_string() << '\n';
+    Error derr = runtime::materialize_tiny_gguf_demo(&model);
+    if (!derr.ok()) {
+      std::cerr << derr.to_string() << '\n';
       return 1;
     }
     if (tokenizer_gguf.empty()) tokenizer_gguf = model;
@@ -488,12 +482,19 @@ int cmd_generate(const std::vector<std::string>& args) {
   }
 
   LoadedGen gen;
-  Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen);
+  Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo);
   if (!err.ok()) {
     std::cerr << err.to_string() << '\n';
     return 1;
   }
-  err = append_stop_strings(gen.tok.get(), stop_texts, &stop_ids);
+
+  prompt = build_prompt(gen.chat_template, system, prompt);
+
+  auto stop_text_list = stop_texts;
+  for (const auto& s : tokenizers::default_chat_stops(gen.chat_template)) {
+    stop_text_list.push_back(s);
+  }
+  err = append_stop_strings(gen.tok.get(), stop_text_list, &stop_ids);
   if (!err.ok()) {
     std::cerr << err.to_string() << '\n';
     return 1;
@@ -577,16 +578,23 @@ int cmd_chat(const std::vector<std::string>& args) {
   std::cout.flush();
 
   LoadedGen gen;
-  Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen);
+  Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo);
   if (!err.ok()) {
     std::cout << "{\"event\":\"error\",\"error\":\"" << json_escape(err.to_string()) << "\"}\n";
     return 1;
   }
 
-  // Prefer ChatML / EOS stops when present in the tokenizer vocab.
   auto stops = default_stops;
+  for (const auto& s : tokenizers::default_chat_stops(gen.chat_template)) {
+    std::vector<std::int64_t> ids;
+    if (gen.tok && gen.tok->encode(s, &ids).ok()) {
+      for (auto id : ids) {
+        if (std::find(stops.begin(), stops.end(), id) == stops.end()) stops.push_back(id);
+      }
+    }
+  }
   if (gen.tok) {
-    for (const char* s : {"<|im_end|>", "<|endoftext|>"}) {
+    for (const char* s : {"<|endoftext|>", "</s>"}) {
       std::vector<std::int64_t> ids;
       if (gen.tok->encode(s, &ids).ok() && ids.size() == 1) {
         const std::int64_t id = ids.front();
@@ -598,7 +606,8 @@ int cmd_chat(const std::vector<std::string>& args) {
   }
 
   std::cout << "{\"event\":\"ready\",\"model\":\"" << json_escape(model) << "\",\"backend\":\""
-            << json_escape(backend) << "\",\"device\":\"" << device << "\"}\n";
+            << json_escape(backend) << "\",\"device\":\"" << device << "\",\"chat_template\":\""
+            << json_escape(gen.chat_template) << "\"}\n";
   std::cout.flush();
 
   std::string line;
@@ -616,7 +625,7 @@ int cmd_chat(const std::vector<std::string>& args) {
     }
     if (cmd == "reset") {
       // Reload session to clear KV / planner state.
-      err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen);
+      err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo);
       if (!err.ok()) {
         std::cout << "{\"event\":\"error\",\"id\":\"" << json_escape(id)
                   << "\",\"error\":\"" << json_escape(err.to_string()) << "\"}\n";
@@ -635,7 +644,7 @@ int cmd_chat(const std::vector<std::string>& args) {
 
     std::string prompt = extract_json_string(line, "prompt");
     const std::string system = extract_json_string(line, "system");
-    prompt = build_prompt(system, prompt);
+    prompt = build_prompt(gen.chat_template, system, prompt);
     const std::int64_t max_new = extract_json_i64(line, "max_new_tokens", 64);
     const bool stream = extract_json_bool(line, "stream", true);
     const runtime::SampleParams sample = sample_from_jsonl(line);

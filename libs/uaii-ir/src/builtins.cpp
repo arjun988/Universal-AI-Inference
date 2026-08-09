@@ -56,10 +56,12 @@ void OperatorRegistry::register_builtin_schemas() {
   // Attention / LLM building blocks (Phase 4)
   (void)register_schema(schema("Attention", 3, 5, 1, 3,
                                {"num_heads", "kv_heads", "scale", "causal",
-                                "use_kv_cache", "layer_id"},
+                                "use_kv_cache", "layer_id", "logit_softcap"},
                                "Multi-head attention (Q,K,V[,past_k,past_v])"));
-  (void)register_schema(schema("RoPE", 1, 2, 1, 1, {"theta", "interleaved"},
+  (void)register_schema(schema("RoPE", 1, 2, 1, 1, {"theta", "head_dim", "mode"},
                                "Rotary position embedding"));
+  (void)register_schema(schema("Slice", 1, 1, 1, 1, {"start", "end"},
+                               "Slice last dimension [start,end)"));
   (void)register_schema(schema("Embedding", 2, 2, 1, 1, {}, "Token embedding lookup"));
   (void)register_schema(schema("MLP", 3, 3, 1, 1, {"activation"},
                                "Composite MLP (expand in IR for execution)"));

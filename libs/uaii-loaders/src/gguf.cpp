@@ -796,6 +796,51 @@ std::int64_t apply_layer_cap(std::int64_t model_layers) {
   return n;
 }
 
+std::string detect_chat_template_meta(const GgufFile& file, const std::string& arch) {
+  auto it = file.kv.find("tokenizer.chat_template");
+  if (it != file.kv.end() && std::holds_alternative<std::string>(it->second)) {
+    const std::string& j = std::get<std::string>(it->second);
+    if (j.find("<|start_header_id|>") != std::string::npos) return "llama3";
+    if (j.find("<start_of_turn>") != std::string::npos) return "gemma";
+    if (j.find("[INST]") != std::string::npos) return "mistral";
+    if (j.find("<|im_start|>") != std::string::npos) return "chatml";
+  }
+  if (arch == "llama" || arch == "llama3" || arch == "llama4") return "llama3";
+  if (arch == "gemma" || arch == "gemma2" || arch == "gemma3") return "gemma";
+  if (arch == "mistral" || arch == "mixtral" || arch == "llama2") return "mistral";
+  return "chatml";
+}
+
+Error validate_gguf_model(const GgufFile& file, const std::string& arch) {
+  static const char* kUnsupported[] = {
+      "mamba",    "mamba2",   "rwkv",     "rwkv6",    "rwkv7",    "plamo2",   "jamba",
+      "falcon-h1", "bert",    "nomic-bert", "t5",      "t5encoder", "umt5",    "mt5",
+      "flan-t5",  "clip",     "wav2vec2", "whisper",  "deepseek2", "deepseekv2", "deepseekv3",
+  };
+  for (const char* u : kUnsupported) {
+    if (arch == u) {
+      return Error::make(
+          ErrorCode::NotImplemented,
+          std::string("architecture '") + arch +
+              "' is not supported yet (needs MLA/SSM/encoder-decoder kernels). "
+              "Use a decoder-only Llama/Qwen/Gemma GGUF, or set UAII_MAX_LAYERS for partial tests.");
+    }
+  }
+  if (find_tensor(file, "blk.0.attn_kv_a.weight") ||
+      find_tensor(file, "blk.0.attn_k_b.weight")) {
+    return Error::make(ErrorCode::NotImplemented,
+                       "DeepSeek MLA attention tensors detected; not supported yet");
+  }
+  if (find_tensor(file, "blk.0.ssm_conv1d.weight") ||
+      find_tensor(file, "ssm_conv1d.weight")) {
+    return Error::make(ErrorCode::NotImplemented, "Mamba/SSM models are not supported yet");
+  }
+  if (find_tensor(file, "encoder.embd.weight") || find_tensor(file, "enc.embd.weight")) {
+    return Error::make(ErrorCode::NotImplemented, "encoder-decoder models are not supported yet");
+  }
+  return Error::success();
+}
+
 }  // namespace
 
 Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
@@ -818,8 +863,12 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       find_tensor_any(file, {"output_norm.weight", "norm.weight", "output_norm"});
 
   const bool has_blk0 = find_tensor(file, "blk.0.attn_q.weight") != nullptr ||
+                        find_tensor(file, "blk.0.attn_qkv.weight") != nullptr ||
                         find_tensor(file, "blk.0.attn_norm.weight") != nullptr;
   const std::string arch = lower_ascii(kv_string(file, "general.architecture"));
+
+  err = validate_gguf_model(file, arch);
+  if (!err.ok()) return err;
 
   // Capability-based import: any architecture with llama.cpp-style blk.* decoder
   // tensors is accepted (dense SwiGLU/GELU and Mixtral/Qwen2MoE-style expert FFN).
@@ -860,20 +909,29 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     // Qwen2/Phi/Falcon and many non-Llama GGUFs need NeoX.
     const int rope_mode =
         (arch == "qwen2" || arch == "qwen2moe" || arch == "qwen3" || arch == "qwen" ||
-         arch == "phi2" || arch == "phi3" || arch == "falcon" || arch == "stablelm" ||
+         arch == "phi2" || arch == "falcon" || arch == "stablelm" ||
          arch == "starcoder2" || arch == "olmo2" || arch == "gemma" || arch == "gemma2" ||
          arch == "gemma3")
             ? 2
             : 0;
     const float rms_eps =
         kv_float_arch(file, arch, "attention.layer_norm_rms_epsilon", 1e-5f);
+    const float layer_eps =
+        kv_float_arch(file, arch, "attention.layer_norm_epsilon", rms_eps);
+    const float attn_softcap = kv_float_arch(file, arch, "attn_logit_softcapping", 0.f);
+    const bool use_layernorm =
+        find_tensor(file, "blk.0.attn_norm.bias") != nullptr || arch == "gpt2" ||
+        arch == "phi2";
+    const std::string chat_tpl = detect_chat_template_meta(file, arch);
+    const std::int64_t qkv_total = q_dim + kv_dim + kv_dim;
     std::int64_t n_layers = kv_i64_arch(file, arch, "block_count", 0);
     if (n_layers <= 0 && has_blk0) {
       // Infer layer count from tensor names.
       for (std::int64_t i = 0; i < 512; ++i) {
         const std::string probe = "blk." + std::to_string(i) + ".attn_norm.weight";
         if (!find_tensor(file, probe) &&
-            !find_tensor(file, "blk." + std::to_string(i) + ".attn_q.weight")) {
+            !find_tensor(file, "blk." + std::to_string(i) + ".attn_q.weight") &&
+            !find_tensor(file, "blk." + std::to_string(i) + ".attn_qkv.weight")) {
           n_layers = i;
           break;
         }
@@ -923,9 +981,14 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         return Error::success();
       }
       if (!gguf_type_supported(ti->type)) {
-        return Error::make(
-            ErrorCode::NotImplemented,
-            "unsupported GGUF quant type for weight " + name + ": " + to_string(ti->type));
+        const auto ty = static_cast<std::uint32_t>(ti->type);
+        std::string hint = " Supported quants: f16,f32,q4_0,q4_1,q5_0,q5_1,q8_0,q2_k..q6_k.";
+        if (ty >= 20) {
+          hint += " IQ quants (IQ2_XXS, IQ4_NL, …) are not implemented — re-export as Q4_K_M or F16.";
+        }
+        return Error::make(ErrorCode::NotImplemented,
+                           "unsupported GGUF quant type for weight " + name + ": " +
+                               to_string(ti->type) + "." + hint);
       }
       *out_id = b.add_weight(name, DType::F32, dims_to_shape(ti->dims), path + "#" + name,
                              gguf_type_to_quant(ti->type));
@@ -950,7 +1013,15 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       TensorId w_gate_shexp = 0;
       TensorId w_up_shexp = 0;
       TensorId w_down_shexp = 0;
+      TensorId w_qkv = 0;
+      TensorId b_qkv = 0;
+      TensorId attn_norm_b = 0;
+      TensorId ffn_norm_b = 0;
       err = add_weight_ref(pfx + "attn_norm.weight", &attn_norm);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_norm.bias", &attn_norm_b);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_qkv.weight", &w_qkv);
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "attn_q.weight", &wq);
       if (!err.ok()) return err;
@@ -967,9 +1038,13 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "attn_v.bias", &bv);
       if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_qkv.bias", &b_qkv);
+      if (!err.ok()) return err;
       err = add_weight_ref(pfx + "attn_output.weight", &wo);
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "ffn_norm.weight", &ffn_norm);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "ffn_norm.bias", &ffn_norm_b);
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "ffn_gate.weight", &w_gate);
       if (!err.ok()) return err;
@@ -992,40 +1067,70 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       err = add_weight_ref(pfx + "ffn_down_shexp.weight", &w_down_shexp);
       if (!err.ok()) return err;
 
-      if (!attn_norm || !wq || !wk || !wv || !wo) {
-        // Incomplete layer — stop stacking further blocks.
+      const bool split_qkv = (wq != 0 && wk != 0 && wv != 0);
+      const bool fused_qkv = (w_qkv != 0);
+      if (!attn_norm || !wo || (!split_qkv && !fused_qkv)) {
         break;
       }
 
       TensorId n1 = b.add_tensor(pfx + "n1", DType::F32, Shape{{1, dim}});
-      b.add_node(pfx + "rms1", "RMSNorm", "1", {features, attn_norm}, {n1},
-                 {ir::make_float_attr("eps", rms_eps)});
+      if (use_layernorm && attn_norm_b) {
+        b.add_node(pfx + "ln1", "LayerNorm", "1", {features, attn_norm, attn_norm_b}, {n1},
+                   {ir::make_float_attr("eps", layer_eps)});
+      } else {
+        b.add_node(pfx + "rms1", "RMSNorm", "1", {features, attn_norm}, {n1},
+                   {ir::make_float_attr("eps", rms_eps)});
+      }
 
-      TensorId q_proj = b.add_tensor(pfx + "q_proj", DType::F32, Shape{{1, q_dim}});
-      TensorId k_proj = b.add_tensor(pfx + "k_proj", DType::F32, Shape{{1, kv_dim}});
-      TensorId v_proj = b.add_tensor(pfx + "v_proj", DType::F32, Shape{{1, kv_dim}});
-      b.add_node(pfx + "q_mm", "MatMul", "1", {n1, wq}, {q_proj},
-                 {ir::make_bool_attr("transpose_b", true)});
-      b.add_node(pfx + "k_mm", "MatMul", "1", {n1, wk}, {k_proj},
-                 {ir::make_bool_attr("transpose_b", true)});
-      b.add_node(pfx + "v_mm", "MatMul", "1", {n1, wv}, {v_proj},
-                 {ir::make_bool_attr("transpose_b", true)});
-
-      // Qwen2 (and similar) ship F32 Q/K/V biases; Add is numel-matched with [1, D].
-      TensorId q = q_proj;
-      TensorId k = k_proj;
-      TensorId v = v_proj;
-      if (bq) {
+      TensorId q = 0;
+      TensorId k = 0;
+      TensorId v = 0;
+      if (fused_qkv) {
+        TensorId qkv_proj = b.add_tensor(pfx + "qkv_proj", DType::F32, Shape{{1, qkv_total}});
+        b.add_node(pfx + "qkv_mm", "MatMul", "1", {n1, w_qkv}, {qkv_proj},
+                   {ir::make_bool_attr("transpose_b", true)});
+        TensorId qkv = qkv_proj;
+        if (b_qkv) {
+          qkv = b.add_tensor(pfx + "qkv", DType::F32, Shape{{1, qkv_total}});
+          b.add_node(pfx + "qkv_bias", "Add", "1", {qkv_proj, b_qkv}, {qkv});
+        }
         q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, q_dim}});
-        b.add_node(pfx + "q_bias", "Add", "1", {q_proj, bq}, {q});
-      }
-      if (bk) {
         k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, kv_dim}});
-        b.add_node(pfx + "k_bias", "Add", "1", {k_proj, bk}, {k});
-      }
-      if (bv) {
         v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, kv_dim}});
-        b.add_node(pfx + "v_bias", "Add", "1", {v_proj, bv}, {v});
+        b.add_node(pfx + "q_slice", "Slice", "1", {qkv}, {q},
+                   {ir::make_int_attr("start", 0), ir::make_int_attr("end", q_dim)});
+        b.add_node(pfx + "k_slice", "Slice", "1", {qkv}, {k},
+                   {ir::make_int_attr("start", q_dim),
+                    ir::make_int_attr("end", q_dim + kv_dim)});
+        b.add_node(pfx + "v_slice", "Slice", "1", {qkv}, {v},
+                   {ir::make_int_attr("start", q_dim + kv_dim),
+                    ir::make_int_attr("end", qkv_total)});
+      } else {
+        TensorId q_proj = b.add_tensor(pfx + "q_proj", DType::F32, Shape{{1, q_dim}});
+        TensorId k_proj = b.add_tensor(pfx + "k_proj", DType::F32, Shape{{1, kv_dim}});
+        TensorId v_proj = b.add_tensor(pfx + "v_proj", DType::F32, Shape{{1, kv_dim}});
+        b.add_node(pfx + "q_mm", "MatMul", "1", {n1, wq}, {q_proj},
+                   {ir::make_bool_attr("transpose_b", true)});
+        b.add_node(pfx + "k_mm", "MatMul", "1", {n1, wk}, {k_proj},
+                   {ir::make_bool_attr("transpose_b", true)});
+        b.add_node(pfx + "v_mm", "MatMul", "1", {n1, wv}, {v_proj},
+                   {ir::make_bool_attr("transpose_b", true)});
+
+        q = q_proj;
+        k = k_proj;
+        v = v_proj;
+        if (bq) {
+          q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, q_dim}});
+          b.add_node(pfx + "q_bias", "Add", "1", {q_proj, bq}, {q});
+        }
+        if (bk) {
+          k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, kv_dim}});
+          b.add_node(pfx + "k_bias", "Add", "1", {k_proj, bk}, {k});
+        }
+        if (bv) {
+          v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, kv_dim}});
+          b.add_node(pfx + "v_bias", "Add", "1", {v_proj, bv}, {v});
+        }
       }
 
       TensorId q_rope = b.add_tensor(pfx + "q_rope", DType::F32, Shape{{1, q_dim}});
@@ -1040,12 +1145,18 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
                   ir::make_int_attr("mode", rope_mode)});
 
       TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, q_dim}});
-      b.add_node(pfx + "attn", "Attention", "1", {q_rope, k_rope, v}, {attn},
-                 {ir::make_int_attr("num_heads", n_heads),
-                  ir::make_int_attr("kv_heads", n_kv_heads),
-                  ir::make_bool_attr("causal", true),
-                  ir::make_bool_attr("use_kv_cache", true),
-                  ir::make_int_attr("layer_id", li)});
+      {
+        std::vector<ir::Attribute> attn_attrs{
+            ir::make_int_attr("num_heads", n_heads),
+            ir::make_int_attr("kv_heads", n_kv_heads),
+            ir::make_bool_attr("causal", true),
+            ir::make_bool_attr("use_kv_cache", true),
+            ir::make_int_attr("layer_id", li)};
+        if (attn_softcap > 0.f) {
+          attn_attrs.push_back(ir::make_float_attr("logit_softcap", attn_softcap));
+        }
+        b.add_node(pfx + "attn", "Attention", "1", {q_rope, k_rope, v}, {attn}, attn_attrs);
+      }
 
       TensorId attn_o = b.add_tensor(pfx + "attn_o", DType::F32, Shape{{1, dim}});
       b.add_node(pfx + "o_proj", "MatMul", "1", {attn, wo}, {attn_o},
@@ -1057,8 +1168,13 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       TensorId mlp_in = resid1;
       if (ffn_norm) {
         TensorId n2 = b.add_tensor(pfx + "n2", DType::F32, Shape{{1, dim}});
-        b.add_node(pfx + "rms2", "RMSNorm", "1", {resid1, ffn_norm}, {n2},
-                   {ir::make_float_attr("eps", rms_eps)});
+        if (use_layernorm && ffn_norm_b) {
+          b.add_node(pfx + "ln2", "LayerNorm", "1", {resid1, ffn_norm, ffn_norm_b}, {n2},
+                     {ir::make_float_attr("eps", layer_eps)});
+        } else {
+          b.add_node(pfx + "rms2", "RMSNorm", "1", {resid1, ffn_norm}, {n2},
+                     {ir::make_float_attr("eps", rms_eps)});
+        }
         mlp_in = n2;
       }
 
@@ -1183,9 +1299,20 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       Shape nshape = dims_to_shape(norm->dims);
       TensorId nw = b.add_weight(norm->name, DType::F32, nshape, path + "#" + norm->name,
                                  gguf_type_to_quant(norm_info->type));
+      const GgufTensorInfo* norm_bias = find_tensor(file, "output_norm.bias");
+      TensorId nb = 0;
+      if (norm_bias && gguf_type_supported(norm_bias->type)) {
+        nb = b.add_weight(norm_bias->name, DType::F32, dims_to_shape(norm_bias->dims),
+                          path + "#" + norm_bias->name, gguf_type_to_quant(norm_bias->type));
+      }
       TensorId nout = b.add_tensor("normed", DType::F32, Shape{{1, dim}});
-      b.add_node("rms_out", "RMSNorm", "1", {features, nw}, {nout},
-                 {ir::make_float_attr("eps", rms_eps)});
+      if (use_layernorm && nb) {
+        b.add_node("ln_out", "LayerNorm", "1", {features, nw, nb}, {nout},
+                   {ir::make_float_attr("eps", layer_eps)});
+      } else {
+        b.add_node("rms_out", "RMSNorm", "1", {features, nw}, {nout},
+                   {ir::make_float_attr("eps", rms_eps)});
+      }
       features = nout;
     }
 
@@ -1218,6 +1345,11 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     b.set_metadata("kv_dim", std::to_string(kv_dim));
     b.set_metadata("rope_theta", std::to_string(rope_theta));
     b.set_metadata("rope_mode", std::to_string(rope_mode));
+    b.set_metadata("chat_template", chat_tpl);
+    b.set_metadata("norm_type", use_layernorm ? "layer" : "rms");
+    if (attn_softcap > 0.f) {
+      b.set_metadata("attn_logit_softcap", std::to_string(attn_softcap));
+    }
     b.set_metadata("embedding_length", std::to_string(dim));
     b.set_metadata("rms_eps", std::to_string(rms_eps));
     const std::int64_t ctx = kv_i64_arch(file, arch, "context_length", 0);

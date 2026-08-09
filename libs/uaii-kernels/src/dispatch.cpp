@@ -60,7 +60,7 @@ bool supports_cpu_op(const std::string& op_name, const std::string& /*op_version
          op_name == "Neg" || op_name == "Identity" || op_name == "Embedding" ||
          op_name == "RoPE" || op_name == "Attention" || op_name == "MoERouter" ||
          op_name == "MoEExperts" || op_name == "MoEExpertsSwiGLU" ||
-         op_name == "Reshape" || op_name == "Transpose" ||
+         op_name == "Reshape" || op_name == "Transpose" || op_name == "Slice" ||
          op_name == "MLP";
 }
 
@@ -197,13 +197,15 @@ Error dispatch_cpu(const std::string& op_name,
     const bool use_kv = attr_bool(attrs, "use_kv_cache", false);
     const std::int64_t layer_id = attr_int(attrs, "layer_id", -1);
 
+    const float logit_softcap = attr_float(attrs, "logit_softcap", 0.f);
+
     // Explicit past_k/past_v inputs (size 5) and optional present outputs (size 3).
     if (inputs.size() >= 5) {
       TensorView* present_k = outputs->size() >= 3 ? &(*outputs)[1] : nullptr;
       TensorView* present_v = outputs->size() >= 3 ? &(*outputs)[2] : nullptr;
       return attention_kv_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0],
                               num_heads, scale, causal, &inputs[3], &inputs[4],
-                              present_k, present_v);
+                              present_k, present_v, logit_softcap);
     }
 
     runtime::KvCache* cache = active_kv_cache();
@@ -213,13 +215,14 @@ Error dispatch_cpu(const std::string& op_name,
       const TensorView* pk = past_k.data != nullptr ? &past_k : nullptr;
       const TensorView* pv = past_v.data != nullptr ? &past_v : nullptr;
       Error err = attention_kv_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0],
-                                   num_heads, scale, causal, pk, pv, nullptr, nullptr);
+                                   num_heads, scale, causal, pk, pv, nullptr, nullptr,
+                                   logit_softcap);
       if (!err.ok()) return err;
       return cache->append_layer(layer_id, inputs[1], inputs[2]);
     }
 
     return attention_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0], num_heads,
-                         scale, causal);
+                         scale, causal, logit_softcap);
   }
   if (op_name == "MoERouter") {
     if (inputs.size() != 2 || outputs->size() < 2) {
@@ -251,6 +254,13 @@ Error dispatch_cpu(const std::string& op_name,
       return Error::make(ErrorCode::InvalidArgument, "Reshape arity");
     }
     return reshape_f32(inputs[0], &(*outputs)[0]);
+  }
+  if (op_name == "Slice") {
+    if (inputs.size() != 1 || outputs->size() != 1) {
+      return Error::make(ErrorCode::InvalidArgument, "Slice arity");
+    }
+    return slice_f32(inputs[0], &(*outputs)[0], attr_int(attrs, "start", 0),
+                     attr_int(attrs, "end", 0));
   }
   if (op_name == "Transpose") {
     if (inputs.size() != 1 || outputs->size() != 1) {
