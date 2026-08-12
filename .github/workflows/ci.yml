@@ -282,7 +282,7 @@ jobs:
           PY
 
       - name: Upload JSON artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: uaii-bench-${{ matrix.os }}-${{ github.sha }}
           path: benchmarks/results/ci_*.json
