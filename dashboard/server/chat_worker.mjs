@@ -2,9 +2,17 @@ import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import readline from "readline";
 
+function queueMaxFromEnv() {
+  const n = Number(process.env.UAII_CHAT_QUEUE_MAX || 16);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 16;
+}
+
 /**
- * Warm `uaii chat --jsonl` process: loads the GGUF once, serves generate requests.
+ * Warm `uaii chat --jsonl` process: loads GGUF or HF dir once, serves generate requests.
  * `launch` is { cmd, prefix, mode, toModelPath } from uaii_launch.mjs.
+ *
+ * Generates are processed FIFO (one at a time). Waiting requests sit in a bounded queue;
+ * when full, `generate()` rejects with `code: "QUEUE_FULL"` (HTTP 503 at the API layer).
  */
 export class ChatWorker {
   constructor({
@@ -28,6 +36,9 @@ export class ChatWorker {
     this.ready = false;
     this.chatTemplate = "chatml";
     this.busy = false;
+    this.queueMax = queueMaxFromEnv();
+    /** @type {Array<{id: string, req: object, resolve: Function, reject: Function, onToken: Function|null, _timer?: NodeJS.Timeout}>} */
+    this._queue = [];
     this.pending = new Map();
     this._listeners = new Set();
     this._status = {
@@ -53,7 +64,14 @@ export class ChatWorker {
   }
 
   status() {
-    return { ...this._status, ready: this.ready, busy: this.busy, alive: Boolean(this.child) };
+    return {
+      ...this._status,
+      ready: this.ready,
+      busy: this.busy,
+      alive: Boolean(this.child),
+      queueDepth: this._queue.length,
+      queueMax: this.queueMax,
+    };
   }
 
   onStatus(fn) {
@@ -166,11 +184,51 @@ export class ChatWorker {
   }
 
   #failAll(msg) {
+    for (const job of this._queue) {
+      if (job._timer) clearTimeout(job._timer);
+      job.reject(new Error(msg));
+    }
+    this._queue.length = 0;
     for (const [, p] of this.pending) {
       if (p._timer) clearTimeout(p._timer);
       p.reject(new Error(msg));
     }
     this.pending.clear();
+    this.busy = false;
+  }
+
+  #finishJob(id, settle) {
+    const p = this.pending.get(id);
+    if (!p) return;
+    this.pending.delete(id);
+    this.busy = false;
+    if (p._timer) clearTimeout(p._timer);
+    settle(p);
+    this.#pump();
+  }
+
+  #pump() {
+    if (this.busy || !this.ready || !this.child) return;
+    const job = this._queue.shift();
+    if (!job) return;
+
+    this.busy = true;
+    this.#setStatus({ phase: "generating", message: "Generating…" });
+    this.pending.set(job.id, {
+      resolve: job.resolve,
+      reject: job.reject,
+      onToken: job.onToken,
+      _timer: job._timer,
+    });
+    try {
+      this.child.stdin.write(JSON.stringify(job.req) + "\n");
+    } catch (e) {
+      this.pending.delete(job.id);
+      this.busy = false;
+      if (job._timer) clearTimeout(job._timer);
+      job.reject(e);
+      this.#pump();
+    }
   }
 
   #onLine(line) {
@@ -229,6 +287,7 @@ export class ChatWorker {
         readyAt: Date.now(),
         error: "",
       });
+      this.#pump();
       return;
     }
     if (ev.event === "error" && !ev.id) {
@@ -255,27 +314,24 @@ export class ChatWorker {
       return;
     }
     if (ev.event === "done") {
-      this.pending.delete(id);
-      this.busy = false;
-      if (p._timer) clearTimeout(p._timer);
-      this.#setStatus({ phase: "ready", message: "Model ready" });
-      p.resolve(ev);
+      this.#finishJob(id, (job) => {
+        this.#setStatus({ phase: "ready", message: "Model ready" });
+        job.resolve(ev);
+      });
       return;
     }
     if (ev.event === "error") {
-      this.pending.delete(id);
-      this.busy = false;
-      if (p._timer) clearTimeout(p._timer);
-      this.#setStatus({ phase: "ready", message: "Model ready (last generate failed)" });
-      p.reject(new Error(ev.error || "generate failed"));
+      this.#finishJob(id, (job) => {
+        this.#setStatus({ phase: "ready", message: "Model ready (last generate failed)" });
+        job.reject(new Error(ev.error || "generate failed"));
+      });
       return;
     }
     if (ev.event === "reset") {
-      this.pending.delete(id);
-      this.busy = false;
-      if (p._timer) clearTimeout(p._timer);
-      this.#setStatus({ phase: "ready", message: "Session reset" });
-      p.resolve(ev);
+      this.#finishJob(id, (job) => {
+        this.#setStatus({ phase: "ready", message: "Session reset" });
+        job.resolve(ev);
+      });
     }
   }
 
@@ -325,13 +381,15 @@ export class ChatWorker {
     }
     try {
       await this.waitReady();
-      const busyDeadline = Date.now() + 300000;
-      while (this.busy) {
-        if (Date.now() > busyDeadline) throw new Error("chat worker busy timeout — previous request stalled");
-        await new Promise((r) => setTimeout(r, 25));
+      if (this._queue.length >= this.queueMax) {
+        const err = new Error(
+          `chat queue full (depth=${this._queue.length}, max=${this.queueMax})`,
+        );
+        err.code = "QUEUE_FULL";
+        err.status = 503;
+        throw err;
       }
-      this.busy = true;
-      this.#setStatus({ phase: "generating", message: "Generating…" });
+
       const id = randomUUID();
       const req = {
         cmd: "generate",
@@ -352,24 +410,26 @@ export class ChatWorker {
       if (seed != null && seed !== "" && Number.isFinite(Number(seed))) {
         req.seed = Number(seed);
       }
+
       return await new Promise((resolve, reject) => {
-        this.pending.set(id, { resolve, reject, onToken });
         const timer = setTimeout(() => {
+          const qi = this._queue.findIndex((j) => j.id === id);
+          if (qi >= 0) {
+            this._queue.splice(qi, 1);
+            reject(new Error("generate request timed out after 10 minutes — still queued"));
+            return;
+          }
           if (this.pending.has(id)) {
             this.pending.delete(id);
             this.busy = false;
             reject(new Error("generate request timed out after 10 minutes — check Logs"));
+            this.#pump();
           }
         }, 600000);
-        try {
-          this.child.stdin.write(JSON.stringify(req) + "\n");
-        } catch (e) {
-          clearTimeout(timer);
-          this.pending.delete(id);
-          this.busy = false;
-          reject(e);
-        }
-        this.pending.get(id) && (this.pending.get(id)._timer = timer);
+
+        this._queue.push({ id, req, resolve, reject, onToken, _timer: timer });
+        this.#setStatus({ message: this.busy ? `Queued (${this._queue.length} waiting)…` : this._status.message });
+        this.#pump();
       });
     } finally {
       if (unsub) unsub();
@@ -378,6 +438,12 @@ export class ChatWorker {
 
   async reset() {
     await this.waitReady();
+    // Wait for in-flight generate; do not enqueue behind a full FIFO.
+    const deadline = Date.now() + 300000;
+    while (this.busy || this._queue.length > 0) {
+      if (Date.now() > deadline) throw new Error("chat worker busy timeout — cannot reset");
+      await new Promise((r) => setTimeout(r, 25));
+    }
     const id = randomUUID();
     this.busy = true;
     return new Promise((resolve, reject) => {
@@ -423,4 +489,8 @@ export function findChatWorkerStatus(predicate) {
 export function stopAllChatWorkers() {
   for (const w of workers.values()) w.stop();
   workers.clear();
+}
+
+export function defaultChatQueueMax() {
+  return queueMaxFromEnv();
 }

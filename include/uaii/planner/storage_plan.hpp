@@ -41,6 +41,8 @@ struct StoragePlanOptions {
   std::uint64_t ram_budget_bytes = 0;  // 0 = no streaming pressure
   bool prefer_mmap = true;
   bool enable_streaming = true;
+  /// Keep weights whose name contains "l{i}." or "blk.{i}." for i < pin_layers resident.
+  std::int64_t pin_layers = 0;
 };
 
 [[nodiscard]] UAII_API Error build_storage_plan(const ir::Graph& graph,

@@ -8,21 +8,26 @@ export default function Page() {
     <DocLayout
       title="Operator UI"
       active="/docs/dashboard/"
-      lede="Local and self-host operator console over the uaii CLI — not a signed ‘download and double-click’ consumer app. Chat with GGUF models (sampling included), manage the model library, run doctor and benches, OpenAI-compatible API. Lives in dashboard/."
+      lede="Local and self-host operator console over the uaii CLI — not a signed consumer installer. Chat with HF decoder dirs and GGUF blk.* models, Hub pull, doctor, benches, OpenAI-compatible API. Lives in dashboard/."
     >
       <h2>What you get</h2>
       <ul>
         <li>
           <strong>LLM chat</strong> — real generate via <code>uaii generate</code> / warm{" "}
           <code>uaii chat --jsonl</code>, streaming, system prompt, max tokens, temperature /
-          top-p / top-k / repetition penalty, Stop
+          top-p / top-k / repetition penalty, Stop; FIFO request queue
         </li>
         <li>
-          <strong>Any GGUF architecture</strong> with llama.cpp-style <code>blk.*</code> tensors
-          (or the built-in tiny demo model)
+          <strong>Hugging Face</strong> — Hub pull + import folder for allowlisted CausalLM
+          dirs (needs rebuilt <code>uaii</code>). See{" "}
+          <Link href="/docs/huggingface/">Hugging Face</Link>
         </li>
         <li>
-          <strong>Models</strong> — upload, list, convert GGUF → IR, delete
+          <strong>GGUF</strong> — <code>blk.*</code> dense/MoE transformers (MLA expand path)
+          or the built-in tiny demo model
+        </li>
+        <li>
+          <strong>Models</strong> — upload GGUF, list HF + GGUF, convert, delete
         </li>
         <li>
           <strong>Runtime</strong> — <code>uaii doctor --load-plugins</code>

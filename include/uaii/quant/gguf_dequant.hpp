@@ -9,7 +9,7 @@
 namespace uaii {
 namespace quant {
 
-/// Dequantize one GGUF/ggml row (Q4_0 … Q6_K) into `cols` f32 values.
+/// Dequantize one GGUF/ggml row (Q4_0 … Q6_K, IQ4_NL) into `cols` f32 values.
 [[nodiscard]] UAII_API Error dequant_gguf_row(QuantFormat format,
                                               const std::uint8_t* packed,
                                               std::int64_t cols,

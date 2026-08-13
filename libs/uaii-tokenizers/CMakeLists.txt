@@ -6,7 +6,8 @@ uaii_add_module(tokenizers
     src/chat_template.cpp
     src/sentencepiece_tokenizer.cpp
     src/gguf_tokenizer.cpp
-  DEPS uaii::core uaii::loaders
+    src/hf_tokenizer.cpp
+  DEPS uaii::core uaii::ir uaii::loaders
 )
 
 if(UAII_WITH_SENTENCEPIECE)

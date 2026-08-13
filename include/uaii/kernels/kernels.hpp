@@ -52,6 +52,8 @@ namespace kernels {
 
 /// Apply RoPE: out = rotate(in). Optional positions [rows].
 /// When head_dim > 0, RoPE is applied per head chunk (required for MHA/GQA).
+/// When rotary_dim > 0 and rotary_dim < head_dim, only the trailing rotary_dim
+/// elements of each head are rotated (DeepSeek MLA).
 /// When positions is null and a KV cache is active, uses cache past_len as position
 /// for each row (seq=1 decode) or past_len+row for multi-row tensors.
 /// mode: 0 = interleaved pairs (i, i+1); 2 = NeoX pairs (i, i+head_dim/2)
@@ -61,7 +63,17 @@ namespace kernels {
                                       TensorView* out,
                                       float theta = 10000.0f,
                                       std::int64_t head_dim = 0,
-                                      int mode = 0);
+                                      int mode = 0,
+                                      std::int64_t rotary_dim = 0);
+
+/// Assemble MLA K: per head concat(k_nope, broadcast(k_rope)).
+/// k_nope: [B, H*nope], k_rope: [B, rope], out: [B, H*(nope+rope)].
+[[nodiscard]] UAII_API Error mla_expand_k_f32(const TensorView& k_nope,
+                                              const TensorView& k_rope,
+                                              TensorView* out,
+                                              int num_heads,
+                                              std::int64_t nope_dim,
+                                              std::int64_t rope_dim);
 
 /// Simplified MHA: Q,K,V are [batch, seq, dim] or [batch, dim]; out same.
 [[nodiscard]] UAII_API Error attention_f32(const TensorView& q,

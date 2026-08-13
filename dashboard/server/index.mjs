@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import {
   ChatWorker,
+  defaultChatQueueMax,
   getChatWorker,
   listChatWorkers,
   peekChatWorker,
@@ -296,6 +297,46 @@ function ensureModelDir() {
   fs.mkdirSync(config.modelDir, { recursive: true });
 }
 
+function isHfModelDir(full) {
+  try {
+    return fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, "config.json"));
+  } catch {
+    return false;
+  }
+}
+
+function directoryBytes(full) {
+  let total = 0;
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const p = path.join(dir, ent.name);
+      try {
+        if (ent.isDirectory()) walk(p);
+        else if (ent.isFile()) total += fs.statSync(p).size;
+      } catch {
+        /* skip */
+      }
+    }
+  };
+  walk(full);
+  return total;
+}
+
+function sanitizeModelName(name) {
+  return String(name || "")
+    .trim()
+    .replace(/[\\/]+/g, "__")
+    .replace(/[^\w.\-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 180);
+}
+
 function listModels() {
   ensureModelDir();
   const items = [];
@@ -305,6 +346,20 @@ function listModels() {
     try {
       st = fs.statSync(full);
     } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      if (!isHfModelDir(full)) continue;
+      const bytes = directoryBytes(full);
+      items.push({
+        name,
+        path: full,
+        bytes,
+        mib: +(bytes / (1024 * 1024)).toFixed(2),
+        mtime: st.mtime.toISOString(),
+        kind: "hf",
+        chatReady: true,
+      });
       continue;
     }
     if (!st.isFile()) continue;
@@ -322,10 +377,19 @@ function listModels() {
       mib: +(st.size / (1024 * 1024)).toFixed(2),
       mtime: st.mtime.toISOString(),
       kind,
+      chatReady: kind === "gguf",
     });
   }
   items.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
   return items;
+}
+
+function resolveModelPath(name) {
+  if (!name) return "";
+  if (path.isAbsolute(name)) return name;
+  // Allow nested names encoded as org__model (no path traversal).
+  const safe = path.basename(String(name).replace(/\\/g, "/"));
+  return path.join(config.modelDir, safe);
 }
 
 function extractBearer(req) {
@@ -550,11 +614,79 @@ app.post("/api/models/upload", upload.single("file"), (req, res) => {
 });
 
 app.delete("/api/models/:name", (req, res) => {
-  const full = path.join(config.modelDir, path.basename(req.params.name));
-  if (!fs.existsSync(full)) return res.status(404).json({ error: "not found" });
-  fs.unlinkSync(full);
+  const full = resolveModelPath(req.params.name);
+  if (!full || !fs.existsSync(full)) return res.status(404).json({ error: "not found" });
+  try {
+    const st = fs.statSync(full);
+    if (st.isDirectory()) fs.rmSync(full, { recursive: true, force: true });
+    else fs.unlinkSync(full);
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
   pushLog({ kind: "ok", cmd: "models.delete", preview: req.params.name });
   res.json({ ok: true });
+});
+
+app.post("/api/models/pull", async (req, res) => {
+  const repo = String(req.body?.repo || "").trim();
+  if (!repo || !repo.includes("/")) {
+    return res.status(400).json({
+      error: "repo required as org/model (e.g. Qwen/Qwen2.5-0.5B-Instruct)",
+    });
+  }
+  ensureModelDir();
+  const destName = sanitizeModelName(req.body?.name || repo);
+  if (!destName) return res.status(400).json({ error: "invalid dest name" });
+  const outdir = path.join(config.modelDir, destName);
+  const L = uaiiLauncher.resolve();
+  const outArg = L.toModelPath ? L.toModelPath(outdir) : outdir;
+  const revision = String(req.body?.revision || "main").trim() || "main";
+  const args = ["pull", repo, "--outdir", outArg, "--revision", revision];
+  pushLog({ kind: "info", cmd: "models.pull", preview: `${repo} → ${destName}` });
+  const result = await runUaii(args, { timeoutMs: 60 * 60 * 1000 });
+  if (!result.ok) {
+    return res.status(502).json({ error: "pull failed", ...result });
+  }
+  if (!isHfModelDir(outdir) && !fs.existsSync(path.join(outdir, "config.json"))) {
+    // curl partial may still leave files; accept if config exists after pull
+  }
+  const okHf = isHfModelDir(outdir);
+  pushLog({
+    kind: okHf ? "ok" : "warn",
+    cmd: "models.pull",
+    preview: okHf ? destName : `${destName} (check folder)`,
+  });
+  res.json({
+    ok: true,
+    name: destName,
+    path: outdir,
+    kind: okHf ? "hf" : "unknown",
+    ...result,
+  });
+});
+
+app.post("/api/models/import-hf", async (req, res) => {
+  const src = String(req.body?.path || "").trim();
+  if (!src) return res.status(400).json({ error: "path required (HF model directory)" });
+  if (!isHfModelDir(src)) {
+    return res.status(400).json({
+      error: "not an HF model directory (need config.json + weights)",
+      path: src,
+    });
+  }
+  ensureModelDir();
+  const destName = sanitizeModelName(req.body?.name || path.basename(src));
+  const dest = path.join(config.modelDir, destName);
+  try {
+    if (fs.existsSync(dest)) {
+      return res.status(409).json({ error: "already exists", name: destName });
+    }
+    fs.cpSync(src, dest, { recursive: true });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+  pushLog({ kind: "ok", cmd: "models.import-hf", preview: destName });
+  res.json({ ok: true, name: destName, path: dest, kind: "hf" });
 });
 
 app.post("/api/run/demo", async (req, res) => {
@@ -569,8 +701,8 @@ app.post("/api/run/demo", async (req, res) => {
 app.post("/api/run/model", async (req, res) => {
   const name = req.body && req.body.name;
   if (!name) return res.status(400).json({ error: "name required" });
-  const full = path.join(config.modelDir, path.basename(name));
-  if (!fs.existsSync(full)) return res.status(404).json({ error: "model not found" });
+  const full = resolveModelPath(name);
+  if (!full || !fs.existsSync(full)) return res.status(404).json({ error: "model not found" });
   const lower = full.toLowerCase();
 
   if (lower.endsWith(".uaii.json")) {
@@ -596,13 +728,29 @@ app.post("/api/run/model", async (req, res) => {
     return res.json({
       ok: true,
       step: "convert",
-      message: "GGUF converted to UAII IR. Run the .uaii.json from Models, or use Chat → demo gguf for synthetic generate.",
+      message: "GGUF converted to UAII IR. Run the .uaii.json from Models, or use Chat.",
       convert: conv,
       irPath: outIr,
       irName: path.basename(outIr),
     });
   }
-  return res.status(400).json({ error: "unsupported type; use .uaii.json or .gguf" });
+  if (isHfModelDir(full)) {
+    const outIr = path.join(full, "model.uaii.json");
+    const L = uaiiLauncher.resolve();
+    const inArg = L.toModelPath ? L.toModelPath(full) : full;
+    const outArg = L.toModelPath ? L.toModelPath(outIr) : outIr;
+    const conv = await runUaii(["convert", inArg, "-o", outArg]);
+    if (!conv.ok) return res.status(502).json({ step: "convert", ...conv });
+    return res.json({
+      ok: true,
+      step: "convert",
+      message: "HF directory converted to UAII IR inside the model folder.",
+      convert: conv,
+      irPath: outIr,
+      irName: `${path.basename(full)}/model.uaii.json`,
+    });
+  }
+  return res.status(400).json({ error: "unsupported type; use .uaii.json, .gguf, or HF dir" });
 });
 
 function formatChatPrompt(messages, fallbackPrompt, system, chatTemplate = "chatml") {
@@ -690,29 +838,31 @@ function resolveChatModel(body) {
   if (mode === "demo" || body.demoModel === true || body.model === "__demo__") {
     return { kind: "demo", path: "", label: "uaii-tiny-demo" };
   }
-  const name = body.model || body.gguf || "";
+  const name = body.model || body.gguf || body.hf || "";
   if (!name || name === "__demo__") {
     return {
-      error: "No model selected. Upload a .gguf in Models, then choose it in Chat.",
+      error: "No model selected. Import a .gguf or Hugging Face folder in Models, then choose it in Chat.",
     };
   }
-  const full = path.isAbsolute(name) ? name : path.join(config.modelDir, path.basename(name));
-  if (!fs.existsSync(full)) {
-    return { error: "model not found — upload a .gguf in Models", path: full };
+  const full = resolveModelPath(name);
+  if (!full || !fs.existsSync(full)) {
+    return { error: "model not found — import a .gguf or HF dir in Models", path: full };
+  }
+  if (isHfModelDir(full)) {
+    return { kind: "hf", path: full, label: path.basename(full) };
   }
   const lower = full.toLowerCase();
   if (lower.endsWith(".gguf")) {
     return { kind: "gguf", path: full, label: path.basename(full) };
   }
   if (lower.endsWith(".uaii.json")) {
-    // Prefer sibling .gguf for tokenizer + prefer generate via convert path
     const sibling = full.replace(/\.uaii\.json$/i, ".gguf");
     if (fs.existsSync(sibling)) {
       return { kind: "gguf", path: sibling, label: path.basename(sibling), ir: full };
     }
     return { kind: "ir", path: full, label: path.basename(full) };
   }
-  return { error: "unsupported model type (use .gguf)", path: full };
+  return { error: "unsupported model type (use .gguf or HF directory)", path: full };
 }
 
 /** In-flight staging / prepare state so the UI can poll while copies run. */
@@ -988,14 +1138,25 @@ async function runLlmChat(body, { onToken = null, onStatus = null } = {}) {
     };
   } catch (e) {
     pushLog({ kind: "fail", cmd: "chat.generate", preview: e.message });
-    return { ok: false, status: 502, error: e.message, content: e.message };
+    const queueFull =
+      e.code === "QUEUE_FULL" || e.status === 503 || /chat queue full/i.test(e.message || "");
+    return {
+      ok: false,
+      status: queueFull ? 503 : 502,
+      error: e.message,
+      content: e.message,
+      code: queueFull ? "QUEUE_FULL" : undefined,
+    };
   }
 }
 
 app.post("/api/chat", async (req, res) => {
   const body = req.body || {};
   const result = await runLlmChat(body);
-  if (!result.ok) return res.status(result.status || 502).json(result);
+  if (!result.ok) {
+    if (result.status === 503) res.setHeader("Retry-After", "1");
+    return res.status(result.status || 502).json(result);
+  }
   res.json(result);
 });
 
@@ -1049,6 +1210,29 @@ app.get("/api/chat/status", (req, res) => {
   const resolved = resolveChatModel({ model });
   if (resolved.error) return res.status(404).json({ ok: false, ...resolved });
   res.json({ ok: true, status: statusForModel(resolved) });
+});
+
+app.get("/api/chat/queue", (req, res) => {
+  const model = String(req.query.model || "");
+  const max = defaultChatQueueMax();
+  if (!model) {
+    return res.status(400).json({ error: "model query required", depth: 0, max, busy: false, ready: false });
+  }
+  const resolved = resolveChatModel({ model });
+  if (resolved.error) {
+    return res.status(404).json({ error: resolved.error, depth: 0, max, busy: false, ready: false });
+  }
+  const worker = peekChatWorker(workerKey(resolved));
+  if (!worker) {
+    return res.json({ depth: 0, max, busy: false, ready: false });
+  }
+  const s = worker.status();
+  return res.json({
+    depth: s.queueDepth ?? 0,
+    max: s.queueMax ?? max,
+    busy: Boolean(s.busy),
+    ready: Boolean(s.ready),
+  });
 });
 
 app.post("/api/chat/prepare", async (req, res) => {
@@ -1156,7 +1340,7 @@ app.post("/api/jobs/cancel-running", (_req, res) => {
 app.get("/v1/models", (_req, res) => {
   const models = [
     ...listModels()
-      .filter((m) => m.kind === "gguf" || m.kind === "uaii-ir")
+      .filter((m) => m.kind === "gguf" || m.kind === "hf" || m.kind === "uaii-ir")
       .map((m) => ({
         id: `uaii-file-${m.name}`,
         object: "model",
@@ -1191,7 +1375,7 @@ app.post("/v1/chat/completions", async (req, res) => {
   if (!model) {
     return res.status(400).json({
       error: {
-        message: "model is required — upload a .gguf and pass its filename (or uaii-file-<name>)",
+        message: "model is required — pass a .gguf / HF folder name (or uaii-file-<name>)",
         type: "invalid_request_error",
       },
     });
@@ -1210,14 +1394,21 @@ app.post("/v1/chat/completions", async (req, res) => {
   const id = `chatcmpl-${randomUUID()}`;
 
   if (body.stream && chatBody.mode !== "cli-demo") {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.flushHeaders?.();
+    // Run first; only switch to SSE after we know we aren't queue-full (503).
+    let sseStarted = false;
+    const ensureSse = () => {
+      if (sseStarted) return;
+      sseStarted = true;
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.flushHeaders?.();
+    };
     try {
       const result = await runLlmChat(
         { ...chatBody, stream: true },
         {
           onToken: (ev) => {
+            ensureSse();
             res.write(
               `data: ${JSON.stringify({
                 id,
@@ -1229,11 +1420,23 @@ app.post("/v1/chat/completions", async (req, res) => {
         },
       );
       if (!result.ok) {
+        if (result.status === 503 && !sseStarted) {
+          res.setHeader("Retry-After", "1");
+          return res.status(503).json({
+            error: {
+              message: result.error || "chat queue full",
+              type: "server_error",
+              code: "QUEUE_FULL",
+            },
+          });
+        }
+        ensureSse();
         res.write(
           `data: ${JSON.stringify({ error: { message: result.error || "failed", type: "server_error" } })}\n\n`,
         );
         return res.end();
       }
+      ensureSse();
       res.write(
         `data: ${JSON.stringify({
           id,
@@ -1244,6 +1447,15 @@ app.post("/v1/chat/completions", async (req, res) => {
       res.write("data: [DONE]\n\n");
       return res.end();
     } catch (e) {
+      if (e.code === "QUEUE_FULL" || e.status === 503) {
+        if (!sseStarted) {
+          res.setHeader("Retry-After", "1");
+          return res.status(503).json({
+            error: { message: e.message, type: "server_error", code: "QUEUE_FULL" },
+          });
+        }
+      }
+      ensureSse();
       res.write(
         `data: ${JSON.stringify({ error: { message: e.message, type: "server_error" } })}\n\n`,
       );
@@ -1253,6 +1465,16 @@ app.post("/v1/chat/completions", async (req, res) => {
 
   const result = await runLlmChat(chatBody);
   if (!result.ok) {
+    if (result.status === 503) {
+      res.setHeader("Retry-After", "1");
+      return res.status(503).json({
+        error: {
+          message: result.error || result.content || "chat queue full",
+          type: "server_error",
+          code: "QUEUE_FULL",
+        },
+      });
+    }
     return res.status(result.status || 502).json({
       error: { message: result.error || result.content || "failed", type: "server_error" },
     });

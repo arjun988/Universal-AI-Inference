@@ -3,6 +3,7 @@
 #include "commands/generate.hpp"
 #include "commands/ir_commands.hpp"
 #include "commands/optimize.hpp"
+#include "commands/pull.hpp"
 #include "commands/run.hpp"
 
 #include "uaii/core/config.hpp"
@@ -26,10 +27,11 @@ void print_usage(const char* argv0) {
       << "  validate   Validate a UAII IR graph\n"
       << "  inspect    Inspect tensors / nodes / metadata\n"
       << "  graph      Dump IR graph (text|dot|json|plan)\n"
-      << "  convert    GGUF/Safetensors/ONNX/MLX/PyTorch sidecar → UAII IR\n"
-      << "  tokenize   Encode/decode (Simple/BPE/SentencePiece/GGUF)\n"
-      << "  generate   Text generation from a GGUF model (greedy)\n"
+      << "  convert    GGUF/HF-dir/Safetensors/ONNX/MLX/PyTorch sidecar → UAII IR\n"
+      << "  tokenize   Encode/decode (Simple/BPE/SentencePiece/GGUF/HF)\n"
+      << "  generate   Text generation from GGUF or Hugging Face model dirs\n"
       << "  chat       JSONL chat worker (warm session for dashboard)\n"
+      << "  pull       Download a Hugging Face repo into a local cache\n"
       << "  run        Execute IR (or built-in demos)\n"
       << "  profile    Capture chrome-trace profiler JSON\n"
       << "  benchmark  Baseline vs optimized timings\n"
@@ -154,6 +156,9 @@ int main(int argc, char** argv) {
   }
   if (command == "generate") {
     return uaii::cli::cmd_generate(opts.rest);
+  }
+  if (command == "pull") {
+    return uaii::cli::cmd_pull(opts.rest);
   }
   if (command == "chat") {
     return uaii::cli::cmd_chat(opts.rest);

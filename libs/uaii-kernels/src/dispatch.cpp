@@ -58,7 +58,8 @@ bool supports_cpu_op(const std::string& op_name, const std::string& /*op_version
          op_name == "LayerNorm" || op_name == "RMSNorm" || op_name == "Relu" ||
          op_name == "Gelu" || op_name == "Silu" || op_name == "Add" || op_name == "Mul" ||
          op_name == "Neg" || op_name == "Identity" || op_name == "Embedding" ||
-         op_name == "RoPE" || op_name == "Attention" || op_name == "MoERouter" ||
+         op_name == "RoPE" || op_name == "MLAExpandK" || op_name == "Attention" ||
+         op_name == "MoERouter" ||
          op_name == "MoEExperts" || op_name == "MoEExpertsSwiGLU" ||
          op_name == "Reshape" || op_name == "Transpose" || op_name == "Slice" ||
          op_name == "MLP";
@@ -185,7 +186,17 @@ Error dispatch_cpu(const std::string& op_name,
     const TensorView* pos = inputs.size() > 1 ? &inputs[1] : nullptr;
     return rope_f32(inputs[0], pos, &(*outputs)[0], attr_float(attrs, "theta", 10000.f),
                     attr_int(attrs, "head_dim", 0),
-                    static_cast<int>(attr_int(attrs, "mode", 0)));
+                    static_cast<int>(attr_int(attrs, "mode", 0)),
+                    attr_int(attrs, "rotary_dim", 0));
+  }
+  if (op_name == "MLAExpandK") {
+    if (inputs.size() != 2 || outputs->size() != 1) {
+      return Error::make(ErrorCode::InvalidArgument, "MLAExpandK arity");
+    }
+    return mla_expand_k_f32(inputs[0], inputs[1], &(*outputs)[0],
+                            static_cast<int>(attr_int(attrs, "num_heads", 1)),
+                            attr_int(attrs, "nope_dim", 0),
+                            attr_int(attrs, "rope_dim", 0));
   }
   if (op_name == "Attention") {
     if (inputs.size() < 3 || outputs->empty()) {

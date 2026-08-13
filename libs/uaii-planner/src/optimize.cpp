@@ -44,6 +44,7 @@ Error optimize_graph(ir::Graph graph,
     sopts.ram_budget_bytes = options.ram_budget_bytes;
     sopts.prefer_mmap = options.prefer_mmap;
     sopts.enable_streaming = options.enable_streaming;
+    sopts.pin_layers = options.pin_layers;
     Error err = build_storage_plan(graph, sopts, &out->storage);
     if (!err.ok()) return err;
   }

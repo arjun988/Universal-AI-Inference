@@ -1,6 +1,7 @@
 #include "uaii/loaders/registry.hpp"
 
 #include "uaii/loaders/gguf.hpp"
+#include "uaii/loaders/hf.hpp"
 #include "uaii/loaders/mlx.hpp"
 #include "uaii/loaders/onnx.hpp"
 #include "uaii/loaders/pytorch.hpp"
@@ -56,6 +57,7 @@ std::vector<LoaderInfo> LoaderRegistry::list() const {
 void LoaderRegistry::register_defaults() {
   loaders_.clear();
   register_loader(std::make_unique<GgufLoader>());
+  register_loader(std::make_unique<HfLoader>());
   register_loader(std::make_unique<SafetensorsLoader>());
   register_loader(std::make_unique<OnnxLoader>());
   register_loader(std::make_unique<PytorchLoader>());

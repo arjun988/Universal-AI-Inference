@@ -31,7 +31,14 @@ bash scripts/build_uaii_wsl.sh
 # Your GGUF (dense or MoE with blk.* + ffn_*_exps)
 ./build/libs/uaii-cli/uaii generate --model /path/to/model.gguf \
   --prompt "Write a haiku about inference" --max-new-tokens 64
+
+# Hugging Face decoder-only (allowlisted CausalLM folder)
+./build/libs/uaii-cli/uaii pull org/model --outdir ./models/hf/org__model
+./build/libs/uaii-cli/uaii generate --model ./models/hf/org__model \
+  --prompt "Hello" --max-new-tokens 64 --preset laptop
 ```
+
+What to recommend to others: HF decoder-only + GGUF `blk.*` today — see `docs/huggingface_support.md`. Other Hub arches come later.
 
 ## 3. Operator UI (optional, ≈2 min)
 

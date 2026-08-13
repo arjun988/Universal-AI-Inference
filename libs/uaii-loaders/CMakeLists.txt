@@ -1,6 +1,7 @@
 uaii_add_module(loaders
   SOURCES
     src/gguf.cpp
+    src/hf.cpp
     src/safetensors.cpp
     src/onnx.cpp
     src/pytorch.cpp

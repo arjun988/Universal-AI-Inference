@@ -7,7 +7,7 @@ export default function Page() {
     <DocLayout
       title="CLI reference"
       active="/docs/cli/"
-      lede="The uaii binary is the fastest way to diagnose the install, convert models, and run graphs."
+      lede="The uaii binary diagnoses the install, pulls HF models, converts weights, and runs generation."
     >
       <h2>Global flags</h2>
       <ul>
@@ -49,23 +49,31 @@ export default function Page() {
             </tr>
             <tr>
               <td>
+                <code>pull</code>
+              </td>
+              <td>
+                Download a Hugging Face repo into a local directory (Hub decoder-only path)
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <code>convert</code>
               </td>
-              <td>GGUF / Safetensors / ONNX / MLX / PyTorch sidecar → UAII IR</td>
+              <td>HF dir / GGUF / Safetensors / ONNX / MLX / PyTorch sidecar → UAII IR</td>
             </tr>
             <tr>
               <td>
                 <code>tokenize</code>
               </td>
-              <td>Simple / BPE / SentencePiece / GGUF encode & decode</td>
+              <td>Simple / BPE / SentencePiece / GGUF / HF encode & decode</td>
             </tr>
             <tr>
               <td>
                 <code>generate</code>
               </td>
               <td>
-                Text generation from a GGUF (any <code>blk.*</code> arch) or{" "}
-                <code>--demo</code> tiny model; <code>--json</code> / <code>--stream</code>
+                Text generation from HF CausalLM dirs, GGUF <code>blk.*</code>, or{" "}
+                <code>--demo</code>; presets / <code>--json</code> / <code>--stream</code>
               </td>
             </tr>
             <tr>

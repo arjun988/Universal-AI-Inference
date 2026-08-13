@@ -134,7 +134,15 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
     return r.status === 0 && h ? h : "/home/arjun";
   }
 
-  function stageScript(src, dst, cacheDir) {
+  function stageScript(src, dst, cacheDir, isDir) {
+    if (isDir) {
+      return [
+        `mkdir -p '${cacheDir}'`,
+        `mkdir -p '${dst}'`,
+        `cp -a '${src}/.' '${dst}/'`,
+        `test -f '${dst}/config.json' && printf '%s' '${dst}'`,
+      ].join(" && ");
+    }
     return [
       `mkdir -p '${cacheDir}'`,
       `if [ ! -f '${dst}' ] || [ "$(stat -c%s '${dst}' 2>/dev/null || echo 0)" != "$(stat -c%s '${src}' 2>/dev/null || echo 1)" ]; then cp -f '${src}' '${dst}'; fi`,
@@ -145,6 +153,13 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
   function stageModelPath(hostPath) {
     const L = resolve();
     if (L.mode !== "wsl" || !hostPath) return L.toModelPath(hostPath);
+    const isDir = (() => {
+      try {
+        return fs.statSync(hostPath).isDirectory();
+      } catch {
+        return false;
+      }
+    })();
     const src = L.toModelPath(hostPath);
     if (!src.startsWith("/mnt/")) return src;
     const base = path.posix.basename(src.replace(/\\/g, "/"));
@@ -154,11 +169,15 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
       "",
     );
     const dst = `${cacheDir}/${base}`;
-    const ready = spawnSync("wsl", ["-d", distro, "--", "bash", "-lc", stageScript(src, dst, cacheDir)], {
-      windowsHide: true,
-      encoding: "utf8",
-      timeout: 600000,
-    });
+    const ready = spawnSync(
+      "wsl",
+      ["-d", distro, "--", "bash", "-lc", stageScript(src, dst, cacheDir, isDir)],
+      {
+        windowsHide: true,
+        encoding: "utf8",
+        timeout: 600000,
+      },
+    );
     const staged = (ready.stdout || "").trim();
     if (ready.status === 0 && staged) return staged;
     console.warn("[uaii-launch] WSL model stage failed; using /mnt path:", ready.stderr || ready.stdout);
@@ -170,6 +189,13 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
     if (L.mode !== "wsl" || !hostPath) {
       return Promise.resolve(L.toModelPath(hostPath));
     }
+    const isDir = (() => {
+      try {
+        return fs.statSync(hostPath).isDirectory();
+      } catch {
+        return false;
+      }
+    })();
     const src = L.toModelPath(hostPath);
     if (!src.startsWith("/mnt/")) return Promise.resolve(src);
     const base = path.posix.basename(src.replace(/\\/g, "/"));
@@ -180,9 +206,13 @@ export function createUaiiLauncher({ repoRoot, configuredBin = "" }) {
     );
     const dst = `${cacheDir}/${base}`;
     return new Promise((resolvePromise) => {
-      const child = spawn("wsl", ["-d", distro, "--", "bash", "-lc", stageScript(src, dst, cacheDir)], {
-        windowsHide: true,
-      });
+      const child = spawn(
+        "wsl",
+        ["-d", distro, "--", "bash", "-lc", stageScript(src, dst, cacheDir, isDir)],
+        {
+          windowsHide: true,
+        },
+      );
       let out = "";
       let err = "";
       child.stdout.on("data", (d) => {

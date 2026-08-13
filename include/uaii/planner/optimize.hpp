@@ -7,6 +7,7 @@
 #include "uaii/planner/memory_plan.hpp"
 #include "uaii/planner/storage_plan.hpp"
 
+#include <cstdint>
 #include <string>
 
 namespace uaii {
@@ -20,6 +21,7 @@ struct OptimizeOptions {
   bool enable_streaming = false;
   std::uint64_t ram_budget_bytes = 0;
   bool prefer_mmap = true;
+  std::int64_t pin_layers = 0;
 };
 
 struct OptimizeResult {

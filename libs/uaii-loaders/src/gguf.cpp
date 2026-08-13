@@ -301,9 +301,22 @@ const char* to_string(GgufType type) noexcept {
     case GgufType::Q4_K: return "q4_k";
     case GgufType::Q5_K: return "q5_k";
     case GgufType::Q6_K: return "q6_k";
+    case GgufType::Q8_K: return "q8_k";
+    case GgufType::IQ2_XXS: return "iq2_xxs";
+    case GgufType::IQ2_XS: return "iq2_xs";
+    case GgufType::IQ3_XXS: return "iq3_xxs";
+    case GgufType::IQ1_S: return "iq1_s";
+    case GgufType::IQ4_NL: return "iq4_nl";
+    case GgufType::IQ3_S: return "iq3_s";
+    case GgufType::IQ2_S: return "iq2_s";
+    case GgufType::IQ4_XS: return "iq4_xs";
     case GgufType::I8: return "i8";
     case GgufType::I16: return "i16";
     case GgufType::I32: return "i32";
+    case GgufType::I64: return "i64";
+    case GgufType::F64: return "f64";
+    case GgufType::IQ1_M: return "iq1_m";
+    case GgufType::BF16: return "bf16";
     default: return "other";
   }
 }
@@ -322,6 +335,7 @@ bool gguf_type_supported(GgufType t) noexcept {
     case GgufType::Q4_K:
     case GgufType::Q5_K:
     case GgufType::Q6_K:
+    case GgufType::IQ4_NL:
       return true;
     default:
       return false;
@@ -342,6 +356,7 @@ quant::QuantFormat gguf_type_to_quant(GgufType t) noexcept {
     case GgufType::Q4_K: return quant::QuantFormat::Q4_K;
     case GgufType::Q5_K: return quant::QuantFormat::Q5_K;
     case GgufType::Q6_K: return quant::QuantFormat::Q6_K;
+    case GgufType::IQ4_NL: return quant::QuantFormat::IQ4_NL;
     default: break;
   }
   return quant::QuantFormat::F32;
@@ -351,6 +366,7 @@ DType gguf_to_dtype(GgufType type) noexcept {
   switch (type) {
     case GgufType::F32: return DType::F32;
     case GgufType::F16: return DType::F16;
+    case GgufType::BF16: return DType::BF16;
     case GgufType::I8: return DType::I8;
     case GgufType::I32: return DType::I32;
     case GgufType::I64: return DType::I64;
@@ -362,6 +378,7 @@ std::size_t gguf_type_nbytes_per_elem(GgufType type) noexcept {
   switch (type) {
     case GgufType::F32: return 4;
     case GgufType::F16: return 2;
+    case GgufType::BF16: return 2;
     case GgufType::I8: return 1;
     case GgufType::I16: return 2;
     case GgufType::I32: return 4;
@@ -527,7 +544,8 @@ Error gguf_load_tensor_f32(const GgufFile& file,
   } else if (info->type == GgufType::Q4_1 || info->type == GgufType::Q5_0 ||
              info->type == GgufType::Q5_1 || info->type == GgufType::Q2_K ||
              info->type == GgufType::Q3_K || info->type == GgufType::Q4_K ||
-             info->type == GgufType::Q5_K || info->type == GgufType::Q6_K) {
+             info->type == GgufType::Q5_K || info->type == GgufType::Q6_K ||
+             info->type == GgufType::IQ4_NL) {
     // K-quants / extra block quants: load packed bytes then dequant to f32.
     const auto qf = gguf_type_to_quant(info->type);
     if (!quant::supports_gguf_dequant(qf)) {
@@ -546,7 +564,7 @@ Error gguf_load_tensor_f32(const GgufFile& file,
     return Error::make(ErrorCode::NotImplemented,
                        "unsupported GGUF dtype for f32 load: " +
                            std::string(to_string(info->type)) +
-                           " (supported: F32/F16/Q4_0/Q4_1/Q5_*/Q8_0/Q*_K/I8)");
+                           " (supported: F32/F16/Q4_0/Q4_1/Q5_*/Q8_0/Q*_K/IQ4_NL/I8)");
   }
 
   if (out_shape) {
@@ -813,32 +831,58 @@ std::string detect_chat_template_meta(const GgufFile& file, const std::string& a
 
 Error validate_gguf_model(const GgufFile& file, const std::string& arch) {
   static const char* kUnsupported[] = {
-      "mamba",    "mamba2",   "rwkv",     "rwkv6",    "rwkv7",    "plamo2",   "jamba",
-      "falcon-h1", "bert",    "nomic-bert", "t5",      "t5encoder", "umt5",    "mt5",
-      "flan-t5",  "clip",     "wav2vec2", "whisper",  "deepseek2", "deepseekv2", "deepseekv3",
+      "mamba",     "mamba2",    "rwkv",      "rwkv6",     "rwkv7",    "plamo2", "jamba",
+      "falcon-h1", "bert",      "nomic-bert", "t5",       "t5encoder", "umt5",  "mt5",
+      "flan-t5",   "clip",      "wav2vec2",  "whisper",
   };
   for (const char* u : kUnsupported) {
     if (arch == u) {
+      std::string hint;
+      if (arch == "mamba" || arch == "mamba2" || arch == "jamba" || arch == "falcon-h1" ||
+          arch == "plamo2") {
+        hint = "plugin ops SSMConv1d / SSMState (research_ops scaffold)";
+      } else if (arch == "rwkv" || arch == "rwkv6" || arch == "rwkv7") {
+        hint = "plugin op RWKVTimeMix (research_ops scaffold)";
+      } else if (arch == "bert" || arch == "nomic-bert" || arch == "t5" || arch == "t5encoder" ||
+                 arch == "umt5" || arch == "mt5" || arch == "flan-t5") {
+        hint = "plugin op EncoderCrossAttn (research_ops scaffold)";
+      } else if (arch == "clip") {
+        hint = "plugin op VisionPatchEmbed (research_ops scaffold)";
+      } else {
+        hint = "SSM/encoder-decoder/vision kernels";
+      }
       return Error::make(
           ErrorCode::NotImplemented,
           std::string("architecture '") + arch +
-              "' is not supported yet (needs MLA/SSM/encoder-decoder kernels). "
+              "' is not supported yet (needs " + hint + "). "
               "Use a decoder-only Llama/Qwen/Gemma GGUF, or set UAII_MAX_LAYERS for partial tests.");
     }
   }
-  if (find_tensor(file, "blk.0.attn_kv_a.weight") ||
-      find_tensor(file, "blk.0.attn_k_b.weight")) {
-    return Error::make(ErrorCode::NotImplemented,
-                       "DeepSeek MLA attention tensors detected; not supported yet");
-  }
   if (find_tensor(file, "blk.0.ssm_conv1d.weight") ||
       find_tensor(file, "ssm_conv1d.weight")) {
-    return Error::make(ErrorCode::NotImplemented, "Mamba/SSM models are not supported yet");
+    return Error::make(
+        ErrorCode::NotImplemented,
+        "Mamba/SSM models are not supported yet (needs plugin ops SSMConv1d / SSMState)");
   }
   if (find_tensor(file, "encoder.embd.weight") || find_tensor(file, "enc.embd.weight")) {
-    return Error::make(ErrorCode::NotImplemented, "encoder-decoder models are not supported yet");
+    return Error::make(
+        ErrorCode::NotImplemented,
+        "encoder-decoder models are not supported yet (needs plugin op EncoderCrossAttn)");
   }
   return Error::success();
+}
+
+/// Weight layout after dims_to_shape is [out, in] for MatMul(transpose_b=true).
+std::int64_t weight_out_dim(const GgufTensorInfo* ti) {
+  if (!ti || ti->dims.empty()) return 0;
+  Shape s = dims_to_shape(ti->dims);
+  return s.dims.empty() ? 0 : s.dims[0];
+}
+
+std::int64_t weight_in_dim(const GgufTensorInfo* ti) {
+  if (!ti || ti->dims.size() < 2) return 0;
+  Shape s = dims_to_shape(ti->dims);
+  return s.dims.size() > 1 ? s.dims[1] : 0;
 }
 
 }  // namespace
@@ -864,7 +908,10 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
 
   const bool has_blk0 = find_tensor(file, "blk.0.attn_q.weight") != nullptr ||
                         find_tensor(file, "blk.0.attn_qkv.weight") != nullptr ||
-                        find_tensor(file, "blk.0.attn_norm.weight") != nullptr;
+                        find_tensor(file, "blk.0.attn_norm.weight") != nullptr ||
+                        find_tensor(file, "blk.0.attn_kv_a_mqa.weight") != nullptr ||
+                        find_tensor(file, "blk.0.attn_kv_a.weight") != nullptr ||
+                        find_tensor(file, "blk.0.attn_q_a.weight") != nullptr;
   const std::string arch = lower_ascii(kv_string(file, "general.architecture"));
 
   err = validate_gguf_model(file, arch);
@@ -911,9 +958,27 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         (arch == "qwen2" || arch == "qwen2moe" || arch == "qwen3" || arch == "qwen" ||
          arch == "phi2" || arch == "falcon" || arch == "stablelm" ||
          arch == "starcoder2" || arch == "olmo2" || arch == "gemma" || arch == "gemma2" ||
-         arch == "gemma3")
+         arch == "gemma3" || arch == "deepseek2" || arch == "deepseekv2" ||
+         arch == "deepseekv3" || arch == "deepseek")
             ? 2
             : 0;
+    const std::int64_t q_lora_rank = kv_i64_arch(file, arch, "attention.q_lora_rank",
+                                                 kv_i64_arch(file, arch, "q_lora_rank", 0));
+    const std::int64_t kv_lora_rank = kv_i64_arch(file, arch, "attention.kv_lora_rank",
+                                                  kv_i64_arch(file, arch, "kv_lora_rank", 0));
+    const std::int64_t qk_nope_head_dim =
+        kv_i64_arch(file, arch, "attention.qk_nope_head_dim",
+                    kv_i64_arch(file, arch, "qk_nope_head_dim", 0));
+    const std::int64_t qk_rope_head_dim =
+        kv_i64_arch(file, arch, "attention.qk_rope_head_dim",
+                    kv_i64_arch(file, arch, "qk_rope_head_dim", 0));
+    const std::int64_t value_length = kv_i64_arch(file, arch, "attention.value_length", 0);
+    // MLA RoPE chunk: prefer qk_rope_head_dim, else key_length, else dense head_dim.
+    std::int64_t mla_rope_head_dim = qk_rope_head_dim;
+    if (mla_rope_head_dim <= 0) {
+      mla_rope_head_dim = kv_i64_arch(file, arch, "attention.key_length", 0);
+    }
+    if (mla_rope_head_dim <= 0) mla_rope_head_dim = head_dim;
     const float rms_eps =
         kv_float_arch(file, arch, "attention.layer_norm_rms_epsilon", 1e-5f);
     const float layer_eps =
@@ -931,7 +996,10 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         const std::string probe = "blk." + std::to_string(i) + ".attn_norm.weight";
         if (!find_tensor(file, probe) &&
             !find_tensor(file, "blk." + std::to_string(i) + ".attn_q.weight") &&
-            !find_tensor(file, "blk." + std::to_string(i) + ".attn_qkv.weight")) {
+            !find_tensor(file, "blk." + std::to_string(i) + ".attn_qkv.weight") &&
+            !find_tensor(file, "blk." + std::to_string(i) + ".attn_kv_a_mqa.weight") &&
+            !find_tensor(file, "blk." + std::to_string(i) + ".attn_kv_a.weight") &&
+            !find_tensor(file, "blk." + std::to_string(i) + ".attn_q_a.weight")) {
           n_layers = i;
           break;
         }
@@ -947,6 +1015,16 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     if (n_expert_used_meta > 0) {
       b.set_metadata("expert_used_count", std::to_string(n_expert_used_meta));
     }
+    if (q_lora_rank > 0) b.set_metadata("q_lora_rank", std::to_string(q_lora_rank));
+    if (kv_lora_rank > 0) b.set_metadata("kv_lora_rank", std::to_string(kv_lora_rank));
+    if (qk_nope_head_dim > 0) {
+      b.set_metadata("qk_nope_head_dim", std::to_string(qk_nope_head_dim));
+    }
+    if (qk_rope_head_dim > 0) {
+      b.set_metadata("qk_rope_head_dim", std::to_string(qk_rope_head_dim));
+    }
+    if (value_length > 0) b.set_metadata("value_length", std::to_string(value_length));
+    bool any_mla = false;
     if (has_blk0) {
       log::info("gguf") << "transformer import arch="
                         << (arch.empty() ? "unspecified" : arch)
@@ -981,10 +1059,24 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         return Error::success();
       }
       if (!gguf_type_supported(ti->type)) {
-        const auto ty = static_cast<std::uint32_t>(ti->type);
-        std::string hint = " Supported quants: f16,f32,q4_0,q4_1,q5_0,q5_1,q8_0,q2_k..q6_k.";
-        if (ty >= 20) {
-          hint += " IQ quants (IQ2_XXS, IQ4_NL, …) are not implemented — re-export as Q4_K_M or F16.";
+        std::string hint =
+            " Supported quants: f16,f32,q4_0,q4_1,q5_0,q5_1,q8_0,q2_k..q6_k,iq4_nl.";
+        switch (ti->type) {
+          case GgufType::IQ2_XXS:
+          case GgufType::IQ2_XS:
+          case GgufType::IQ3_XXS:
+          case GgufType::IQ1_S:
+          case GgufType::IQ3_S:
+          case GgufType::IQ2_S:
+          case GgufType::IQ4_XS:
+          case GgufType::IQ1_M:
+          case GgufType::Q8_K:
+            hint +=
+                " IQ* / Q8_K types are not implemented — convert to Q4_K_M (or F16) with "
+                "llama-quantize.";
+            break;
+          default:
+            break;
         }
         return Error::make(ErrorCode::NotImplemented,
                            "unsupported GGUF quant type for weight " + name + ": " +
@@ -1029,6 +1121,32 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "attn_v.weight", &wv);
       if (!err.ok()) return err;
+      // DeepSeek MLA (expand-then-attend): optional Q-LoRA + KV absorb/expand.
+      TensorId w_q_a = 0;
+      TensorId w_q_a_norm = 0;
+      TensorId w_q_b = 0;
+      TensorId w_kv_a = 0;
+      TensorId w_kv_a_norm = 0;
+      TensorId w_k_b = 0;
+      TensorId w_v_b = 0;
+      err = add_weight_ref(pfx + "attn_q_a.weight", &w_q_a);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_q_a_norm.weight", &w_q_a_norm);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_q_b.weight", &w_q_b);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_kv_a_mqa.weight", &w_kv_a);
+      if (!err.ok()) return err;
+      if (!w_kv_a) {
+        err = add_weight_ref(pfx + "attn_kv_a.weight", &w_kv_a);
+        if (!err.ok()) return err;
+      }
+      err = add_weight_ref(pfx + "attn_kv_a_norm.weight", &w_kv_a_norm);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_k_b.weight", &w_k_b);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_v_b.weight", &w_v_b);
+      if (!err.ok()) return err;
       TensorId bq = 0;
       TensorId bk = 0;
       TensorId bv = 0;
@@ -1067,9 +1185,27 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       err = add_weight_ref(pfx + "ffn_down_shexp.weight", &w_down_shexp);
       if (!err.ok()) return err;
 
+      const bool has_kv_a = (find_tensor(file, pfx + "attn_kv_a_mqa.weight") != nullptr) ||
+                            (find_tensor(file, pfx + "attn_kv_a.weight") != nullptr);
+      const bool is_mla = has_kv_a && w_k_b != 0 && w_v_b != 0;
       const bool split_qkv = (wq != 0 && wk != 0 && wv != 0);
       const bool fused_qkv = (w_qkv != 0);
-      if (!attn_norm || !wo || (!split_qkv && !fused_qkv)) {
+      if (!attn_norm || !wo) {
+        break;
+      }
+      if (has_kv_a || w_k_b || w_v_b || w_q_a || w_q_b) {
+        if (!is_mla || !w_kv_a) {
+          return Error::make(
+              ErrorCode::InvalidArgument,
+              pfx + " incomplete MLA tensors (need attn_kv_a(_mqa)+attn_k_b+attn_v_b, "
+                    "and attn_q_a+attn_q_b or attn_q)");
+        }
+        if (!((w_q_a && w_q_b) || wq)) {
+          return Error::make(ErrorCode::InvalidArgument,
+                             pfx + " MLA incomplete: need attn_q_a+attn_q_b or attn_q");
+        }
+        any_mla = true;
+      } else if (!split_qkv && !fused_qkv) {
         break;
       }
 
@@ -1085,7 +1221,157 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       TensorId q = 0;
       TensorId k = 0;
       TensorId v = 0;
-      if (fused_qkv) {
+      std::int64_t layer_q_dim = q_dim;
+      std::int64_t layer_kv_dim = kv_dim;
+      std::int64_t layer_v_dim = kv_dim;
+      std::int64_t layer_heads = n_heads;
+      std::int64_t layer_kv_heads = n_kv_heads;
+      std::int64_t layer_rope_hd = head_dim;
+      std::int64_t layer_attn_out = q_dim;
+      bool mla_k_assembled = false;
+
+      if (is_mla) {
+        const GgufTensorInfo* ti_q_b = find_tensor(file, pfx + "attn_q_b.weight");
+        const GgufTensorInfo* ti_q = find_tensor(file, pfx + "attn_q.weight");
+        const GgufTensorInfo* ti_kv_a =
+            find_tensor(file, pfx + "attn_kv_a_mqa.weight")
+                ? find_tensor(file, pfx + "attn_kv_a_mqa.weight")
+                : find_tensor(file, pfx + "attn_kv_a.weight");
+        const GgufTensorInfo* ti_k_b = find_tensor(file, pfx + "attn_k_b.weight");
+        const GgufTensorInfo* ti_v_b = find_tensor(file, pfx + "attn_v_b.weight");
+        const GgufTensorInfo* ti_kv_a_norm = find_tensor(file, pfx + "attn_kv_a_norm.weight");
+
+        layer_q_dim = w_q_a && w_q_b ? weight_out_dim(ti_q_b) : weight_out_dim(ti_q);
+        layer_kv_dim = weight_out_dim(ti_k_b);
+        layer_v_dim = weight_out_dim(ti_v_b);
+        if (layer_q_dim <= 0 || layer_kv_dim <= 0 || layer_v_dim <= 0) {
+          return Error::make(ErrorCode::InvalidArgument,
+                             pfx + " MLA weight shapes invalid (q/k_b/v_b out dims)");
+        }
+
+        // After expand, MLA is typically MHA (kv_heads == n_heads).
+        layer_heads = n_heads;
+        layer_kv_heads = n_heads;
+        layer_rope_hd = mla_rope_head_dim > 0 ? mla_rope_head_dim : head_dim;
+        // Prefer full qk head (nope+rope) when metadata present so RoPE/Attention align.
+        if (qk_nope_head_dim > 0 && qk_rope_head_dim > 0) {
+          layer_rope_hd = qk_nope_head_dim + qk_rope_head_dim;
+        } else if (layer_heads > 0 && layer_q_dim % layer_heads == 0) {
+          layer_rope_hd = layer_q_dim / layer_heads;
+        }
+        layer_attn_out = layer_v_dim;
+
+        // --- Q (optional Q-LoRA) ---
+        if (w_q_a && w_q_b) {
+          const std::int64_t q_a_dim = weight_out_dim(find_tensor(file, pfx + "attn_q_a.weight"));
+          if (q_a_dim <= 0) {
+            return Error::make(ErrorCode::InvalidArgument, pfx + " attn_q_a shape invalid");
+          }
+          TensorId qa = b.add_tensor(pfx + "q_a", DType::F32, Shape{{1, q_a_dim}});
+          b.add_node(pfx + "q_a_mm", "MatMul", "1", {n1, w_q_a}, {qa},
+                     {ir::make_bool_attr("transpose_b", true)});
+          if (w_q_a_norm) {
+            TensorId qa_n = b.add_tensor(pfx + "q_a_n", DType::F32, Shape{{1, q_a_dim}});
+            b.add_node(pfx + "q_a_rms", "RMSNorm", "1", {qa, w_q_a_norm}, {qa_n},
+                       {ir::make_float_attr("eps", rms_eps)});
+            qa = qa_n;
+          }
+          q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, layer_q_dim}});
+          b.add_node(pfx + "q_b_mm", "MatMul", "1", {qa, w_q_b}, {q},
+                     {ir::make_bool_attr("transpose_b", true)});
+        } else if (wq) {
+          q = b.add_tensor(pfx + "q", DType::F32, Shape{{1, layer_q_dim}});
+          b.add_node(pfx + "q_mm", "MatMul", "1", {n1, wq}, {q},
+                     {ir::make_bool_attr("transpose_b", true)});
+        } else {
+          return Error::make(ErrorCode::InvalidArgument, pfx + " MLA missing Q projection");
+        }
+
+        // --- KV absorb + expand (full K/V each step → existing Attention + KV cache) ---
+        const std::int64_t kvc_full_dim = weight_out_dim(ti_kv_a);
+        const std::int64_t k_b_in = weight_in_dim(ti_k_b);
+        const std::int64_t v_b_in = weight_in_dim(ti_v_b);
+        if (kvc_full_dim <= 0 || k_b_in <= 0 || v_b_in <= 0 || k_b_in != v_b_in) {
+          return Error::make(ErrorCode::InvalidArgument,
+                             pfx + " MLA kv_a/k_b/v_b in/out dims inconsistent");
+        }
+        TensorId kvc = b.add_tensor(pfx + "kvc", DType::F32, Shape{{1, kvc_full_dim}});
+        b.add_node(pfx + "kv_a_mm", "MatMul", "1", {n1, w_kv_a}, {kvc},
+                   {ir::make_bool_attr("transpose_b", true)});
+
+        // attn_kv_a_mqa often emits [kv_lora_rank + qk_rope]; norm/k_b use kv_lora only.
+        TensorId latent = kvc;
+        std::int64_t latent_dim = kvc_full_dim;
+        if (kvc_full_dim != k_b_in) {
+          if (k_b_in > kvc_full_dim) {
+            return Error::make(ErrorCode::InvalidArgument,
+                               pfx + " MLA kv_a out < k_b in (incomplete MLA tensors)");
+          }
+          latent_dim = k_b_in;
+          latent = b.add_tensor(pfx + "kv_latent", DType::F32, Shape{{1, latent_dim}});
+          b.add_node(pfx + "kv_latent_slice", "Slice", "1", {kvc}, {latent},
+                     {ir::make_int_attr("start", 0), ir::make_int_attr("end", latent_dim)});
+        }
+        if (w_kv_a_norm) {
+          const std::int64_t norm_dim = weight_out_dim(ti_kv_a_norm);
+          if (norm_dim > 0 && norm_dim != latent_dim) {
+            return Error::make(ErrorCode::InvalidArgument,
+                               pfx + " MLA attn_kv_a_norm size mismatch vs latent");
+          }
+          TensorId lat_n = b.add_tensor(pfx + "kv_latent_n", DType::F32, Shape{{1, latent_dim}});
+          b.add_node(pfx + "kv_a_rms", "RMSNorm", "1", {latent, w_kv_a_norm}, {lat_n},
+                     {ir::make_float_attr("eps", rms_eps)});
+          latent = lat_n;
+        }
+
+        k = b.add_tensor(pfx + "k", DType::F32, Shape{{1, layer_kv_dim}});
+        v = b.add_tensor(pfx + "v", DType::F32, Shape{{1, layer_v_dim}});
+        b.add_node(pfx + "k_b_mm", "MatMul", "1", {latent, w_k_b}, {k},
+                   {ir::make_bool_attr("transpose_b", true)});
+        b.add_node(pfx + "v_b_mm", "MatMul", "1", {latent, w_v_b}, {v},
+                   {ir::make_bool_attr("transpose_b", true)});
+
+        // If K is nope-only and Q is nope+rope, merge shared RoPE K onto every head.
+        if (layer_q_dim != layer_kv_dim) {
+          const std::int64_t rope_extra = kvc_full_dim - latent_dim;
+          std::int64_t nope = qk_nope_head_dim;
+          std::int64_t rope = qk_rope_head_dim > 0 ? qk_rope_head_dim : rope_extra;
+          if (nope <= 0 && layer_heads > 0 && layer_kv_dim % layer_heads == 0) {
+            nope = layer_kv_dim / layer_heads;
+          }
+          if (rope <= 0 && layer_heads > 0 && layer_q_dim % layer_heads == 0 && nope > 0) {
+            rope = (layer_q_dim / layer_heads) - nope;
+          }
+          if (nope <= 0 || rope <= 0 || rope_extra < rope ||
+              layer_kv_dim != layer_heads * nope ||
+              layer_q_dim != layer_heads * (nope + rope)) {
+            return Error::make(
+                ErrorCode::InvalidArgument,
+                pfx + " MLA expand produced q_dim=" + std::to_string(layer_q_dim) +
+                    " k_dim=" + std::to_string(layer_kv_dim) +
+                    "; cannot assemble nope+rope K (check qk_nope/qk_rope metadata)");
+          }
+          TensorId k_pe = b.add_tensor(pfx + "k_pe", DType::F32, Shape{{1, rope}});
+          b.add_node(pfx + "k_pe_slice", "Slice", "1", {kvc}, {k_pe},
+                     {ir::make_int_attr("start", latent_dim),
+                      ir::make_int_attr("end", latent_dim + rope)});
+          TensorId k_pe_r = b.add_tensor(pfx + "k_pe_rope", DType::F32, Shape{{1, rope}});
+          b.add_node(pfx + "k_pe_rope", "RoPE", "1", {k_pe}, {k_pe_r},
+                     {ir::make_float_attr("theta", rope_theta),
+                      ir::make_int_attr("head_dim", rope),
+                      ir::make_int_attr("mode", rope_mode)});
+          TensorId k_full =
+              b.add_tensor(pfx + "k_full", DType::F32, Shape{{1, layer_q_dim}});
+          b.add_node(pfx + "mla_expand_k", "MLAExpandK", "1", {k, k_pe_r}, {k_full},
+                     {ir::make_int_attr("num_heads", layer_heads),
+                      ir::make_int_attr("nope_dim", nope),
+                      ir::make_int_attr("rope_dim", rope)});
+          k = k_full;
+          layer_kv_dim = layer_q_dim;
+          layer_rope_hd = nope + rope;
+          mla_k_assembled = true;
+        }
+      } else if (fused_qkv) {
         TensorId qkv_proj = b.add_tensor(pfx + "qkv_proj", DType::F32, Shape{{1, qkv_total}});
         b.add_node(pfx + "qkv_mm", "MatMul", "1", {n1, w_qkv}, {qkv_proj},
                    {ir::make_bool_attr("transpose_b", true)});
@@ -1133,22 +1419,37 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         }
       }
 
-      TensorId q_rope = b.add_tensor(pfx + "q_rope", DType::F32, Shape{{1, q_dim}});
-      TensorId k_rope = b.add_tensor(pfx + "k_rope", DType::F32, Shape{{1, kv_dim}});
-      b.add_node(pfx + "q_rope", "RoPE", "1", {q}, {q_rope},
-                 {ir::make_float_attr("theta", rope_theta),
-                  ir::make_int_attr("head_dim", head_dim),
-                  ir::make_int_attr("mode", rope_mode)});
-      b.add_node(pfx + "k_rope", "RoPE", "1", {k}, {k_rope},
-                 {ir::make_float_attr("theta", rope_theta),
-                  ir::make_int_attr("head_dim", head_dim),
-                  ir::make_int_attr("mode", rope_mode)});
+      TensorId q_rope = b.add_tensor(pfx + "q_rope", DType::F32, Shape{{1, layer_q_dim}});
+      TensorId k_rope = b.add_tensor(pfx + "k_rope", DType::F32, Shape{{1, layer_kv_dim}});
+      {
+        std::vector<ir::Attribute> q_rope_attrs{
+            ir::make_float_attr("theta", rope_theta),
+            ir::make_int_attr("head_dim", layer_rope_hd),
+            ir::make_int_attr("mode", rope_mode)};
+        if (is_mla && qk_rope_head_dim > 0 && layer_rope_hd > qk_rope_head_dim) {
+          q_rope_attrs.push_back(ir::make_int_attr("rotary_dim", qk_rope_head_dim));
+        }
+        b.add_node(pfx + "q_rope", "RoPE", "1", {q}, {q_rope}, q_rope_attrs);
+      }
+      if (mla_k_assembled) {
+        // Shared K rope already applied inside MLAExpandK inputs.
+        b.add_node(pfx + "k_rope", "Identity", "1", {k}, {k_rope});
+      } else {
+        std::vector<ir::Attribute> k_rope_attrs{
+            ir::make_float_attr("theta", rope_theta),
+            ir::make_int_attr("head_dim", layer_rope_hd),
+            ir::make_int_attr("mode", rope_mode)};
+        if (is_mla && qk_rope_head_dim > 0 && layer_rope_hd > qk_rope_head_dim) {
+          k_rope_attrs.push_back(ir::make_int_attr("rotary_dim", qk_rope_head_dim));
+        }
+        b.add_node(pfx + "k_rope", "RoPE", "1", {k}, {k_rope}, k_rope_attrs);
+      }
 
-      TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, q_dim}});
+      TensorId attn = b.add_tensor(pfx + "attn", DType::F32, Shape{{1, layer_attn_out}});
       {
         std::vector<ir::Attribute> attn_attrs{
-            ir::make_int_attr("num_heads", n_heads),
-            ir::make_int_attr("kv_heads", n_kv_heads),
+            ir::make_int_attr("num_heads", layer_heads),
+            ir::make_int_attr("kv_heads", layer_kv_heads),
             ir::make_bool_attr("causal", true),
             ir::make_bool_attr("use_kv_cache", true),
             ir::make_int_attr("layer_id", li)};
@@ -1288,6 +1589,7 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         features = resid1;
       }
     }
+    if (any_mla) b.set_metadata("mla", "1");
 
     if (norm) {
       const GgufTensorInfo* norm_info = norm;
@@ -1339,10 +1641,26 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     }
     b.set_metadata("n_layers", std::to_string(n_layers));
     b.set_metadata("n_heads", std::to_string(n_heads));
-    b.set_metadata("n_kv_heads", std::to_string(n_kv_heads));
+    b.set_metadata("n_kv_heads", std::to_string(any_mla ? n_heads : n_kv_heads));
     b.set_metadata("head_dim", std::to_string(head_dim));
     b.set_metadata("q_dim", std::to_string(q_dim));
-    b.set_metadata("kv_dim", std::to_string(kv_dim));
+    if (any_mla) {
+      std::int64_t mla_k_dim = 0;
+      std::int64_t mla_v_dim = 0;
+      if (const auto* qb = find_tensor(file, "blk.0.attn_q_b.weight")) {
+        mla_k_dim = weight_out_dim(qb);
+      } else if (const auto* qw = find_tensor(file, "blk.0.attn_q.weight")) {
+        mla_k_dim = weight_out_dim(qw);
+      }
+      if (const auto* vb = find_tensor(file, "blk.0.attn_v_b.weight")) {
+        mla_v_dim = weight_out_dim(vb);
+      }
+      if (mla_k_dim > 0) b.set_metadata("kv_dim", std::to_string(mla_k_dim));
+      else b.set_metadata("kv_dim", std::to_string(kv_dim));
+      if (mla_v_dim > 0) b.set_metadata("v_dim", std::to_string(mla_v_dim));
+    } else {
+      b.set_metadata("kv_dim", std::to_string(kv_dim));
+    }
     b.set_metadata("rope_theta", std::to_string(rope_theta));
     b.set_metadata("rope_mode", std::to_string(rope_mode));
     b.set_metadata("chat_template", chat_tpl);

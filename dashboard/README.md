@@ -13,8 +13,8 @@ Browser  →  dashboard server (:8787)  →  uaii / uaii_bench CLI
 
 | Area | What you get |
 |---|---|
-| Chat / Run | **Real GGUF LLM chat** (warm `uaii chat`), streaming, tokenize, IR |
-| Models | Upload, list, convert GGUF→IR, delete |
+| Chat / Run | **GGUF + Hugging Face** LLM chat (warm `uaii chat`), streaming, tokenize, IR |
+| Models | Upload GGUF, **Pull HF Hub**, import HF folder, convert, delete |
 | Runtime | `uaii doctor --load-plugins` |
 | Benchmarks | `uaii_bench` JSON + table |
 | Logs | Recent CLI jobs |

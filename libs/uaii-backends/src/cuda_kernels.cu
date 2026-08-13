@@ -157,6 +157,91 @@ int launch_rmsnorm_f32(const float* x, const float* weight, float* y, std::int64
   return static_cast<int>(cudaGetLastError());
 }
 
+namespace {
+
+// One block per row; threads cover rotary half-pairs (NeoX) or interleaved pairs.
+__global__ void rope_kernel(const float* x, float* y, std::int64_t rows, std::int64_t dim,
+                            std::int64_t rope_chunk, std::int64_t rotary_dim, int mode,
+                            float theta, float base_pos, const float* positions) {
+  const std::int64_t r = static_cast<std::int64_t>(blockIdx.x);
+  if (r >= rows) {
+    return;
+  }
+  const float pos =
+      (positions != nullptr) ? positions[r] : (base_pos + static_cast<float>(r));
+  const float* row = x + r * dim;
+  float* out_row = y + r * dim;
+  const std::int64_t n_chunks = dim / rope_chunk;
+  const std::int64_t rot_off = rope_chunk - rotary_dim;
+  const std::int64_t half = rotary_dim / 2;
+  const bool neox = (mode == 2);
+
+  for (std::int64_t h = 0; h < n_chunks; ++h) {
+    const float* head = row + h * rope_chunk;
+    float* out_head = out_row + h * rope_chunk;
+    for (std::int64_t c = threadIdx.x; c < rot_off; c += blockDim.x) {
+      out_head[c] = head[c];
+    }
+    const float* rot_in = head + rot_off;
+    float* rot_out = out_head + rot_off;
+    if (neox) {
+      for (std::int64_t i = threadIdx.x; i < half; i += blockDim.x) {
+        const float freq =
+            1.0f / powf(theta, (2.0f * static_cast<float>(i)) / static_cast<float>(rotary_dim));
+        const float angle = pos * freq;
+        const float c = cosf(angle);
+        const float s = sinf(angle);
+        const float a = rot_in[i];
+        const float b = rot_in[i + half];
+        rot_out[i] = a * c - b * s;
+        rot_out[i + half] = a * s + b * c;
+      }
+    } else {
+      for (std::int64_t i = threadIdx.x * 2; i < rotary_dim; i += blockDim.x * 2) {
+        const float freq =
+            1.0f / powf(theta, static_cast<float>(i) / static_cast<float>(rotary_dim));
+        const float angle = pos * freq;
+        const float c = cosf(angle);
+        const float s = sinf(angle);
+        const float a = rot_in[i];
+        const float b = rot_in[i + 1];
+        rot_out[i] = a * c - b * s;
+        rot_out[i + 1] = a * s + b * c;
+      }
+    }
+  }
+}
+
+__global__ void logit_softcap_kernel(const float* x, float* y, std::size_t n, float cap) {
+  const std::size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    y[i] = cap * tanhf(x[i] / cap);
+  }
+}
+
+}  // namespace
+
+int launch_rope_f32(const float* x, float* y, std::int64_t rows, std::int64_t dim,
+                    std::int64_t rope_chunk, std::int64_t rotary_dim, int mode, float theta,
+                    float base_pos, const float* positions, void* stream) {
+  if (rows <= 0 || dim <= 0 || rope_chunk <= 0 || rotary_dim <= 0) {
+    return 0;
+  }
+  const int block = 256;
+  rope_kernel<<<static_cast<unsigned>(rows), block, 0, as_stream(stream)>>>(
+      x, y, rows, dim, rope_chunk, rotary_dim, mode, theta, base_pos, positions);
+  return static_cast<int>(cudaGetLastError());
+}
+
+int launch_logit_softcap_f32(const float* x, float* y, std::size_t n, float cap,
+                             void* stream) {
+  if (n == 0 || cap <= 0.0f) {
+    return 0;
+  }
+  logit_softcap_kernel<<<grid_for(n), 256, 0, as_stream(stream)>>>(x, y, n, cap);
+  return static_cast<int>(cudaGetLastError());
+}
+
 }  // namespace cuda_kernels
 }  // namespace backends
 }  // namespace uaii

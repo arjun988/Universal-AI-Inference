@@ -4,6 +4,8 @@
 
 UAII is a modular C++ inference runtime: load a model into a common intermediate representation, optimize and schedule it, then execute on CPU or GPU backends through one session API. It is built as an *execution platform*—loaders, operators, backends, schedulers, and storage are pluggable—not a single-family engine hard-wired to one format.
 
+**Ready to recommend today:** allowlisted **Hugging Face decoder-only** CausalLM folders and **GGUF `blk.*`** transformers (CLI + operator dashboard). Broader Hub architectures (vision, SSM, RWKV, …) are roadmap — see [docs/huggingface_support.md](docs/huggingface_support.md) and [upgrade.md](upgrade.md).
+
 | | |
 |---|---|
 | **Language** | C++17 |
@@ -15,10 +17,10 @@ UAII is a modular C++ inference runtime: load a model into a common intermediate
 
 ## What it does
 
-1. **Ingest** models from GGUF, Safetensors, ONNX, MLX (weights + config), or PyTorch export sidecars into **UAII IR**.
+1. **Ingest** HF decoder directories, GGUF, Safetensors, ONNX, MLX (weights + config), or PyTorch export sidecars into **UAII IR**.
 2. **Validate & plan** the graph (shapes, dtypes, fusion, memory reuse, optional disk plan cache).
-3. **Execute** via a `Session` on a chosen backend, with competitive CPU GEMM, in-memory quantized MatMul, KV-cache generation for GGUF transformers (`blk.*` layout, any arch name), and optional weight streaming.
-4. **Integrate** through the `uaii` CLI, the C ABI shared library, or the Python SDK.
+3. **Execute** via a `Session` on a chosen backend, with competitive CPU GEMM, in-memory quantized MatMul, KV-cache generation for HF / GGUF transformers, and optional weight streaming.
+4. **Integrate** through the `uaii` CLI (`pull` / `generate` / `chat`), the C ABI shared library, or the Python SDK.
 
 ```text
   GGUF / Safetensors / ONNX / MLX / PyTorch
@@ -84,8 +86,9 @@ CI `benchmarks` job builds with oneDNN/OpenBLAS when available, uploads JSON **a
 
 | Format | Role |
 |---|---|
+| **Hugging Face directory** | First-class: `config.json` + tokenizer* + `*.safetensors` (± shards); Llama/Mistral/Qwen/Gemma/Phi-class allowlist; RoPE, GQA, tied emb — see [docs/huggingface_support.md](docs/huggingface_support.md) |
 | **GGUF** | Any architecture with llama.cpp-style `blk.*` decoder tensors (not a Llama-only allowlist); arch-prefixed metadata (`qwen2.*`, `gemma.*`, …); RMSNorm, QKV, RoPE, Attention + KV, dense SwiGLU/GELU or **MoE** (`ffn_*_exps` + router), tied embeddings |
-| **Safetensors** | Weight graphs / HF-style layouts → UAII IR |
+| **Safetensors** | Single-file weight graphs / non-directory layouts → UAII IR |
 | **ONNX** | Import to IR (companion `.uaii.json` or ONNX proto when enabled) |
 | **MLX** | Directory with `config.json` + `.safetensors` (weights + config, not the Apple MLX runtime) |
 | **PyTorch** | `.pt` / `.pth` via exported `.onnx` or `.uaii.json` sidecar (`UAII_WITH_LIBTORCH` reserved for TorchScript) |
@@ -354,6 +357,7 @@ plugins/                Example plugins
 | [docs/architecture.md](docs/architecture.md) | Module and IR design |
 | [docs/benchmarks.md](docs/benchmarks.md) | Microbench results + how to reproduce |
 | [docs/gguf_support.md](docs/gguf_support.md) | GGUF arches, quants, generate |
+| [docs/huggingface_support.md](docs/huggingface_support.md) | HF directory layouts, allowlist, CLI |
 | [docs/backend_support.md](docs/backend_support.md) | Backend capability matrix |
 | [docs/c_api_stability.md](docs/c_api_stability.md) | C ABI versioning |
 | [docs/vision.md](docs/vision.md) | Product mission |

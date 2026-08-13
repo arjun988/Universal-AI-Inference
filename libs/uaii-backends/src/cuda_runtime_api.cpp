@@ -2,10 +2,13 @@
 
 #include "cuda_kernels.hpp"
 
+#include "uaii/runtime/kv_cache.hpp"
+
 #include <cublasLt.h>
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -220,6 +223,20 @@ Error gemm_rowmajor_f32(std::int64_t m, std::int64_t n, std::int64_t k, const fl
   return gemm_rowmajor_f32_sgemm(m, n, k, a, lda, transpose_a, b, ldb, transpose_b, c, ldc);
 }
 
+Error gemm_rowmajor_f32_alpha(std::int64_t m, std::int64_t n, std::int64_t k, float alpha,
+                              const float* a, std::int64_t lda, bool transpose_a, const float* b,
+                              std::int64_t ldb, bool transpose_b, float* c, std::int64_t ldc) {
+  // Prefer sgemm with alpha for attention scores (lt path keeps alpha=1).
+  const float beta = 0.0f;
+  const cublasOperation_t op_b = transpose_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+  const cublasOperation_t op_a = transpose_a ? CUBLAS_OP_T : CUBLAS_OP_N;
+  return cublas_status(
+      cublasSgemm(g_cublas, op_b, op_a, static_cast<int>(n), static_cast<int>(m),
+                  static_cast<int>(k), &alpha, b, static_cast<int>(ldb), a,
+                  static_cast<int>(lda), &beta, c, static_cast<int>(ldc)),
+      "Sgemm alpha");
+}
+
 Error dispatch_matmul(const std::vector<kernels::TensorView>& inputs,
                       std::vector<kernels::TensorView>* outputs,
                       const std::vector<ir::Attribute>& attrs) {
@@ -364,13 +381,521 @@ Error dispatch_softmax(const std::vector<kernels::TensorView>& inputs,
   return cuda_status(static_cast<cudaError_t>(st), "Softmax");
 }
 
+struct DeviceBuf {
+  float* p = nullptr;
+  std::size_t bytes = 0;
+  bool owned = false;
+
+  void release() noexcept {
+    if (owned && p != nullptr) {
+      cudaFree(p);
+    }
+    p = nullptr;
+    bytes = 0;
+    owned = false;
+  }
+};
+
+Error device_buf_alloc(DeviceBuf* b, std::size_t bytes) {
+  if (b == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "device_buf null");
+  }
+  b->release();
+  if (bytes == 0) {
+    return Error::success();
+  }
+  void* p = nullptr;
+  Error err = cuda_status(cudaMalloc(&p, bytes), "Malloc temp");
+  if (!err.ok()) {
+    return err;
+  }
+  b->p = static_cast<float*>(p);
+  b->bytes = bytes;
+  b->owned = true;
+  return Error::success();
+}
+
+// Ensure `t` is addressable on device: reuse if already device, else alloc+H2D.
+Error ensure_device_f32(const kernels::TensorView& t, DeviceBuf* scratch, const float** out) {
+  if (out == nullptr || scratch == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "ensure_device null");
+  }
+  Error err = require_f32(t, "tensor");
+  if (!err.ok()) return err;
+  if (cuda_is_device_ptr(t.data)) {
+    *out = t.f32();
+    return Error::success();
+  }
+  err = device_buf_alloc(scratch, t.nbytes);
+  if (!err.ok()) return err;
+  err = cuda_status(cudaMemcpy(scratch->p, t.data, t.nbytes, cudaMemcpyHostToDevice), "H2D");
+  if (!err.ok()) return err;
+  *out = scratch->p;
+  return Error::success();
+}
+
+Error ensure_device_out_f32(kernels::TensorView* t, DeviceBuf* scratch, float** out,
+                           bool* need_d2h) {
+  if (out == nullptr || scratch == nullptr || need_d2h == nullptr || t == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "ensure_device_out null");
+  }
+  Error err = require_f32(*t, "out");
+  if (!err.ok()) return err;
+  if (cuda_is_device_ptr(t->data)) {
+    *out = t->f32();
+    *need_d2h = false;
+    return Error::success();
+  }
+  err = device_buf_alloc(scratch, t->nbytes);
+  if (!err.ok()) return err;
+  *out = scratch->p;
+  *need_d2h = true;
+  return Error::success();
+}
+
+struct AttnShape {
+  std::int64_t batch = 0;
+  std::int64_t seq = 0;
+  std::int64_t dim = 0;
+};
+
+Error parse_attn_shape(const kernels::TensorView& t, AttnShape* out, const char* name) {
+  if (out == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "attn shape null");
+  }
+  if (t.dtype != DType::F32 || t.data == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, std::string(name) + " f32 required");
+  }
+  if (t.rank == 2) {
+    out->batch = t.dim(0);
+    out->seq = 1;
+    out->dim = t.dim(1);
+    return Error::success();
+  }
+  if (t.rank == 3) {
+    out->batch = t.dim(0);
+    out->seq = t.dim(1);
+    out->dim = t.dim(2);
+    return Error::success();
+  }
+  return Error::make(ErrorCode::InvalidArgument,
+                     std::string(name) + " expects [batch,seq,dim] or [batch,dim]");
+}
+
+Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
+                    std::vector<kernels::TensorView>* outputs,
+                    const std::vector<ir::Attribute>& attrs) {
+  if (inputs.empty() || outputs == nullptr || outputs->size() != 1) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA RoPE arity");
+  }
+  const auto& in = inputs[0];
+  auto& out = (*outputs)[0];
+  Error err = require_f32(in, "rope_in");
+  if (!err.ok()) return err;
+  err = require_f32(out, "rope_out");
+  if (!err.ok()) return err;
+  if (in.numel() != out.numel() || in.rank < 2) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA RoPE shape");
+  }
+  const std::int64_t dim = in.dim(in.rank - 1);
+  if (dim % 2 != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA RoPE dim must be even");
+  }
+  const std::int64_t head_dim = attr_int(attrs, "head_dim", 0);
+  std::int64_t rope_chunk = head_dim > 0 ? head_dim : dim;
+  if (rope_chunk <= 0 || dim % rope_chunk != 0 || rope_chunk % 2 != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA RoPE head_dim invalid");
+  }
+  const std::int64_t rotary_dim_attr = attr_int(attrs, "rotary_dim", 0);
+  std::int64_t rot = rotary_dim_attr > 0 ? rotary_dim_attr : rope_chunk;
+  if (rot > rope_chunk || rot <= 0 || rot % 2 != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA RoPE rotary_dim invalid");
+  }
+  const float theta = attr_float(attrs, "theta", 10000.f);
+  const int mode = static_cast<int>(attr_int(attrs, "mode", 0));
+  float base_pos = attr_float(attrs, "position", -1.f);
+  if (base_pos < 0.f) {
+    base_pos = attr_float(attrs, "past_len", -1.f);
+  }
+  if (base_pos < 0.f) {
+    runtime::KvCache* cache = kernels::active_kv_cache();
+    base_pos = (cache != nullptr) ? static_cast<float>(cache->past_len()) : 0.f;
+  }
+  const std::int64_t rows =
+      static_cast<std::int64_t>(in.numel() / static_cast<std::size_t>(dim));
+
+  DeviceBuf d_in, d_out, d_pos;
+  const float* x = nullptr;
+  float* y = nullptr;
+  bool need_d2h = false;
+  err = ensure_device_f32(in, &d_in, &x);
+  if (!err.ok()) {
+    d_in.release();
+    return err;
+  }
+  err = ensure_device_out_f32(&out, &d_out, &y, &need_d2h);
+  if (!err.ok()) {
+    d_in.release();
+    d_out.release();
+    return err;
+  }
+
+  const float* pos_dev = nullptr;
+  if (inputs.size() > 1 && inputs[1].data != nullptr && inputs[1].numel() > 0) {
+    err = require_f32(inputs[1], "rope_pos");
+    if (!err.ok()) {
+      d_in.release();
+      d_out.release();
+      return err;
+    }
+    err = ensure_device_f32(inputs[1], &d_pos, &pos_dev);
+    if (!err.ok()) {
+      d_in.release();
+      d_out.release();
+      d_pos.release();
+      return err;
+    }
+  }
+
+  const int st = cuda_kernels::launch_rope_f32(x, y, rows, dim, rope_chunk, rot, mode, theta,
+                                               base_pos, pos_dev, g_stream);
+  err = cuda_status(static_cast<cudaError_t>(st), "RoPE");
+  if (err.ok()) {
+    err = cuda_status(cudaStreamSynchronize(g_stream), "RoPE sync");
+  }
+  if (err.ok() && need_d2h) {
+    err = cuda_status(cudaMemcpy(out.data, y, out.nbytes, cudaMemcpyDeviceToHost), "RoPE D2H");
+  }
+  d_in.release();
+  d_out.release();
+  d_pos.release();
+  return err;
+}
+
+// Decode-friendly Attention: q_seq == new_kv_seq == 1 via cuBLAS Q@K^T + softmax + scores@V.
+Error cuda_attention_decode_f32(const float* Q, const float* K_full, const float* V_full,
+                                float* O, std::int64_t batch, std::int64_t kv_seq,
+                                std::int64_t q_dim, std::int64_t k_dim, std::int64_t v_dim,
+                                std::int64_t out_dim, int num_heads, int num_kv_heads,
+                                std::int64_t head_dim, std::int64_t v_head_dim, float scale,
+                                float logit_softcap) {
+  const int heads_per_kv = num_heads / num_kv_heads;
+  DeviceBuf d_scores;
+  Error err = device_buf_alloc(&d_scores, static_cast<std::size_t>(kv_seq) * sizeof(float));
+  if (!err.ok()) {
+    return err;
+  }
+
+  for (std::int64_t b = 0; b < batch; ++b) {
+    for (int h = 0; h < num_heads; ++h) {
+      const int kv_h = h / heads_per_kv;
+      const float* q_row = Q + (b * q_dim) + static_cast<std::int64_t>(h) * head_dim;
+      const float* k_ptr =
+          K_full + (b * kv_seq * k_dim) + static_cast<std::int64_t>(kv_h) * head_dim;
+      const float* v_ptr =
+          V_full + (b * kv_seq * v_dim) + static_cast<std::int64_t>(kv_h) * v_head_dim;
+      float* o_row = O + (b * out_dim) + static_cast<std::int64_t>(h) * v_head_dim;
+
+      // scores[1, kv_seq] = scale * Q[1, hd] @ K^T[hd, kv_seq]  (K rows stride = k_dim)
+      err = gemm_rowmajor_f32_alpha(1, kv_seq, head_dim, scale, q_row, head_dim, false, k_ptr,
+                                    k_dim, true, d_scores.p, kv_seq);
+      if (!err.ok()) {
+        d_scores.release();
+        return err;
+      }
+      if (logit_softcap > 0.f) {
+        const int st = cuda_kernels::launch_logit_softcap_f32(
+            d_scores.p, d_scores.p, static_cast<std::size_t>(kv_seq), logit_softcap, g_stream);
+        err = cuda_status(static_cast<cudaError_t>(st), "softcap");
+        if (!err.ok()) {
+          d_scores.release();
+          return err;
+        }
+      }
+      {
+        const int st = cuda_kernels::launch_softmax_f32(d_scores.p, d_scores.p, 1, kv_seq, 1,
+                                                       g_stream);
+        err = cuda_status(static_cast<cudaError_t>(st), "attn softmax");
+        if (!err.ok()) {
+          d_scores.release();
+          return err;
+        }
+      }
+      // out[1, v_hd] = scores[1, kv_seq] @ V[kv_seq, v_hd] (V rows stride = v_dim)
+      err = gemm_rowmajor_f32(1, v_head_dim, kv_seq, d_scores.p, kv_seq, false, v_ptr, v_dim,
+                              false, o_row, v_head_dim);
+      if (!err.ok()) {
+        d_scores.release();
+        return err;
+      }
+    }
+  }
+  err = cuda_status(cudaStreamSynchronize(g_stream), "attn sync");
+  d_scores.release();
+  return err;
+}
+
+Error dispatch_attention(const std::vector<kernels::TensorView>& inputs,
+                         std::vector<kernels::TensorView>* outputs,
+                         const std::vector<ir::Attribute>& attrs) {
+  if (inputs.size() < 3 || outputs == nullptr || outputs->empty()) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA Attention expects Q,K,V");
+  }
+  const int num_heads = static_cast<int>(attr_int(attrs, "num_heads", 1));
+  float scale = attr_float(attrs, "scale", 0.f);
+  const bool causal = attr_bool(attrs, "causal", true);
+  (void)causal;  // decode seq=1: all keys are valid under causal
+  const bool use_kv = attr_bool(attrs, "use_kv_cache", false);
+  const std::int64_t layer_id = attr_int(attrs, "layer_id", -1);
+  const float logit_softcap = attr_float(attrs, "logit_softcap", 0.f);
+
+  AttnShape qs, ks, vs, os;
+  Error err = parse_attn_shape(inputs[0], &qs, "attn_q");
+  if (!err.ok()) return err;
+  err = parse_attn_shape(inputs[1], &ks, "attn_k");
+  if (!err.ok()) return err;
+  err = parse_attn_shape(inputs[2], &vs, "attn_v");
+  if (!err.ok()) return err;
+  err = parse_attn_shape((*outputs)[0], &os, "attn_out");
+  if (!err.ok()) return err;
+
+  if (qs.batch != ks.batch || qs.batch != vs.batch || qs.batch != os.batch ||
+      qs.seq != os.seq || ks.seq != vs.seq || qs.seq != ks.seq) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA Attention shape mismatch");
+  }
+  // Prefill / multi-token: fall back to CPU (NotImplemented → host staging).
+  if (qs.seq != 1 || ks.seq != 1) {
+    return Error::make(ErrorCode::NotImplemented,
+                       "CUDA Attention decode path requires seq=1 (prefill uses CPU)");
+  }
+
+  const std::int64_t batch = qs.batch;
+  const std::int64_t q_dim = qs.dim;
+  const std::int64_t k_dim = ks.dim;
+  const std::int64_t v_dim = vs.dim;
+  if (num_heads <= 0 || q_dim % num_heads != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA Attention invalid num_heads");
+  }
+  const std::int64_t head_dim = q_dim / num_heads;
+  if (k_dim % head_dim != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA Attention k_dim");
+  }
+  const int num_kv_heads = static_cast<int>(k_dim / head_dim);
+  if (num_kv_heads <= 0 || num_heads % num_kv_heads != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA Attention GQA");
+  }
+  if (v_dim % num_kv_heads != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA Attention v_dim");
+  }
+  const std::int64_t v_head_dim = v_dim / num_kv_heads;
+  const std::int64_t out_dim = static_cast<std::int64_t>(num_heads) * v_head_dim;
+  if (os.dim != out_dim) {
+    return Error::make(ErrorCode::InvalidArgument, "CUDA Attention out dim");
+  }
+  if (scale <= 0) {
+    scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+  }
+
+  const kernels::TensorView* past_k = nullptr;
+  const kernels::TensorView* past_v = nullptr;
+  kernels::TensorView past_k_view;
+  kernels::TensorView past_v_view;
+  runtime::KvCache* cache = nullptr;
+
+  if (inputs.size() >= 5) {
+    past_k = &inputs[3];
+    past_v = &inputs[4];
+  } else if (use_kv) {
+    cache = kernels::active_kv_cache();
+    if (cache != nullptr && layer_id >= 0) {
+      past_k_view = cache->k_view(layer_id);
+      past_v_view = cache->v_view(layer_id);
+      past_k = past_k_view.data != nullptr ? &past_k_view : nullptr;
+      past_v = past_v_view.data != nullptr ? &past_v_view : nullptr;
+    }
+  }
+
+  std::int64_t past_seq = 0;
+  if (past_k != nullptr || past_v != nullptr) {
+    if (past_k == nullptr || past_v == nullptr || past_k->data == nullptr ||
+        past_v->data == nullptr) {
+      return Error::make(ErrorCode::InvalidArgument, "CUDA Attention past incomplete");
+    }
+    AttnShape pks, pvs;
+    err = parse_attn_shape(*past_k, &pks, "past_k");
+    if (!err.ok()) return err;
+    err = parse_attn_shape(*past_v, &pvs, "past_v");
+    if (!err.ok()) return err;
+    if (pks.batch != batch || pvs.batch != batch || pks.dim != k_dim || pvs.dim != v_dim ||
+        pks.seq != pvs.seq) {
+      return Error::make(ErrorCode::InvalidArgument, "CUDA Attention past shape");
+    }
+    past_seq = pks.seq;
+  }
+  const std::int64_t kv_seq = past_seq + 1;
+
+  DeviceBuf d_q, d_k_full, d_v_full, d_out;
+  const float* q_dev = nullptr;
+  float* out_dev = nullptr;
+  bool need_d2h = false;
+  err = ensure_device_f32(inputs[0], &d_q, &q_dev);
+  if (!err.ok()) {
+    d_q.release();
+    return err;
+  }
+  err = ensure_device_out_f32(&(*outputs)[0], &d_out, &out_dev, &need_d2h);
+  if (!err.ok()) {
+    d_q.release();
+    d_out.release();
+    return err;
+  }
+
+  const std::size_t k_full_bytes =
+      static_cast<std::size_t>(batch * kv_seq * k_dim) * sizeof(float);
+  const std::size_t v_full_bytes =
+      static_cast<std::size_t>(batch * kv_seq * v_dim) * sizeof(float);
+  err = device_buf_alloc(&d_k_full, k_full_bytes);
+  if (!err.ok()) {
+    d_q.release();
+    d_out.release();
+    return err;
+  }
+  err = device_buf_alloc(&d_v_full, v_full_bytes);
+  if (!err.ok()) {
+    d_q.release();
+    d_out.release();
+    d_k_full.release();
+    return err;
+  }
+
+  // Pack past + new K/V into contiguous device buffers.
+  auto upload_row = [&](const kernels::TensorView& t, float* dst, std::size_t bytes) -> Error {
+    if (cuda_is_device_ptr(t.data)) {
+      return cuda_status(cudaMemcpy(dst, t.data, bytes, cudaMemcpyDeviceToDevice), "D2D pack");
+    }
+    return cuda_status(cudaMemcpy(dst, t.data, bytes, cudaMemcpyHostToDevice), "H2D pack");
+  };
+
+  for (std::int64_t b = 0; b < batch; ++b) {
+    if (past_seq > 0) {
+      const std::size_t past_k_bytes =
+          static_cast<std::size_t>(past_seq * k_dim) * sizeof(float);
+      const std::size_t past_v_bytes =
+          static_cast<std::size_t>(past_seq * v_dim) * sizeof(float);
+      const char* pk =
+          static_cast<const char*>(past_k->data) +
+          static_cast<std::size_t>(b * past_seq * k_dim) * sizeof(float);
+      const char* pv =
+          static_cast<const char*>(past_v->data) +
+          static_cast<std::size_t>(b * past_seq * v_dim) * sizeof(float);
+      if (cuda_is_device_ptr(past_k->data)) {
+        err = cuda_status(cudaMemcpy(d_k_full.p + b * kv_seq * k_dim, pk, past_k_bytes,
+                                     cudaMemcpyDeviceToDevice),
+                          "past K D2D");
+      } else {
+        err = cuda_status(cudaMemcpy(d_k_full.p + b * kv_seq * k_dim, pk, past_k_bytes,
+                                     cudaMemcpyHostToDevice),
+                          "past K H2D");
+      }
+      if (!err.ok()) break;
+      if (cuda_is_device_ptr(past_v->data)) {
+        err = cuda_status(cudaMemcpy(d_v_full.p + b * kv_seq * v_dim, pv, past_v_bytes,
+                                     cudaMemcpyDeviceToDevice),
+                          "past V D2D");
+      } else {
+        err = cuda_status(cudaMemcpy(d_v_full.p + b * kv_seq * v_dim, pv, past_v_bytes,
+                                     cudaMemcpyHostToDevice),
+                          "past V H2D");
+      }
+      if (!err.ok()) break;
+    }
+    const std::size_t new_k_bytes = static_cast<std::size_t>(k_dim) * sizeof(float);
+    const std::size_t new_v_bytes = static_cast<std::size_t>(v_dim) * sizeof(float);
+    kernels::TensorView k_slice = inputs[1];
+    kernels::TensorView v_slice = inputs[2];
+    // Point at batch row for rank-2 [B,dim] or [B,1,dim].
+    const std::size_t k_off = static_cast<std::size_t>(b * k_dim) * sizeof(float);
+    const std::size_t v_off = static_cast<std::size_t>(b * v_dim) * sizeof(float);
+    k_slice.data = static_cast<char*>(inputs[1].data) + k_off;
+    k_slice.nbytes = new_k_bytes;
+    v_slice.data = static_cast<char*>(inputs[2].data) + v_off;
+    v_slice.nbytes = new_v_bytes;
+    err = upload_row(k_slice, d_k_full.p + (b * kv_seq + past_seq) * k_dim, new_k_bytes);
+    if (!err.ok()) break;
+    err = upload_row(v_slice, d_v_full.p + (b * kv_seq + past_seq) * v_dim, new_v_bytes);
+    if (!err.ok()) break;
+  }
+  if (!err.ok()) {
+    d_q.release();
+    d_out.release();
+    d_k_full.release();
+    d_v_full.release();
+    return err;
+  }
+
+  err = cuda_attention_decode_f32(q_dev, d_k_full.p, d_v_full.p, out_dev, batch, kv_seq, q_dim,
+                                  k_dim, v_dim, out_dim, num_heads, num_kv_heads, head_dim,
+                                  v_head_dim, scale, logit_softcap);
+  if (err.ok() && need_d2h) {
+    err = cuda_status(
+        cudaMemcpy((*outputs)[0].data, out_dev, (*outputs)[0].nbytes, cudaMemcpyDeviceToHost),
+        "attn D2H");
+  }
+
+  d_q.release();
+  d_out.release();
+  d_k_full.release();
+  d_v_full.release();
+  if (!err.ok()) {
+    return err;
+  }
+
+  // Present K/V explicit outputs not implemented on CUDA decode path.
+  if (outputs->size() >= 3) {
+    return Error::make(ErrorCode::NotImplemented,
+                       "CUDA Attention present_k/v outputs not implemented");
+  }
+
+  if (use_kv && cache != nullptr && layer_id >= 0) {
+    // Append uses host K/V; if device-resident, stage through temporary host copies.
+    if (cuda_is_device_ptr(inputs[1].data) || cuda_is_device_ptr(inputs[2].data)) {
+      std::vector<float> hk(static_cast<std::size_t>(inputs[1].numel()));
+      std::vector<float> hv(static_cast<std::size_t>(inputs[2].numel()));
+      if (cuda_is_device_ptr(inputs[1].data)) {
+        err = cuda_status(cudaMemcpy(hk.data(), inputs[1].data, inputs[1].nbytes,
+                                     cudaMemcpyDeviceToHost),
+                          "attn K for cache");
+      } else {
+        std::memcpy(hk.data(), inputs[1].data, inputs[1].nbytes);
+      }
+      if (!err.ok()) return err;
+      if (cuda_is_device_ptr(inputs[2].data)) {
+        err = cuda_status(cudaMemcpy(hv.data(), inputs[2].data, inputs[2].nbytes,
+                                     cudaMemcpyDeviceToHost),
+                          "attn V for cache");
+      } else {
+        std::memcpy(hv.data(), inputs[2].data, inputs[2].nbytes);
+      }
+      if (!err.ok()) return err;
+      kernels::TensorView k_host = inputs[1];
+      kernels::TensorView v_host = inputs[2];
+      k_host.data = hk.data();
+      v_host.data = hv.data();
+      return cache->append_layer(layer_id, k_host, v_host);
+    }
+    return cache->append_layer(layer_id, inputs[1], inputs[2]);
+  }
+  return Error::success();
+}
+
 }  // namespace
 
 bool cuda_compiled() noexcept { return true; }
 
 const char* cuda_capability_details() noexcept {
-  return "CUDA native: MatMul(cuBLASLt+cublasSgemm fallback),Add,Mul,RMSNorm,Softmax,Silu "
-         "on-device; cuBLASLt + dual-stream; host_fallback: Attention,RoPE,Embedding,others";
+  return "CUDA native: MatMul(cuBLASLt+cublasSgemm fallback),Add,Mul,RMSNorm,Softmax,Silu,"
+         "Attention(decode seq=1 staged/on-device),RoPE(staged/on-device); "
+         "cuBLASLt + dual-stream; host_fallback: MLAExpandK,Embedding,Attention prefill,others";
 }
 
 Error cuda_init() {
@@ -573,6 +1098,16 @@ Error cuda_dispatch(const std::string& op_name, const std::string& /*op_version*
   }
   if (op_name == "Silu") {
     return dispatch_silu(inputs, outputs);
+  }
+  if (op_name == "RoPE") {
+    return dispatch_rope(inputs, outputs, attrs);
+  }
+  if (op_name == "Attention") {
+    return dispatch_attention(inputs, outputs, attrs);
+  }
+  if (op_name == "MLAExpandK") {
+    return Error::make(ErrorCode::NotImplemented,
+                       "CUDA MLAExpandK not implemented (CPU/host staging)");
   }
   return Error::make(ErrorCode::NotImplemented,
                      "CUDA native op not implemented: " + op_name);

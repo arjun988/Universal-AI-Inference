@@ -13,11 +13,27 @@ Import is driven by **tensor layout + metadata**, not a short name whitelist.
 | Missing `general.architecture` but `blk.0.*` present | Still imports (legacy / hand-built) |
 | Tied embeddings (no `output.weight`) | Reuse `token_embd.weight` as lm_head |
 | MoE (`expert_count` / `ffn_gate_inp` + `ffn_*_exps`) | **Supported** — `MoERouter` + `MoEExpertsSwiGLU` (optional `*_shexp` shared experts) |
+| MLA (`attn_kv_a` / `attn_k_b` / `attn_v_b`, DeepSeek V2/V3) | **Supported** — expand-then-attend (full KV cache); see below |
 | Weights-only dump (no emb + lm stack) | Any architecture — `Identity` graph |
 | Non-`blk.*` layouts (raw GPT-2/Bloom naming, Mamba, RWKV, …) | Not auto-mapped yet — weights graph or convert to `blk.*` GGUF |
 
 Examples that import when they use llama.cpp-style `blk.*` naming:  
-`llama`, `llama3`, `mistral`, `qwen2`, `qwen3`, `phi3`, `gemma`, `gemma2`, `internlm2`, `stablelm`, `command-r`, `deepseek2` (dense), and any future arch that follows the same tensor scheme.
+`llama`, `llama3`, `mistral`, `qwen2`, `qwen3`, `phi3`, `gemma`, `gemma2`, `internlm2`, `stablelm`, `command-r`, `deepseek2` / `deepseekv2` / `deepseekv3` (MLA expand path), and any future arch that follows the same tensor scheme.
+
+## MLA expand-then-attend (DeepSeek V2/V3 GGUF)
+
+DeepSeek Multi-head Latent Attention is imported by **expanding** compressed KV to full per-head K/V each step, then using the normal `Attention` op + full KV cache (not a compressed MLA cache).
+
+| Detection | `blk.N.attn_kv_a_mqa` (or `attn_kv_a`) **and** `attn_k_b` + `attn_v_b` |
+|---|---|
+| Q path | Optional Q-LoRA: `attn_q_a` → RMSNorm → `attn_q_b`; else `attn_q` |
+| KV path | `attn_kv_a` → slice latent if `[kv_lora+rope]` → RMSNorm → `k_b` / `v_b` |
+| RoPE K | Shared rope slice from `kv_a` is RoPE’d and merged via `MLAExpandK` when K is nope-only |
+| Graph meta | `mla=1` plus `q_lora_rank` / `kv_lora_rank` / `qk_*_head_dim` when present |
+| Fail closed | Incomplete MLA tensor set, or impossible nope/rope assembly |
+| Not yet | Absorbed / compressed MLA KV cache (memory-optimized path) |
+
+Dense Llama/Qwen layers without these tensors keep the existing Q/K/V path unchanged.
 
 ## Quant types
 
@@ -26,7 +42,8 @@ Examples that import when they use llama.cpp-style `blk.*` naming:
 | F32, F16 | yes | dense f32 / dequant |
 | Q4_0, Q4_1, Q5_0, Q5_1, Q8_0 | yes | yes (`keep_quantized_weights`) |
 | Q2_K, Q3_K, Q4_K, Q5_K, Q6_K | yes | yes (CPU tile path) |
-| IQ* / unknown enum | **fail closed** (`NotImplemented`) | no |
+| **IQ4_NL** | yes | yes (dequant + tile path) |
+| Other IQ* (IQ2_XXS, IQ2_XS, IQ3_XXS, IQ1_S, IQ3_S, IQ2_S, IQ4_XS, IQ1_M), Q8_K | **fail closed** — convert to **Q4_K_M** (or F16) via `llama-quantize` | no |
 
 Use `gguf_type_supported()` before `gguf_type_to_quant()`; unknown types are not silently mapped to F32.
 

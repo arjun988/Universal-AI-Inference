@@ -193,10 +193,12 @@ def _ctypes() -> _CTypesLib:
     if _CTYPES is None:
         path = _find_capi()
         if path is None:
-            raise UaiiError(
-                "Neither uaii._uaii nor uaii_capi shared library found. "
-                "Build the runtime (uaii_capi) or configure -DUAII_BUILD_PYTHON=ON. "
-                "Set UAII_CAPI_PATH to the library if needed."
+            raise ImportError(
+                "uaii native backend missing: neither the pybind module (uaii._uaii) "
+                "nor uaii_capi under uaii/_native/ (or the CMake build tree) was found. "
+                "Build the runtime, then run bindings/python/scripts/bundle_native.py "
+                "(or bindings/python/scripts/build_wheel.sh / build_wheel.ps1). "
+                "Alternatively set UAII_CAPI_PATH to the uaii_capi shared library."
             )
         _CTYPES = _CTypesLib(path)
     return _CTYPES

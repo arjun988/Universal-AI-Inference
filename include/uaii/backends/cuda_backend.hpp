@@ -10,7 +10,8 @@ namespace uaii {
 namespace backends {
 
 /// CUDA backend. Native device path (cuBLAS + kernels) when UAII_WITH_CUDA=ON;
-/// otherwise host-fallback. Attention remains host_fallback on the native path.
+/// otherwise host-fallback. Attention/RoPE run on-device (staged H2D when session
+/// tensors are host-resident); Attention prefill (seq>1) and MLAExpandK stay CPU.
 class UAII_API CudaBackend : public HostExecutableBackend {
  public:
   explicit CudaBackend(memory::Allocator* allocator = nullptr,

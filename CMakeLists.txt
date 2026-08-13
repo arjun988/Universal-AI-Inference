@@ -61,6 +61,7 @@ endif()
 if(UAII_BUILD_PLUGINS)
   add_subdirectory(plugins/example_probe)
   add_subdirectory(plugins/example_op)
+  add_subdirectory(plugins/research_ops)
 endif()
 
 if(UAII_BUILD_TESTS)

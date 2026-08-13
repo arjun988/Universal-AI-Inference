@@ -22,11 +22,11 @@ const NAV_GROUPS = [
 const PAGE_META = {
   chat: {
     title: "Chat",
-    sub: "Run local GGUF models with streaming and sampling controls.",
+    sub: "Run local GGUF or Hugging Face models with streaming and sampling.",
   },
   models: {
     title: "Models",
-    sub: "Import, convert, and manage weights in your model library.",
+    sub: "Import GGUF, pull Hugging Face repos, and manage your library.",
   },
   runtime: {
     title: "Runtime",
@@ -205,6 +205,9 @@ export default function App() {
   const [output, setOutput] = useState("");
   const [streamPreview, setStreamPreview] = useState("");
   const [theme, setTheme] = useState(() => readTheme());
+  const [hfRepo, setHfRepo] = useState("");
+  const [hfImportPath, setHfImportPath] = useState("");
+  const [pullBusy, setPullBusy] = useState(false);
   const [chatConfigOpen, setChatConfigOpen] = useState(false);
   const [backends, setBackends] = useState(null);
   const [loadStatus, setLoadStatus] = useState(null);
@@ -317,11 +320,11 @@ export default function App() {
     const list = data.models || [];
     setModels(list);
     setModelDir(data.modelDir || "");
-    const ggufs = list.filter((m) => m.kind === "gguf");
+    const chatable = list.filter((m) => m.kind === "gguf" || m.kind === "hf");
     setSelectedModel((cur) => {
-      if (cur && ggufs.some((m) => m.name === cur)) return cur;
+      if (cur && chatable.some((m) => m.name === cur)) return cur;
       if (cur && list.some((m) => m.name === cur)) return cur;
-      return ggufs[0]?.name || "";
+      return chatable[0]?.name || "";
     });
   }, []);
 
@@ -414,14 +417,14 @@ export default function App() {
     setStreamPreview("");
 
     if (chatMode === "gguf") {
-      const ggufs = models.filter((m) => m.kind === "gguf");
-      if (!ggufs.length || !selectedModel) {
-        setError("No model selected. Upload a .gguf in Models, then pick it here.");
+      const chatable = models.filter((m) => m.kind === "gguf" || m.kind === "hf");
+      if (!chatable.length || !selectedModel) {
+        setError("No model selected. Import a .gguf or Hugging Face folder in Models.");
         return;
       }
     }
     if (chatMode === "ir" && !selectedModel) {
-      setError("No model selected. Upload a .gguf or .uaii.json in Models first.");
+      setError("No model selected. Import a .gguf, HF dir, or .uaii.json in Models first.");
       return;
     }
 
@@ -687,8 +690,11 @@ export default function App() {
   const meta = PAGE_META[page] || { title: page, sub: "" };
   const gemmRows = benchOut?.parsed?.gemm_by_provider || [];
   const ggufModels = models.filter((m) => m.kind === "gguf");
+  const hfModels = models.filter((m) => m.kind === "hf");
+  const chatModels = models.filter((m) => m.kind === "gguf" || m.kind === "hf");
   const ggufCount = ggufModels.length;
-  const hasChatModel = chatMode !== "gguf" || Boolean(selectedModel && ggufCount);
+  const hfCount = hfModels.length;
+  const hasChatModel = chatMode !== "gguf" || Boolean(selectedModel && chatModels.length);
   const loadPhase = loadStatus?.phase || "idle";
   const modelLoading =
     chatMode === "gguf" &&
@@ -869,14 +875,14 @@ export default function App() {
                       onChange={(e) => setSelectedModel(e.target.value)}
                       aria-label="Model"
                     >
-                      {!ggufCount ? (
-                        <option value="">No models — upload a .gguf</option>
+                      {!chatModels.length ? (
+                        <option value="">No models — import GGUF or HF</option>
                       ) : (
                         <>
                           {!selectedModel ? <option value="">Select a model…</option> : null}
-                          {ggufModels.map((m) => (
+                          {chatModels.map((m) => (
                             <option key={m.name} value={m.name}>
-                              {m.name}
+                              {m.kind === "hf" ? `[HF] ${m.name}` : m.name}
                             </option>
                           ))}
                         </>
@@ -909,10 +915,13 @@ export default function App() {
                             <>
                               {!selectedModel ? <option value="">Select a model…</option> : null}
                               {models
-                                .filter((m) => m.kind === "uaii-ir" || m.kind === "gguf")
+                                .filter(
+                                  (m) =>
+                                    m.kind === "uaii-ir" || m.kind === "gguf" || m.kind === "hf",
+                                )
                                 .map((m) => (
                                   <option key={m.name} value={m.name}>
-                                    {m.name}
+                                    {m.kind === "hf" ? `[HF] ${m.name}` : m.name}
                                   </option>
                                 ))}
                             </>
@@ -1115,10 +1124,10 @@ export default function App() {
                       <div className="chat-empty-mark">UA</div>
                       {!hasChatModel ? (
                         <>
-                          <h3>Upload a model to chat</h3>
+                          <h3>Import a model to chat</h3>
                           <p>
-                            Chat needs a local <code>.gguf</code> file. Import one in Models, then
-                            select it above.
+                            Chat needs a local <code>.gguf</code> or a Hugging Face folder
+                            (<code>config.json</code> + weights). Pull or import one in Models.
                           </p>
                           <div className="suggest-row">
                             <button
@@ -1228,7 +1237,7 @@ export default function App() {
                       placeholder={
                         hasChatModel
                           ? "Ask your local model…"
-                          : "Upload a .gguf in Models before chatting…"
+                          : "Import a .gguf or HF model in Models before chatting…"
                       }
                       rows={2}
                       disabled={chatMode === "gguf" && !hasChatModel}
@@ -1277,14 +1286,19 @@ export default function App() {
             <>
               <div className="stats-row">
                 <div className="stat">
-                  <div className="stat-label">Files</div>
+                  <div className="stat-label">Entries</div>
                   <div className="stat-value">{models.length}</div>
                   <div className="stat-hint">In library</div>
                 </div>
                 <div className="stat">
                   <div className="stat-label">GGUF</div>
                   <div className="stat-value">{ggufCount}</div>
-                  <div className="stat-hint">Ready for chat</div>
+                  <div className="stat-hint">Chat-ready files</div>
+                </div>
+                <div className="stat">
+                  <div className="stat-label">Hugging Face</div>
+                  <div className="stat-value">{hfCount}</div>
+                  <div className="stat-hint">Chat-ready folders</div>
                 </div>
                 <div className="stat">
                   <div className="stat-label">Directory</div>
@@ -1299,18 +1313,99 @@ export default function App() {
                   <div>
                     <p className="panel-title">Library</p>
                     <p className="panel-desc">
-                      Import GGUF / IR, convert, or open in Chat.
+                      Import GGUF, pull Hugging Face repos, convert, or open in Chat.
                     </p>
                   </div>
                   <div className="row" style={{ margin: 0 }}>
                     <label className="btn primary sm">
-                      Import
+                      Import file
                       <input type="file" hidden onChange={onUpload} />
                     </label>
                     <button className="btn sm" type="button" onClick={() => refreshModels()}>
                       Refresh
                     </button>
                   </div>
+                </div>
+                <div style={{ padding: "0 1.1rem 1.1rem", display: "grid", gap: "0.75rem" }}>
+                  <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", margin: 0 }}>
+                    <input
+                      style={{ flex: "1 1 220px", minWidth: 180 }}
+                      placeholder="org/model (Hugging Face)"
+                      value={hfRepo}
+                      onChange={(e) => setHfRepo(e.target.value)}
+                      aria-label="HF repo id"
+                    />
+                    <button
+                      className="btn primary sm"
+                      type="button"
+                      disabled={pullBusy || !hfRepo.includes("/")}
+                      onClick={async () => {
+                        setError("");
+                        setPullBusy(true);
+                        try {
+                          const data = await api("/api/models/pull", {
+                            method: "POST",
+                            body: JSON.stringify({ repo: hfRepo.trim() }),
+                          });
+                          setOutput(
+                            `Pulled ${hfRepo} → ${data.name || ""}\n${data.stdout || data.stderr || ""}`,
+                          );
+                          await refreshModels();
+                          if (data.name) {
+                            setSelectedModel(data.name);
+                            setPage("chat");
+                            setChatMode("gguf");
+                          }
+                        } catch (e) {
+                          setError(e.message);
+                        } finally {
+                          setPullBusy(false);
+                        }
+                      }}
+                    >
+                      {pullBusy ? "Pulling…" : "Pull from Hub"}
+                    </button>
+                  </div>
+                  <div className="row" style={{ flexWrap: "wrap", gap: "0.5rem", margin: 0 }}>
+                    <input
+                      style={{ flex: "1 1 220px", minWidth: 180 }}
+                      placeholder="Local HF folder path (config.json)"
+                      value={hfImportPath}
+                      onChange={(e) => setHfImportPath(e.target.value)}
+                      aria-label="HF folder path"
+                    />
+                    <button
+                      className="btn sm"
+                      type="button"
+                      disabled={pullBusy || !hfImportPath.trim()}
+                      onClick={async () => {
+                        setError("");
+                        setPullBusy(true);
+                        try {
+                          const data = await api("/api/models/import-hf", {
+                            method: "POST",
+                            body: JSON.stringify({ path: hfImportPath.trim() }),
+                          });
+                          await refreshModels();
+                          if (data.name) {
+                            setSelectedModel(data.name);
+                            setPage("chat");
+                            setChatMode("gguf");
+                          }
+                        } catch (e) {
+                          setError(e.message);
+                        } finally {
+                          setPullBusy(false);
+                        }
+                      }}
+                    >
+                      Import HF folder
+                    </button>
+                  </div>
+                  <p className="panel-desc" style={{ margin: 0 }}>
+                    Pull needs <code>huggingface-cli</code> (or curl). Rebuild{" "}
+                    <code>uaii</code> first so HF load works in Chat.
+                  </p>
                 </div>
               </div>
               <div className="table-wrap">
@@ -1330,7 +1425,9 @@ export default function App() {
                         <td colSpan={5}>
                           <div className="chat-empty" style={{ padding: "1.5rem" }}>
                             <h3>No models yet</h3>
-                            <p>Import a .gguf / .uaii.json to use in Chat.</p>
+                            <p>
+                              Import a <code>.gguf</code>, or pull / import a Hugging Face folder.
+                            </p>
                           </div>
                         </td>
                       </tr>
@@ -1347,6 +1444,19 @@ export default function App() {
                           <td>{new Date(m.mtime).toLocaleString()}</td>
                           <td>
                             <div className="row" style={{ margin: 0 }}>
+                              {(m.kind === "gguf" || m.kind === "hf") && (
+                                <button
+                                  className="btn primary sm"
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedModel(m.name);
+                                    setChatMode("gguf");
+                                    setPage("chat");
+                                  }}
+                                >
+                                  Chat
+                                </button>
+                              )}
                               <button
                                 className="btn sm"
                                 type="button"

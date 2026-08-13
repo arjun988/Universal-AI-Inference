@@ -3,6 +3,7 @@
 #include "uaii/backends/factory.hpp"
 #include "uaii/backends/host_executable.hpp"
 #include "uaii/core/log.hpp"
+#include "uaii/runtime/memory_preset.hpp"
 #include "uaii/ir/dtype.hpp"
 #include "uaii/ir/registry.hpp"
 #include "uaii/ir/validator.hpp"
@@ -101,6 +102,9 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
   oopts.enable_streaming = options_.enable_streaming;
   oopts.ram_budget_bytes = options_.allocator.budget_bytes;
   oopts.prefer_mmap = true;
+  oopts.pin_layers = options_.pin_layers;
+  options_.peak_rss_bytes =
+      std::max(options_.peak_rss_bytes, process_peak_rss_bytes());
 
   planner::OptimizeResult opt;
   {
@@ -801,46 +805,61 @@ Error Session::ensure_kv_cache(std::int64_t max_seq) {
   if (n_heads <= 0) n_heads = 1;
   if (n_kv_heads <= 0) n_kv_heads = n_heads;
 
-  std::int64_t dim = meta_i64(graph_, "kv_dim", 0);
-  if (dim <= 0) {
-    // Prefer K activation width (GQA-correct).
-    for (const auto& t : graph_.tensors) {
-      if (!t.is_weight && t.shape.dims.size() >= 2) {
-        const auto& n = t.name;
-        if (n.size() >= 2 && (n.compare(n.size() - 2, 2, ".k") == 0 || n == "k")) {
-          dim = t.shape.dims.back();
+  std::int64_t k_dim = meta_i64(graph_, "kv_dim", 0);
+  std::int64_t v_dim = meta_i64(graph_, "v_dim", 0);
+  auto ends_with = [](const std::string& n, const char* suf) -> bool {
+    const std::size_t sl = std::strlen(suf);
+    return n.size() >= sl && n.compare(n.size() - sl, sl, suf) == 0;
+  };
+  if (k_dim <= 0) {
+    // Prefer post-RoPE / assembled K (MLA: .k_rope / .k_full) over raw .k.
+    for (const char* suf : {".k_rope", ".k_full", ".k"}) {
+      for (const auto& t : graph_.tensors) {
+        if (!t.is_weight && t.shape.dims.size() >= 2 && ends_with(t.name, suf)) {
+          k_dim = t.shape.dims.back();
           break;
         }
       }
+      if (k_dim > 0) break;
     }
   }
-  if (dim <= 0) dim = meta_i64(graph_, "embedding_length", 0);
-  if (dim <= 0) dim = meta_i64(graph_, "dim", 0);
-  if (dim <= 0) {
+  if (v_dim <= 0) {
     for (const auto& t : graph_.tensors) {
-      if (t.name == "hidden" && t.shape.dims.size() >= 2) {
-        dim = t.shape.dims.back();
+      if (!t.is_weight && t.shape.dims.size() >= 2 &&
+          (ends_with(t.name, ".v") || t.name == "v")) {
+        v_dim = t.shape.dims.back();
         break;
       }
     }
   }
-  if (dim <= 0) {
+  if (k_dim <= 0) k_dim = meta_i64(graph_, "embedding_length", 0);
+  if (k_dim <= 0) k_dim = meta_i64(graph_, "dim", 0);
+  if (k_dim <= 0) {
+    for (const auto& t : graph_.tensors) {
+      if (t.name == "hidden" && t.shape.dims.size() >= 2) {
+        k_dim = t.shape.dims.back();
+        break;
+      }
+    }
+  }
+  if (k_dim <= 0) {
     for (const auto& t : graph_.tensors) {
       if (!t.is_weight && t.shape.dims.size() >= 2) {
         const auto& n = t.name;
         if (n.size() >= 2 &&
             (n.compare(n.size() - 2, 2, ".q") == 0 || n == "q" ||
              n.compare(n.size() - 5, 5, ".attn") == 0)) {
-          dim = t.shape.dims.back();
+          k_dim = t.shape.dims.back();
           break;
         }
       }
     }
   }
-  if (n_layers <= 0 || dim <= 0 || max_seq <= 0) {
+  if (v_dim <= 0) v_dim = k_dim;
+  if (n_layers <= 0 || k_dim <= 0 || max_seq <= 0) {
     // No transformer stack detected (pure MLP or missing metadata) —
     // leave kv_ unset; Attention kernels fall back to no-cache path.
-    if (n_layers > 0 && dim <= 0) {
+    if (n_layers > 0 && k_dim <= 0) {
       log::warn("session") << "ensure_kv_cache: found " << n_layers
                            << " Attention node(s) but could not determine kv_dim — "
                               "running without KV cache (add kv_dim metadata to the model)";
@@ -849,7 +868,7 @@ Error Session::ensure_kv_cache(std::int64_t max_seq) {
     return Error::success();
   }
   if (!kv_) kv_ = std::make_unique<KvCache>();
-  Error err = kv_->configure(n_layers, /*batch=*/1, max_seq, dim, n_kv_heads);
+  Error err = kv_->configure(n_layers, /*batch=*/1, max_seq, k_dim, v_dim, n_kv_heads);
   if (!err.ok()) return err;
   kv_->reset();
   return Error::success();
@@ -1004,6 +1023,9 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   out_tokens->reserve(static_cast<std::size_t>(total));
 
   // Prefill: feed each prompt token (seq=1 graphs) so KV grows when attrs enable it.
+  // prefill_chunk_size is the progress-reporting stride (true multi-token chunks need seq>1 graphs).
+  const std::int64_t chunk =
+      options_.prefill_chunk_size > 0 ? options_.prefill_chunk_size : 64;
   for (std::int64_t i = 0; i < prompt_len; ++i) {
     if (max_ctx > 0 && (i + 1) > max_ctx) {
       return Error::make(ErrorCode::InvalidArgument, "context length exceeded during prefill");
@@ -1013,6 +1035,12 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
     err = run();
     if (!err.ok()) return err;
     out_tokens->push_back(prompt_tokens[static_cast<std::size_t>(i)]);
+    if ((i + 1) % chunk == 0 || i + 1 == prompt_len) {
+      options_.peak_rss_bytes =
+          std::max(options_.peak_rss_bytes, process_peak_rss_bytes());
+      log::debug("generate") << "prefill " << (i + 1) << "/" << prompt_len
+                             << " peak_rss_bytes=" << options_.peak_rss_bytes;
+    }
   }
 
   // Decode: sample next token (greedy when SampleParams::greedy()).
@@ -1176,6 +1204,14 @@ std::string Session::debug_stats() const {
   if (options_.enable_profiler) oss << " profile={" << profiler_.summary() << "}";
   if (streaming_) {
     oss << " stream_io=" << streaming_->bytes_read() << "B";
+  }
+  options_.peak_rss_bytes =
+      std::max(options_.peak_rss_bytes, process_peak_rss_bytes());
+  if (options_.peak_rss_bytes > 0) {
+    oss << " peak_rss_bytes=" << options_.peak_rss_bytes;
+  }
+  if (options_.pin_layers > 0) {
+    oss << " pin_layers=" << options_.pin_layers;
   }
   return oss.str();
 }

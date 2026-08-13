@@ -8,14 +8,15 @@ export default function Page() {
     <DocLayout
       title="Features"
       active="/docs/features/"
-      lede="UAII is a modular inference runtime: models become UAII IR, then run on pluggable backends through one session surface."
+      lede="Modular inference runtime: HF decoder dirs and GGUF blk.* LLMs are the ready product surface; other formats and arches plug in over time."
     >
       <h2>What UAII is</h2>
       <p>
         An <strong>execution platform for AI inference</strong> — not a single-model engine.
         Loaders, operators, backends, schedulers, and storage providers plug into a common
-        core. The product loop is: ingest → validate/plan → execute → integrate (CLI / C /
-        Python).
+        core. Today we recommend <Link href="/docs/huggingface/">Hugging Face decoder-only</Link>{" "}
+        and GGUF transformers; see <Link href="/docs/huggingface/">Hugging Face</Link> for
+        allowlist limits before overclaiming Hub coverage.
       </p>
 
       <h2>Model formats</h2>
@@ -30,22 +31,31 @@ export default function Page() {
           <tbody>
             <tr>
               <td>
+                <strong>Hugging Face dir</strong>
+              </td>
+              <td>
+                First-class for allowlisted <strong>CausalLM</strong> families with Llama-style
+                tensor names. <code>uaii pull</code>, <code>generate --model ./dir</code>,
+                dashboard Hub pull. Not every Hub architecture.
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <strong>GGUF</strong>
               </td>
               <td>
-                <strong>Any architecture</strong> with llama.cpp-style <code>blk.*</code>{" "}
-                decoder tensors — not a Llama-only allowlist. Reads{" "}
-                <code>{"{arch}.*"}</code> metadata (<code>qwen2.block_count</code>,{" "}
-                <code>gemma.attention.head_count</code>, …). RMSNorm, QKV, RoPE, Attention +
-                KV, dense SwiGLU/GELU or MoE experts (<code>ffn_*_exps</code>), tied
-                embeddings.
+                Capability-based import for llama.cpp-style <code>blk.*</code> decoder tensors
+                (dense or MoE; DeepSeek MLA expand path). Reads <code>{"{arch}.*"}</code>{" "}
+                metadata. Common Q/K quants + IQ4_NL; exotic IQ* fail closed.
               </td>
             </tr>
             <tr>
               <td>
                 <strong>Safetensors</strong>
               </td>
-              <td>Weight graphs / HF-style layouts → UAII IR</td>
+              <td>
+                Used inside HF dirs; standalone weight graphs also import when layout maps to IR
+              </td>
             </tr>
             <tr>
               <td>
@@ -85,7 +95,10 @@ export default function Page() {
           Session policy: <code>compute_dtype</code> (F32 / F16),{" "}
           <code>keep_quantized_weights</code>
         </li>
-        <li>Unsupported / IQ* GGUF types fail closed — no silent Ones fills</li>
+        <li>
+          Unsupported / other IQ* GGUF types fail closed — no silent Ones fills (
+          <code>IQ4_NL</code> supported)
+        </li>
       </ul>
 
       <h2>LLM runtime</h2>
@@ -95,22 +108,22 @@ export default function Page() {
           <code>uaii_session_generate</code>
         </li>
         <li>
-          CLI: <code>uaii generate</code> (one-shot) and <code>uaii chat --jsonl</code> (warm
-          session for the dashboard)
+          CLI: <code>uaii pull</code>, <code>uaii generate</code>, <code>uaii chat --jsonl</code>{" "}
+          (warm session for the dashboard)
         </li>
-        <li>First-class KV cache with context limits from model metadata</li>
+        <li>KV cache with context limits from model metadata; memory presets / peak RSS</li>
         <li>
-          Tokenizers: BPE, SentencePiece (optional), GGUF <code>tokenizer.ggml.*</code>,
-          SimpleTokenizer for demos
+          Tokenizers: HF tokenizer JSON, GGUF <code>tokenizer.ggml.*</code>, BPE /
+          SentencePiece (optional), SimpleTokenizer for demos
         </li>
       </ul>
 
       <h2>Dashboard</h2>
       <p>
-        Operator UI in <code>dashboard/</code> — local or self-host. Chat with streaming,
-        model library, doctor, benches, settings, Bearer auth on LAN, OpenAI-compatible{" "}
-        <code>/v1/chat/completions</code>. See{" "}
-        <Link href="/docs/dashboard/">Dashboard</Link> for install and configuration.
+        Operator UI in <code>dashboard/</code> — local or self-host. HF Hub pull + GGUF/HF
+        chat with streaming, model library, doctor, benches, request queue, Bearer auth on
+        LAN, OpenAI-compatible <code>/v1/chat/completions</code>. See{" "}
+        <Link href="/docs/dashboard/">Dashboard</Link>.
       </p>
 
       <h2>Hardware</h2>

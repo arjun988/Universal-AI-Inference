@@ -58,8 +58,11 @@ void OperatorRegistry::register_builtin_schemas() {
                                {"num_heads", "kv_heads", "scale", "causal",
                                 "use_kv_cache", "layer_id", "logit_softcap"},
                                "Multi-head attention (Q,K,V[,past_k,past_v])"));
-  (void)register_schema(schema("RoPE", 1, 2, 1, 1, {"theta", "head_dim", "mode"},
+  (void)register_schema(schema("RoPE", 1, 2, 1, 1, {"theta", "head_dim", "mode", "rotary_dim"},
                                "Rotary position embedding"));
+  (void)register_schema(schema("MLAExpandK", 2, 2, 1, 1,
+                               {"num_heads", "nope_dim", "rope_dim"},
+                               "MLA expand: concat per-head k_nope with shared k_rope"));
   (void)register_schema(schema("Slice", 1, 1, 1, 1, {"start", "end"},
                                "Slice last dimension [start,end)"));
   (void)register_schema(schema("Embedding", 2, 2, 1, 1, {}, "Token embedding lookup"));

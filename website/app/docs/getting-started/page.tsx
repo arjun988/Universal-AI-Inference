@@ -8,8 +8,14 @@ export default function Page() {
     <DocLayout
       title="Quick start"
       active="/docs/getting-started/"
-      lede="Build the C++ runtime, smoke the CLI, then wire the C API or Python SDK. This site is a static Next.js export — no application backend."
+      lede="Build the C++ runtime, try an HF decoder or GGUF, then wire the C API or Python SDK."
     >
+      <p>
+        <strong>Recommended first try:</strong> allowlisted Hugging Face CausalLM folder or a
+        GGUF <code>blk.*</code> model. Details:{" "}
+        <Link href="/docs/huggingface/">Hugging Face</Link>.
+      </p>
+
       <h2>Prerequisites</h2>
       <ul>
         <li>C++17 compiler (MSVC 2019+, Clang 10+, or GCC 9+)</li>
@@ -31,16 +37,19 @@ cmake --build build --config Release --parallel`}</pre>
       <h2>First commands</h2>
       <pre>{`uaii version
 uaii doctor
-uaii doctor --load-plugins
 
-uaii validate examples/ir/toy_mlp.uaii.json
-uaii run --demo toy_mlp
-uaii generate --demo --prompt "hi" --max-new-tokens 4 --json
-uaii generate --model path/to/model.gguf --prompt "hi" --max-new-tokens 64`}</pre>
+# Hugging Face decoder-only (allowlisted CausalLM)
+uaii pull org/model --outdir ./models/hf/org__model
+uaii generate --model ./models/hf/org__model --prompt "hi" --max-new-tokens 64 --preset laptop
+
+# Or GGUF blk.* transformer
+uaii generate --model path/to/model.gguf --prompt "hi" --max-new-tokens 64
+
+# Tiny IR smoke (no LLM weights)
+uaii generate --demo --prompt "hi" --max-new-tokens 4 --json`}</pre>
       <p>
-        GGUF import is capability-based: any <code>general.architecture</code> with
-        llama.cpp-style <code>blk.*</code> tensors (not limited to Llama). See{" "}
-        <Link href="/docs/features/">Features</Link>.
+        Rebuild <code>uaii</code> after pulling latest for HF support. Point the dashboard at
+        that binary via <code>UAII_BIN</code>.
       </p>
 
       <h2>Dashboard (optional UI)</h2>
@@ -49,11 +58,14 @@ npm run install:all
 npm run build && npm start
 # → http://127.0.0.1:8787
 
+# Point at rebuilt CLI (required for HF)
+UAII_BIN=/path/to/uaii npm start
+
 # Self-host
 UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=secret npm start`}</pre>
       <p>
-        Chat, models, doctor, benches, OpenAI-compatible <code>/v1</code>. Configure with env
-        or Settings — full guide: <Link href="/docs/dashboard/">Dashboard</Link>.
+        Hub pull, HF/GGUF chat, doctor, benches, OpenAI-compatible <code>/v1</code>. Full
+        guide: <Link href="/docs/dashboard/">Dashboard</Link>.
       </p>
 
       <h2>Run a graph</h2>
@@ -77,16 +89,17 @@ python examples/python/load_run_profile.py`}</pre>
       <h2>Next</h2>
       <ul>
         <li>
-          <Link href="/docs/features/">Features</Link> — formats, multi-arch GGUF, quants
+          <Link href="/docs/huggingface/">Hugging Face</Link> — decoder-only Hub path
         </li>
         <li>
-          <Link href="/docs/dashboard/">Dashboard</Link> — local / self-host UI config
+          <Link href="/docs/features/">Features</Link> — formats, quants, runtime
         </li>
         <li>
-          <Link href="/docs/configuration/">Configuration</Link> — TOML, env, CMake flags
+          <Link href="/docs/dashboard/">Dashboard</Link> — local / self-host UI
         </li>
         <li>
-          <Link href="/docs/cli/">CLI</Link> — <code>generate</code>, <code>chat</code>, run
+          <Link href="/docs/cli/">CLI</Link> — <code>pull</code>, <code>generate</code>,{" "}
+          <code>chat</code>
         </li>
       </ul>
     </DocLayout>

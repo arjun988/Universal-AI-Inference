@@ -66,11 +66,19 @@ struct SessionOptions {
   bool keep_quantized_weights = true;
   /// Max context length for generate / KV (0 = from graph metadata or unlimited).
   std::int64_t max_context = 0;
+  /// Pin first N transformer layers resident when streaming (0 = stream all under budget).
+  std::int64_t pin_layers = 0;
+  /// MoE expert LRU budget in bytes (0 = unused / auto later).
+  std::uint64_t expert_cache_bytes = 0;
+  /// Prefill progress reporting stride (tokens). Execution remains seq=1 per step.
+  std::int64_t prefill_chunk_size = 64;
   /// Optional progress callback while weights are loaded onto the device/host.
   /// Arguments: loaded count (1-based after each tensor), total weight tensors, tensor name.
   using LoadProgressFn =
       std::function<void(std::size_t loaded, std::size_t total, const std::string& tensor_name)>;
   LoadProgressFn on_load_progress;
+  /// Peak RSS observed during session lifetime (updated on create/generate/run).
+  mutable std::uint64_t peak_rss_bytes = 0;
 };
 
 struct OptimizeReport {

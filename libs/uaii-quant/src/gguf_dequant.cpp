@@ -64,6 +64,10 @@ struct BlockQ6K {
   std::int8_t scales[16];
   std::uint16_t d;
 };
+struct BlockIq4Nl {
+  std::uint16_t d;
+  std::uint8_t qs[16];
+};
 
 static_assert(sizeof(BlockQ40) == 18);
 static_assert(sizeof(BlockQ41) == 20);
@@ -75,6 +79,11 @@ static_assert(sizeof(BlockQ3K) == 110);
 static_assert(sizeof(BlockQ4K) == 144);
 static_assert(sizeof(BlockQ5K) == 176);
 static_assert(sizeof(BlockQ6K) == 210);
+static_assert(sizeof(BlockIq4Nl) == 18);
+
+// llama.cpp kvalues_iq4nl
+static const std::int8_t kvalues_iq4nl[16] = {
+    -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113};
 
 float f16_to_f32(std::uint16_t h) {
   const std::uint32_t sign = (static_cast<std::uint32_t>(h & 0x8000u) << 16);
@@ -415,6 +424,25 @@ Error dequant_row_q6_k(const std::uint8_t* packed, std::int64_t cols, float* out
   return Error::success();
 }
 
+Error dequant_row_iq4_nl(const std::uint8_t* packed, std::int64_t cols, float* out) {
+  constexpr std::int64_t QK = 32;
+  if (cols % QK != 0) {
+    return Error::make(ErrorCode::InvalidArgument, "IQ4_NL cols not multiple of 32");
+  }
+  const auto* blocks = reinterpret_cast<const BlockIq4Nl*>(packed);
+  const std::int64_t nb = cols / QK;
+  for (std::int64_t i = 0; i < nb; ++i) {
+    const float d = f16_to_f32(blocks[i].d);
+    for (std::int64_t j = 0; j < QK / 2; ++j) {
+      const int x0 = kvalues_iq4nl[blocks[i].qs[j] & 0x0F];
+      const int x1 = kvalues_iq4nl[blocks[i].qs[j] >> 4];
+      out[i * QK + j] = d * static_cast<float>(x0);
+      out[i * QK + j + QK / 2] = d * static_cast<float>(x1);
+    }
+  }
+  return Error::success();
+}
+
 }  // namespace
 
 Error dequant_gguf_row(QuantFormat format, const std::uint8_t* packed, std::int64_t cols,
@@ -433,6 +461,7 @@ Error dequant_gguf_row(QuantFormat format, const std::uint8_t* packed, std::int6
     case QuantFormat::Q4_K: return dequant_row_q4_k(packed, cols, out);
     case QuantFormat::Q5_K: return dequant_row_q5_k(packed, cols, out);
     case QuantFormat::Q6_K: return dequant_row_q6_k(packed, cols, out);
+    case QuantFormat::IQ4_NL: return dequant_row_iq4_nl(packed, cols, out);
     default:
       return Error::make(ErrorCode::NotImplemented, "unsupported gguf dequant format");
   }

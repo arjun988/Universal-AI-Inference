@@ -48,12 +48,13 @@ Error CudaBackend::initialize() {
     if (err.ok()) {
       native_ready_ = true;
       set_native_available(true);
-      // MatMul + Add + RMSNorm on device when tensors are device-resident.
-      // Session still allocates host RAM today — dispatch falls back to CPU kernels
-      // in place until device upload is wired (avoids CUDA D2H invalid argument).
+      // MatMul + Add + RMSNorm + Softmax + Silu + RoPE + Attention(decode) on device
+      // (host session tensors use staged H2D/D2H for Attention/RoPE).
       set_host_fallback(false);
+      set_attention_host_fallback(false);
       set_details(std::string("CUDA backend (native); ") + native::cuda_capability_details() +
-                  " | note: host-resident session tensors use CPU kernels until device upload");
+                  " | note: host-resident session tensors stage for Attention/RoPE; "
+                  "other ops use CPU in place until device upload");
       return Error::success();
     }
     set_details("CUDA backend (host-fallback; native init failed: " + err.message() + ")");
@@ -187,8 +188,20 @@ Error CudaBackend::dispatch(const std::string& op_name,
       }
     }
 
-    // Host-resident session buffers: run CPU kernels in place (do not cudaMemcpy).
+    // Host-resident session buffers: Attention/RoPE use staged GPU compute;
+    // other ops run CPU kernels in place (do not cudaMemcpy).
     if (!any_device) {
+      if (op_name == "Attention" || op_name == "RoPE" || op_name == "MLAExpandK") {
+        Error err = native::cuda_dispatch(op_name, op_version, inputs, outputs, attrs);
+        if (err.ok()) {
+          return err;
+        }
+        // Prefill Attention / MLAExpandK → CPU kernels.
+        if (err.code() == ErrorCode::NotImplemented) {
+          return HostExecutableBackend::dispatch(op_name, op_version, inputs, outputs, attrs);
+        }
+        return err;
+      }
       return HostExecutableBackend::dispatch(op_name, op_version, inputs, outputs, attrs);
     }
     if (any_host && any_device) {

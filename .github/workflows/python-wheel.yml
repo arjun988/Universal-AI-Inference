@@ -1,0 +1,45 @@
+name: python-wheel
+
+# CPU wheel stub: Ubuntu-only build of bindings/python with bundled uaii_capi.
+# Full multi-OS packaging remains in wheels.yml (tag / workflow_dispatch).
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "bindings/python/**"
+      - "libs/uaii-capi/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/python-wheel.yml"
+  pull_request:
+    paths:
+      - "bindings/python/**"
+      - "libs/uaii-capi/**"
+      - ".github/workflows/python-wheel.yml"
+
+jobs:
+  cpu-wheel-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential
+          python -m pip install --upgrade pip build
+      - name: CMake build (CPU)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DUAII_BUILD_PLUGINS=ON -DUAII_BUILD_TESTS=OFF
+          cmake --build build --parallel
+      - name: Bundle native + build wheel
+        run: |
+          python bindings/python/scripts/bundle_native.py --build-dir build
+          python -m build bindings/python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uaii-cpu-wheel-ubuntu
+          path: bindings/python/dist/*

@@ -39,6 +39,36 @@ $env:UAII_CAPI_PATH = "C:\path\to\uaii_capi.dll"
 
 Defaults are **fail-closed** (`weight_init="none"`). GPU backend names use host-fallback unless real device kernels exist.
 
+## Build a wheel (with natives)
+
+From the **repo root**, after a CMake build of `uaii_capi`:
+
+```bash
+# Linux / macOS
+bash bindings/python/scripts/build_wheel.sh
+
+# Windows PowerShell
+powershell -File bindings/python/scripts/build_wheel.ps1
+```
+
+These scripts:
+
+1. Configure and build with CMake (`-DUAII_BUILD_PLUGINS=ON`; tip: add `-DUAII_BUILD_PYTHON=ON` for pybind).
+2. Run `scripts/bundle_native.py` to copy `uaii_capi` into `uaii/_native/`.
+3. Run `python -m build` to produce wheels under `bindings/python/dist/`.
+
+Manual equivalent:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
+python bindings/python/scripts/bundle_native.py --build-dir build
+python -m pip install build
+python -m build bindings/python
+```
+
+CI builds a CPU wheel on Ubuntu via `.github/workflows/python-wheel.yml` (and the multi-OS `wheels.yml` on tags).
+
 ## Quick start
 
 ```python

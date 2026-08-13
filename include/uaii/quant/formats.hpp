@@ -27,6 +27,7 @@ enum class QuantFormat {
   Q4_K,
   Q5_K,
   Q6_K,
+  IQ4_NL,
 };
 
 [[nodiscard]] inline const char* to_string(QuantFormat f) noexcept {
@@ -48,6 +49,7 @@ enum class QuantFormat {
     case QuantFormat::Q4_K: return "q4_k";
     case QuantFormat::Q5_K: return "q5_k";
     case QuantFormat::Q6_K: return "q6_k";
+    case QuantFormat::IQ4_NL: return "iq4_nl";
     default: return "unknown";
   }
 }
@@ -71,11 +73,12 @@ enum class QuantFormat {
   if (text == "q4_k") { *out = QuantFormat::Q4_K; return true; }
   if (text == "q5_k") { *out = QuantFormat::Q5_K; return true; }
   if (text == "q6_k") { *out = QuantFormat::Q6_K; return true; }
+  if (text == "iq4_nl") { *out = QuantFormat::IQ4_NL; return true; }
   return false;
 }
 
 [[nodiscard]] inline bool is_gguf_block_quant(QuantFormat f) noexcept {
-  return f >= QuantFormat::Q4_0 && f <= QuantFormat::Q6_K;
+  return (f >= QuantFormat::Q4_0 && f <= QuantFormat::Q6_K) || f == QuantFormat::IQ4_NL;
 }
 
 [[nodiscard]] inline std::size_t packed_nbytes(QuantFormat f, std::size_t n) noexcept {
@@ -97,6 +100,7 @@ enum class QuantFormat {
     case QuantFormat::Q4_K: return (n / 256) * 144;
     case QuantFormat::Q5_K: return (n / 256) * 176;
     case QuantFormat::Q6_K: return (n / 256) * 210;
+    case QuantFormat::IQ4_NL: return (n / 32) * 18;  // f16 d + 16 nibble bytes
     default: return 0;
   }
 }

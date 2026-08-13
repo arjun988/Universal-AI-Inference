@@ -248,6 +248,7 @@ Error unpack_to_f32(const std::uint8_t* packed,
     case QuantFormat::Q4_K:
     case QuantFormat::Q5_K:
     case QuantFormat::Q6_K:
+    case QuantFormat::IQ4_NL:
       return dequant_gguf_row(format, packed, static_cast<std::int64_t>(n), dst);
     default:
       return Error::make(ErrorCode::NotImplemented, "unsupported quant format");

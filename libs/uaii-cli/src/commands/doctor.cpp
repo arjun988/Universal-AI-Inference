@@ -84,7 +84,7 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   print_kv("uaii-core", "active");
   print_kv("uaii-ir", "active");
   print_kv("uaii-runtime",
-           "active (session; compute_dtype F32|F16 policy; quant weights optional)");
+           "active (session; compute_dtype F32|F16; memory presets; peak RSS)");
   print_kv("uaii-memory", "active");
   print_kv("uaii-storage", "active (OS mmap + double-buffer streaming)");
   print_kv("uaii-planner", "active (fusion, memory/storage plan, disk cache)");
@@ -92,7 +92,8 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
            std::string("GEMM=") + kernels::GemmRegistry::instance().describe() +
                "; quant-GEMM; plugin ops");
   print_kv("uaii-backends", "CPU real; CUDA first-class when UAII_WITH_CUDA; others minimal/native");
-  print_kv("uaii-loaders", "GGUF/Safetensors/ONNX/MLX(+PT optional)");
+  print_kv("uaii-loaders",
+           "HF directory + GGUF/Safetensors/ONNX/MLX(+PT optional)");
   print_kv("uaii-tokenizers", "Simple + BPE + SentencePiece (if enabled)");
   print_kv("uaii-quant", "pack/unpack helpers; session compute remains f32");
   print_kv("uaii-profiler", "chrome-trace timelines");

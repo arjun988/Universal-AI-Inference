@@ -16,6 +16,11 @@ target_link_libraries(uaii_quant_dequant_test PRIVATE uaii::core uaii::quant)
 uaii_set_warnings(uaii_quant_dequant_test)
 add_test(NAME uaii_quant_dequant_test COMMAND uaii_quant_dequant_test)
 
+add_executable(uaii_hf_loader_test unit/hf_loader_test.cpp)
+target_link_libraries(uaii_hf_loader_test PRIVATE uaii::loaders uaii::ir uaii::core)
+uaii_set_warnings(uaii_hf_loader_test)
+add_test(NAME uaii_hf_loader_test COMMAND uaii_hf_loader_test)
+
 # Ensure Windows finds uaii_capi.dll (and deps) next to / via PATH.
 set(_uaii_test_path "$<TARGET_FILE_DIR:uaii_capi>;$ENV{PATH}")
 set_tests_properties(uaii_runtime_test PROPERTIES

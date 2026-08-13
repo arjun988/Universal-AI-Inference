@@ -8,21 +8,22 @@ export default function HomePage() {
         <div className="home-hero-rail">
           <div className="hero-copy">
             <p className="hero-kicker">
-              <i /> Open source inference runtime
+              <i /> Open source · HF decoder-ready
             </p>
             <p className="hero-brand">UAII</p>
             <h1 className="hero-title">Any model → UAII IR → any hardware.</h1>
             <p className="hero-lede">
-              The modular execution layer for AI inference. Load GGUF of any architecture
-              (llama.cpp-style <code>blk.*</code>), ONNX, Safetensors, and more into one IR —
-              then run via CLI, C, Python, or the local/self-host dashboard.
+              Universal inference runtime — <strong>usable today</strong> for Hugging Face
+              decoder-only LLMs and GGUF <code>blk.*</code> transformers. One IR, honest
+              backends, CLI + operator dashboard. More architectures land as plugins; we fail
+              closed instead of silently wrong.
             </p>
             <div className="hero-cta">
               <Link className="btn btn-primary" href="/docs/getting-started/">
                 Get started
               </Link>
-              <Link className="btn btn-secondary" href="/docs/dashboard/">
-                Dashboard
+              <Link className="btn btn-secondary" href="/docs/huggingface/">
+                Hugging Face
               </Link>
               <a
                 className="btn btn-secondary"
@@ -57,19 +58,57 @@ export default function HomePage() {
                 {"\n"}
                 {"  "}uaii-backends{"    "}CPU real · CUDA optional
                 {"\n"}
-                {"  "}uaii-loaders{"     "}GGUF · ONNX · Safetensors
+                {"  "}uaii-loaders{"     "}HF dirs · GGUF · Safetensors
                 {"\n\n"}
-                <span className="dim">$ </span>uaii generate --model model.gguf --prompt &quot;hi&quot;
+                <span className="dim">$ </span>uaii pull org/model
+                {"\n"}
+                <span className="dim">$ </span>uaii generate --model ./hf-dir --prompt &quot;hi&quot;
                 {"\n"}
                 {"  "}
                 <span className="ok">ok</span>
-                {"  "}any blk.* arch · greedy decode
+                {"  "}decoder-only HF · GGUF blk.*
                 {"\n\n"}
                 <span className="dim">$ </span>cd dashboard && npm start
                 {"\n"}
                 {"  "}
-                <span className="dim">http://127.0.0.1:8787 · chat · doctor · bench</span>
+                <span className="dim">http://127.0.0.1:8787 · HF + GGUF chat</span>
               </pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="home-section">
+        <div className="rail">
+          <p className="section-label">Readiness</p>
+          <h2>Ship decoder-only now; widen later</h2>
+          <p className="section-lede">
+            Tell users the truth: HF CausalLM allowlist + GGUF decoders work today. Vision,
+            SSM, RWKV, and marketplace are development — not silent “universal” claims.
+          </p>
+          <div className="flow">
+            <div className="flow-step">
+              <b>Ready</b>
+              <h3>HF + GGUF decoders</h3>
+              <p>CLI pull/generate, dashboard chat, memory presets, IQ4_NL / Q-quants.</p>
+            </div>
+            <div className="flow-step">
+              <b>Partial</b>
+              <h3>CUDA / MoE dial</h3>
+              <p>Decode Attention on CUDA when enabled; expert stream / LRU still deepening.</p>
+            </div>
+            <div className="flow-step">
+              <b>Building</b>
+              <h3>Other arches</h3>
+              <p>Plugin scaffolds for SSM / RWKV / vision; user arch picker later.</p>
+            </div>
+            <div className="flow-step">
+              <b>Docs</b>
+              <h3>Hugging Face</h3>
+              <p>
+                <Link href="/docs/huggingface/">HF decoder guide</Link> ·{" "}
+                <Link href="/docs/getting-started/">Quick start</Link>
+              </p>
             </div>
           </div>
         </div>
@@ -126,7 +165,7 @@ export default function HomePage() {
             <div className="flow-step">
               <b>01</b>
               <h3>Ingest</h3>
-              <p>GGUF, Safetensors, ONNX, MLX, PyTorch sidecars → UAII IR.</p>
+              <p>HF directories, GGUF, Safetensors, ONNX/MLX/PyTorch sidecars → UAII IR.</p>
             </div>
             <div className="flow-step">
               <b>02</b>
@@ -156,43 +195,53 @@ export default function HomePage() {
           </p>
           <div className="bento">
             <div className="bento-item">
-              <h3>Any GGUF architecture</h3>
+              <h3>Hugging Face decoder-only</h3>
               <p>
-                Capability-based import — not a Llama-only allowlist. Any{" "}
-                <code>general.architecture</code> with llama.cpp-style <code>blk.*</code>{" "}
-                tensors: RoPE, Attention + KV, SwiGLU or GELU MLP, tied embeddings.
+                First-class Hub folders: strict <code>config.json</code>, shards, RoPE/GQA,
+                tied emb. Allowlisted CausalLM families — not every Hub card.
+              </p>
+              <div className="chip-row">
+                <span className="chip">uaii pull</span>
+                <span className="chip">Llama</span>
+                <span className="chip">Qwen</span>
+                <span className="chip">Gemma</span>
+              </div>
+            </div>
+            <div className="bento-item">
+              <h3>GGUF blk.* transformers</h3>
+              <p>
+                Capability-based import for llama.cpp-style tensors: dense or MoE, DeepSeek
+                MLA expand path, common Q/K quants + IQ4_NL.
               </p>
               <div className="chip-row">
                 <span className="chip">llama</span>
                 <span className="chip">qwen2/3</span>
-                <span className="chip">gemma</span>
-                <span className="chip">phi3</span>
                 <span className="chip">mistral</span>
-                <span className="chip">+ more</span>
+                <span className="chip">MLA</span>
               </div>
             </div>
             <div className="bento-item">
               <h3>Operator dashboard</h3>
               <p>
-                Local and self-host UI: chat with streaming, model library, doctor, benches,
-                OpenAI-compatible <code>/v1</code>, token auth on LAN.
+                Local and self-host UI: HF Hub pull, GGUF/HF chat with streaming, doctor,
+                benches, OpenAI-compatible <code>/v1</code>, request queue.
               </p>
               <div className="chip-row">
                 <span className="chip">chat</span>
-                <span className="chip">models</span>
+                <span className="chip">HF pull</span>
                 <span className="chip">/v1 API</span>
               </div>
             </div>
             <div className="bento-item">
               <h3>In-memory quant GEMM</h3>
               <p>
-                Run Q4/Q5/Q8 and K-quants without unpacking every weight to f32. Keep packs
-                under session policy.
+                Run Q4/Q5/Q8 and K-quants without unpacking every weight to f32. IQ4_NL
+                supported; other IQ* fail closed with a convert hint.
               </p>
               <div className="chip-row">
                 <span className="chip">Q4_0</span>
                 <span className="chip">Q5_K</span>
-                <span className="chip">Q8_0</span>
+                <span className="chip">IQ4_NL</span>
               </div>
             </div>
             <div className="bento-item">
@@ -205,8 +254,8 @@ export default function HomePage() {
             <div className="bento-item">
               <h3>GPU backends, honest caps</h3>
               <p>
-                CUDA (cuBLASLt), Metal, Vulkan, WebGPU, ROCm — device memory when enabled;
-                host-fallback never silent.
+                CUDA decode Attention/RoPE when enabled; Metal/Vulkan/WebGPU/ROCm with
+                host-fallback never silent — <code>uaii doctor</code> tells the truth.
               </p>
             </div>
             <div className="bento-item wide">
@@ -288,7 +337,8 @@ cmake --build build --config Release --parallel`}</pre>
                 <span>cli</span>
               </header>
               <pre>{`uaii doctor
-uaii generate --demo --prompt "hi"
+uaii pull org/model --outdir ./hf-model
+uaii generate --model ./hf-model --prompt "hi"
 uaii generate --model model.gguf --prompt "hi"`}</pre>
             </div>
             <div className="code-card">
@@ -310,8 +360,8 @@ npm run build && npm start
           <div>
             <h2>Start building on UAII</h2>
             <p>
-              Quick start covers build, CLI generate, dashboard config, Python, and session
-              options.
+              Build once, then pull an HF decoder or GGUF, generate, and open the operator UI.
+              HF path: <Link href="/docs/huggingface/">Hugging Face</Link>.
             </p>
           </div>
           <div className="hero-cta" style={{ margin: 0 }}>

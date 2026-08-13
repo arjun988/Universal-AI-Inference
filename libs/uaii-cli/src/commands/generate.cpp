@@ -8,12 +8,15 @@
 #include "uaii/runtime/session.hpp"
 #include "uaii/tokenizers/chat_template.hpp"
 #include "uaii/tokenizers/gguf_tokenizer.hpp"
+#include "uaii/tokenizers/hf_tokenizer.hpp"
 #include "uaii/tokenizers/simple_tokenizer.hpp"
+#include "uaii/runtime/memory_preset.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -32,17 +35,21 @@ namespace {
 void print_generate_usage() {
   std::cout
       << "Usage:\n"
-      << "  uaii generate --model <path.gguf> --prompt \"...\" [options]\n"
+      << "  uaii generate --model <path.gguf|hf-dir> --prompt \"...\" [options]\n"
       << "  uaii generate --demo --prompt \"...\" [options]\n\n"
       << "Options:\n"
-      << "  --model <path>           GGUF model (or IR .uaii.json + --tokenizer-gguf)\n"
+      << "  --model <path>           GGUF, HF directory (config.json), or IR .uaii.json\n"
       << "  --demo                   Use built-in tiny GGUF demo model\n"
       << "  --prompt <text>          Prompt text (required unless --prompt-file)\n"
       << "  --prompt-file <path>     Read prompt from file\n"
-      << "  --tokenizer-gguf <path>  Tokenizer source when --model is IR\n"
+      << "  --tokenizer-gguf <path>  Tokenizer source when --model is IR/GGUF override\n"
       << "  --max-new-tokens <n>     Default 64\n"
       << "  --max-context <n>        Session max context (0 = model default)\n"
       << "  --backend <name>         Default cpu\n"
+      << "  --preset <name>          Memory dial: laptop|desktop|server\n"
+      << "  --ram-gb <n>             Override RAM budget (enables streaming)\n"
+      << "  --pin-layers <n>         Pin first N layers resident when streaming\n"
+      << "  --stream-weights         Enable weight streaming under budget\n"
       << "  --temperature <f>        0 = greedy (default); >0 enables sampling\n"
       << "  --top-p <f>              Nucleus sampling (default 1 = off)\n"
       << "  --top-k <n>              Top-k filter (0 = off)\n"
@@ -286,7 +293,8 @@ Error load_generator(const std::string& model_path,
                      const std::string& backend,
                      std::int64_t max_context,
                      LoadedGen* out,
-                     bool demo_mode = false) {
+                     bool demo_mode = false,
+                     const runtime::MemoryPresetConfig* mem = nullptr) {
   if (!out) return Error::make(ErrorCode::InvalidArgument, "out null");
   out->clear();
   out->model_path = model_path;
@@ -300,13 +308,30 @@ Error load_generator(const std::string& model_path,
     out->chat_template = it->second;
   }
 
-  out->tok = tokenizers::load_gguf_tokenizer(out->tokenizer_path, &err);
+  // Tokenizer: HF dir → HF tokenizer; else GGUF; else demo SimpleTokenizer.
+  std::error_code ec;
+  const bool is_dir = std::filesystem::is_directory(model_path, ec);
+  if (is_dir) {
+    out->tok = tokenizers::load_hf_tokenizer(model_path, &err);
+    if (out->tok) {
+      const std::string jinja = tokenizers::load_hf_chat_template(model_path);
+      std::string arch;
+      if (auto it = out->graph.metadata.find("architecture");
+          it != out->graph.metadata.end()) {
+        arch = it->second;
+      }
+      out->chat_template = tokenizers::detect_hf_chat_template_name(jinja, arch);
+    }
+  }
+  if (!out->tok) {
+    out->tok = tokenizers::load_gguf_tokenizer(out->tokenizer_path, &err);
+  }
   if (!out->tok) {
     if (demo_mode) {
       out->tok = std::make_unique<tokenizers::SimpleTokenizer>(
           tokenizers::SimpleTokenizer::demo_vocab());
     } else {
-      return err;
+      return err.ok() ? Error::make(ErrorCode::NotFound, "tokenizer load failed") : err;
     }
   }
 
@@ -315,6 +340,13 @@ Error load_generator(const std::string& model_path,
   opts.weight_init = runtime::WeightInit::None;
   opts.backend_name = backend.empty() ? "cpu" : backend;
   opts.max_context = max_context;
+  if (mem) {
+    runtime::apply_memory_preset(*mem, &opts);
+  }
+  // Prefer model directory as weights root for relative refs.
+  if (is_dir) {
+    opts.weights_dir = model_path;
+  }
   const std::string device = (opts.backend_name == "cpu") ? "cpu" : "gpu";
   opts.on_load_progress = [backend = opts.backend_name, device](std::size_t loaded,
                                                                 std::size_t total,
@@ -455,6 +487,32 @@ int cmd_generate(const std::vector<std::string>& args) {
   const bool json_mode = has_flag(args, "--json");
   const bool stream = has_flag(args, "--stream");
 
+  runtime::MemoryPresetConfig mem{};
+  {
+    const std::string preset_name = get_opt(args, "--preset");
+    const std::uint64_t ram_gb =
+        static_cast<std::uint64_t>(std::strtoull(get_opt(args, "--ram-gb", "0").c_str(), nullptr, 10));
+    runtime::MemoryPreset preset = runtime::MemoryPreset::None;
+    if (!preset_name.empty()) {
+      if (!runtime::parse_memory_preset(preset_name, &preset)) {
+        std::cerr << "unknown --preset (use laptop|desktop|server)\n";
+        return 1;
+      }
+    }
+    Error perr = runtime::resolve_memory_preset(preset, ram_gb, &mem);
+    if (!perr.ok()) {
+      std::cerr << perr.to_string() << '\n';
+      return 1;
+    }
+    if (has_flag(args, "--stream-weights")) {
+      mem.enable_streaming = true;
+    }
+    const std::string pin = get_opt(args, "--pin-layers");
+    if (!pin.empty()) {
+      mem.pin_layers = std::strtoll(pin.c_str(), nullptr, 10);
+    }
+  }
+
   if (!prompt_file.empty()) {
     Error err;
     prompt = read_file(prompt_file, &err);
@@ -482,7 +540,7 @@ int cmd_generate(const std::vector<std::string>& args) {
   }
 
   LoadedGen gen;
-  Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo);
+  Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo, &mem);
   if (!err.ok()) {
     std::cerr << err.to_string() << '\n';
     return 1;
@@ -515,17 +573,23 @@ int cmd_generate(const std::vector<std::string>& args) {
     return 1;
   }
 
+  const std::uint64_t rss = runtime::process_peak_rss_bytes();
+
   if (json_mode) {
     if (!stream) {
       // stream already printed tokens; always print final object
     }
     std::cout << "{\"ok\":true,\"text\":\"" << json_escape(reply) << "\",\"model\":\""
               << json_escape(model) << "\",\"prompt_tokens\":" << prompt_n
-              << ",\"new_tokens\":" << new_n << ",\"ms\":" << ms << "}\n";
+              << ",\"new_tokens\":" << new_n << ",\"ms\":" << ms
+              << ",\"peak_rss_bytes\":" << rss << ",\"stats\":\""
+              << json_escape(gen.session->debug_stats()) << "\"}\n";
   } else if (!stream) {
     std::cout << reply << '\n';
+    std::cerr << gen.session->debug_stats() << " peak_rss_bytes=" << rss << '\n';
   } else {
     std::cout << '\n';
+    std::cerr << gen.session->debug_stats() << " peak_rss_bytes=" << rss << '\n';
   }
   return 0;
 }

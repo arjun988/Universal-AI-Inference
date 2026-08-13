@@ -5,6 +5,7 @@ const groups = [
     label: "Start",
     items: [
       { href: "/docs/getting-started/", label: "Quick start" },
+      { href: "/docs/huggingface/", label: "Hugging Face" },
       { href: "/docs/features/", label: "Features" },
       { href: "/docs/dashboard/", label: "Operator UI" },
       { href: "/docs/benchmarks/", label: "Benchmarks" },
