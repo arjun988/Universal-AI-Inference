@@ -4,7 +4,7 @@
 
 UAII is a modular C++ inference runtime: load a model into a common intermediate representation, optimize and schedule it, then execute on CPU or GPU backends through one session API. It is built as an *execution platform*—loaders, operators, backends, schedulers, and storage are pluggable—not a single-family engine hard-wired to one format.
 
-**Ready to recommend today:** allowlisted **Hugging Face decoder-only** CausalLM folders and **GGUF `blk.*`** transformers (CLI + operator dashboard). Broader Hub architectures (vision, SSM, RWKV, …) are roadmap — see [docs/huggingface_support.md](docs/huggingface_support.md) and [upgrade.md](upgrade.md).
+**Ready to recommend today:** Hugging Face **decoder-only** folders (`*ForCausalLM` / GPT-2 / Mixtral, layout auto-detect) and **GGUF `blk.*`**, with a default **laptop** RAM dial (pin trunk, stream the rest — kimi-style). Vision / SSM / RWKV / HF MLA are still roadmap — see [docs/huggingface_support.md](docs/huggingface_support.md) and [upgrade.md](upgrade.md).
 
 | | |
 |---|---|
@@ -229,7 +229,7 @@ ctest --test-dir build -C Release --output-on-failure
 | `uaii graph <path> [--format text\|dot\|json\|plan]` | Dump or visualize the graph |
 | `uaii convert <model> -o <out.uaii.json>` | GGUF / Safetensors / ONNX / MLX / PyTorch sidecar → IR |
 | `uaii tokenize encode\|decode …` | Simple / BPE / SentencePiece / GGUF tokenizer |
-| `uaii generate …` | Text gen from GGUF (dense or MoE `blk.*`) or `--demo`; sampling + stop tokens; `--json` / `--stream` |
+| `uaii generate …` | HF / GGUF / `--demo`; `--backend auto` (GPU if present, else CPU); sampling; `--json` / `--stream` |
 | `uaii chat --jsonl …` | Warm chat worker for the Operator UI |
 | `uaii run …` | Run IR or built-in demos (`--backend`, `--weight-init`, …) |
 | `uaii profile` | Chrome-trace JSON |

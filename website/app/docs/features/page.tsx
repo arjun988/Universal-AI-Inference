@@ -15,8 +15,8 @@ export default function Page() {
         An <strong>execution platform for AI inference</strong> — not a single-model engine.
         Loaders, operators, backends, schedulers, and storage providers plug into a common
         core. Today we recommend <Link href="/docs/huggingface/">Hugging Face decoder-only</Link>{" "}
-        and GGUF transformers; see <Link href="/docs/huggingface/">Hugging Face</Link> for
-        allowlist limits before overclaiming Hub coverage.
+        and GGUF transformers. Layout auto-detect covers Llama-style, GPT-2, fused QKV, and
+        Mixtral experts; vision / SSM / HF MLA are still out.
       </p>
 
       <h2>Model formats</h2>
@@ -34,9 +34,9 @@ export default function Page() {
                 <strong>Hugging Face dir</strong>
               </td>
               <td>
-                First-class for allowlisted <strong>CausalLM</strong> families with Llama-style
-                tensor names. <code>uaii pull</code>, <code>generate --model ./dir</code>,
-                dashboard Hub pull. Not every Hub architecture.
+                First-class for decoder-only <strong>CausalLM</strong> families (layout
+                auto-detect). <code>uaii pull</code>, <code>generate --model ./dir</code>,
+                dashboard Hub pull. Not vision / SSM / HF MLA.
               </td>
             </tr>
             <tr>
@@ -45,8 +45,9 @@ export default function Page() {
               </td>
               <td>
                 Capability-based import for llama.cpp-style <code>blk.*</code> decoder tensors
-                (dense or MoE; DeepSeek MLA expand path). Reads <code>{"{arch}.*"}</code>{" "}
-                metadata. Common Q/K quants + IQ4_NL; exotic IQ* fail closed.
+                (dense or MoE with per-expert <code>#e=N</code> slices; DeepSeek MLA expand
+                path). Reads <code>{"{arch}.*"}</code> metadata. Common Q/K quants + IQ4_NL;
+                exotic IQ* fail closed.
               </td>
             </tr>
             <tr>
@@ -111,7 +112,11 @@ export default function Page() {
           CLI: <code>uaii pull</code>, <code>uaii generate</code>, <code>uaii chat --jsonl</code>{" "}
           (warm session for the dashboard)
         </li>
-        <li>KV cache with context limits from model metadata; memory presets / peak RSS</li>
+        <li>KV cache with a sliding window (laptop default 2048 + 4 sinks) and peak RSS</li>
+        <li>
+          Memory presets (<code>laptop</code> / <code>desktop</code> / <code>server</code>): pin
+          trunk, stream the rest, top-k MoE expert paging
+        </li>
         <li>
           Tokenizers: HF tokenizer JSON, GGUF <code>tokenizer.ggml.*</code>, BPE /
           SentencePiece (optional), SimpleTokenizer for demos
@@ -128,9 +133,10 @@ export default function Page() {
 
       <h2>Hardware</h2>
       <p>
-        CPU is always first-class. GPU backends are optional compile-time features;{" "}
-        <code>uaii doctor</code> prints whether native init succeeded and which ops still
-        host-fallback. See{" "}
+        CPU is always first-class. CLI and dashboard default to <code>--backend auto</code>:
+        native GPU if this binary was built with the vendor SDK <em>and</em> a device is
+        present; otherwise CPU. <code>uaii doctor</code> prints{" "}
+        <code>recommended:</code> plus <code>host_fallback</code>. See{" "}
         <Link href="/docs/backends/">Backends</Link>.
       </p>
 
@@ -138,7 +144,7 @@ export default function Page() {
       <ul>
         <li>Graph validator; JSON + binary IR (<code>.uaii.json</code> / <code>.uaii</code>)</li>
         <li>Planner: fusion, memory reuse, storage plan, disk plan cache</li>
-        <li>Weight streaming; CUDA async H2D overlap when native</li>
+        <li>Weight streaming; top-k expert I/O; CUDA async H2D overlap when native</li>
         <li>Chrome-trace profiler, benchmark CLI, plugin operator ABI</li>
       </ul>
     </DocLayout>

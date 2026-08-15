@@ -69,6 +69,15 @@ export default function Page() {
             </tr>
             <tr>
               <td>
+                <strong>UAII_BACKEND</strong>
+              </td>
+              <td>
+                Dashboard / env override for device: <code>auto</code> (default),{" "}
+                <code>cpu</code>, <code>cuda</code>, …
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <strong>UAII_CAPI_PATH</strong>
               </td>
               <td>Path to <code>uaii_capi</code> shared library for Python / ctypes</td>
@@ -142,11 +151,16 @@ export default function Page() {
         </table>
       </div>
 
-      <h2>Session options (C++ / C API)</h2>
+      <h2>Session options</h2>
+      <p>
+        CLI <code>generate</code> / <code>chat</code> apply the laptop preset and{" "}
+        <code>--backend auto</code>. The C API 0.3.0 struct is smaller: library default{" "}
+        <code>backend = &quot;cpu&quot;</code>, no <code>kv_window</code> field yet.
+      </p>
       <ul>
         <li>
-          <code>backend_name</code> — <code>cpu</code>, <code>cuda</code>, <code>metal</code>,
-          …
+          <code>backend_name</code> / C <code>backend</code> — pass <code>auto</code> to probe
+          a native GPU; otherwise <code>cpu</code> / <code>cuda</code> / <code>metal</code> / …
         </li>
         <li>
           <code>compute_dtype</code> — F32 or F16 policy
@@ -155,7 +169,16 @@ export default function Page() {
           <code>keep_quantized_weights</code> — keep GGUF packs for quant GEMM
         </li>
         <li>
-          <code>max_context</code> — generate / KV bound (0 = from graph metadata)
+          <code>max_context</code> — generate length bound (0 = from graph metadata). With
+          sliding KV this is a soft cap, not the RAM allocation
+        </li>
+        <li>
+          C++ / CLI: <code>kv_window</code> / <code>kv_sink</code> — resident KV window
+          (laptop 2048 / 4 sinks). Not in C API 0.3.0
+        </li>
+        <li>
+          C++ / CLI: <code>pin_layers</code>, <code>expert_cache_bytes</code> — storage-first
+          trunk / MoE LRU
         </li>
         <li>
           <code>enable_fusion</code>, <code>enable_memory_reuse</code>,{" "}
@@ -229,6 +252,15 @@ export default function Page() {
                 <strong>UAII_USE_WSL</strong> / <strong>UAII_WSL_BIN</strong>
               </td>
               <td>Use WSL <code>uaii</code> when Windows blocks unsigned .exe</td>
+            </tr>
+            <tr>
+              <td>
+                <strong>UAII_BACKEND</strong>
+              </td>
+              <td>
+                Device for chat/run: <code>auto</code> (default), <code>cpu</code>,{" "}
+                <code>cuda</code>, …
+              </td>
             </tr>
           </tbody>
         </table>

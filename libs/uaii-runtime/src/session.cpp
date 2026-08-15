@@ -18,7 +18,11 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace uaii {
 namespace runtime {
@@ -66,6 +70,15 @@ std::int64_t meta_i64(const ir::Graph& g, const char* key, std::int64_t def) {
   }
 }
 
+std::int64_t node_int_attr(const ir::Node& n, const char* key, std::int64_t def) {
+  for (const auto& a : n.attributes) {
+    if (a.key == key && a.type == ir::AttributeType::Int) {
+      return std::get<std::int64_t>(a.value);
+    }
+  }
+  return def;
+}
+
 struct ActiveKvBinding {
   explicit ActiveKvBinding(KvCache* cache) { kernels::set_active_kv_cache(cache); }
   ~ActiveKvBinding() { kernels::set_active_kv_cache(nullptr); }
@@ -103,6 +116,7 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
   oopts.ram_budget_bytes = options_.allocator.budget_bytes;
   oopts.prefer_mmap = true;
   oopts.pin_layers = options_.pin_layers;
+  oopts.expert_cache_bytes = options_.expert_cache_bytes;
   options_.peak_rss_bytes =
       std::max(options_.peak_rss_bytes, process_peak_rss_bytes());
 
@@ -151,6 +165,13 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
   bopts.allocator = allocator_.get();
   bopts.prefer_native = options_.prefer_native;
   bopts.force_host_fallback = options_.force_host_fallback;
+  {
+    const std::string requested = options_.backend_name;
+    options_.backend_name = backends::select_runtime_backend(requested);
+    if (requested.empty() || requested == "auto" || requested == "default") {
+      log::info("session") << "auto backend → " << options_.backend_name;
+    }
+  }
   Error err = backends::create_backend(options_.backend_name, bopts, &backend_);
   if (!err.ok()) {
     destroy();
@@ -177,6 +198,16 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
       destroy();
       return err;
     }
+    streaming_->set_tensor_loader(
+        [this](TensorId id, const std::string& uri, void* dst, std::size_t nbytes) -> Error {
+          const ir::Tensor* t = graph_.find_tensor(id);
+          if (t == nullptr || dst == nullptr) {
+            return Error::make(ErrorCode::NotFound, "stream loader missing tensor");
+          }
+          const std::string ref = uri.empty() ? t->weight_ref : uri;
+          return loaders::load_weight_ref_f32(ref, options_.weights_dir, t->shape,
+                                              static_cast<float*>(dst), nbytes);
+        });
     const BackendCapabilities caps = backend_->capabilities();
     stream_async_h2d_ =
         caps.native_available && caps.supports_async &&
@@ -696,8 +727,41 @@ void Session::try_prefetch_stream_h2d(TensorId tid) {
 
 Error Session::stage_streamed_inputs(const ir::Node& node) {
   if (!streaming_) return Error::success();
+
+  std::unordered_set<TensorId> moe_keep;
+  bool moe_listed = false;
+  if (node.op_name == "MoEExpertsSwiGLU") {
+    const int nexp = static_cast<int>(node_int_attr(node, "num_experts", 0));
+    const int topk = static_cast<int>(node_int_attr(node, "top_k", 2));
+    if (nexp > 0 && static_cast<int>(node.inputs.size()) == 2 + 3 * nexp) {
+      moe_listed = true;
+      auto pit = buffers_.find(node.inputs[1]);
+      if (pit != buffers_.end() && pit->second.data != nullptr) {
+        const float* P = static_cast<const float*>(pit->second.data);
+        const std::int64_t E = nexp;
+        int k = topk > 0 ? topk : 1;
+        if (k > nexp) k = nexp;
+        std::vector<std::pair<float, int>> ranked(static_cast<std::size_t>(E));
+        for (int e = 0; e < nexp; ++e) {
+          ranked[static_cast<std::size_t>(e)] = {P[static_cast<std::size_t>(e)], e};
+        }
+        std::partial_sort(ranked.begin(), ranked.begin() + k, ranked.end(),
+                          [](const auto& a, const auto& b) { return a.first > b.first; });
+        for (int t = 0; t < k; ++t) {
+          const int e = ranked[static_cast<std::size_t>(t)].second;
+          moe_keep.insert(node.inputs[static_cast<std::size_t>(2 + 3 * e)]);
+          moe_keep.insert(node.inputs[static_cast<std::size_t>(2 + 3 * e + 1)]);
+          moe_keep.insert(node.inputs[static_cast<std::size_t>(2 + 3 * e + 2)]);
+        }
+      }
+    }
+  }
+
   for (TensorId tid : node.inputs) {
     if (!streaming_->is_streamed(tid)) continue;
+    if (moe_listed && streaming_->is_expert(tid) && !moe_keep.count(tid)) {
+      continue;  // kimi-style: page only the routed top-k experts
+    }
     const void* data = nullptr;
     std::size_t nbytes = 0;
     profiler::Profiler::Scope scope(
@@ -868,7 +932,8 @@ Error Session::ensure_kv_cache(std::int64_t max_seq) {
     return Error::success();
   }
   if (!kv_) kv_ = std::make_unique<KvCache>();
-  Error err = kv_->configure(n_layers, /*batch=*/1, max_seq, k_dim, v_dim, n_kv_heads);
+  Error err = kv_->configure(n_layers, /*batch=*/1, max_seq, k_dim, v_dim, n_kv_heads,
+                             options_.kv_sink);
   if (!err.ok()) return err;
   kv_->reset();
   return Error::success();
@@ -965,7 +1030,8 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
 
   const std::int64_t prompt_len = static_cast<std::int64_t>(prompt_tokens.size());
   const std::int64_t total = prompt_len + max_new_tokens;
-  if (max_ctx > 0) {
+  const bool sliding_kv = options_.kv_window > 0;
+  if (max_ctx > 0 && !sliding_kv) {
     if (prompt_len > max_ctx) {
       return Error::make(ErrorCode::InvalidArgument,
                          "prompt length exceeds max_context (" +
@@ -1013,9 +1079,11 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
     rng.seed((static_cast<std::uint64_t>(rd()) << 32) ^ static_cast<std::uint64_t>(rd()));
   }
 
-  const std::int64_t kv_max =
-      max_ctx > 0 ? max_ctx
-                  : std::max<std::int64_t>(total, prompt_len + std::max<std::int64_t>(max_new_tokens, 1));
+  std::int64_t kv_max = options_.kv_window;
+  if (kv_max <= 0) {
+    kv_max = max_ctx > 0 ? max_ctx
+                         : std::max<std::int64_t>(total, prompt_len + std::max<std::int64_t>(max_new_tokens, 1));
+  }
   Error err = ensure_kv_cache(kv_max);
   if (!err.ok()) return err;
 
@@ -1027,7 +1095,7 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   const std::int64_t chunk =
       options_.prefill_chunk_size > 0 ? options_.prefill_chunk_size : 64;
   for (std::int64_t i = 0; i < prompt_len; ++i) {
-    if (max_ctx > 0 && (i + 1) > max_ctx) {
+    if (!sliding_kv && max_ctx > 0 && (i + 1) > max_ctx) {
       return Error::make(ErrorCode::InvalidArgument, "context length exceeded during prefill");
     }
     err = write_tokens_step(tokens_id, prompt_tokens[static_cast<std::size_t>(i)]);
@@ -1046,7 +1114,7 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   // Decode: sample next token (greedy when SampleParams::greedy()).
   for (std::int64_t n = 0; n < max_new_tokens; ++n) {
     const std::int64_t pos = static_cast<std::int64_t>(out_tokens->size());
-    if (max_ctx > 0 && pos >= max_ctx) {
+    if (!sliding_kv && max_ctx > 0 && pos >= max_ctx) {
       return Error::make(ErrorCode::InvalidArgument, "context length exceeded during decode");
     }
     std::int64_t next = 0;
@@ -1062,7 +1130,7 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
       return Error::success();
     }
     if (n + 1 >= max_new_tokens) break;
-    if (max_ctx > 0 && static_cast<std::int64_t>(out_tokens->size()) >= max_ctx) {
+    if (!sliding_kv && max_ctx > 0 && static_cast<std::int64_t>(out_tokens->size()) >= max_ctx) {
       return Error::make(ErrorCode::InvalidArgument, "context length exceeded during decode");
     }
     err = write_tokens_step(tokens_id, next);
@@ -1112,11 +1180,15 @@ Error Session::run() {
     if (streaming_ && oi + 1 < plan_.ops.size()) {
       const ir::Node* next = graph_.find_node(plan_.ops[oi + 1].node_id);
       if (next) {
+        const bool next_listed_moe =
+            next->op_name == "MoEExpertsSwiGLU" &&
+            static_cast<int>(next->inputs.size()) ==
+                2 + 3 * static_cast<int>(node_int_attr(*next, "num_experts", 0));
         for (TensorId tid : next->inputs) {
-          if (streaming_->is_streamed(tid)) {
-            streaming_->prefetch(tid);
-            try_prefetch_stream_h2d(tid);
-          }
+          if (!streaming_->is_streamed(tid)) continue;
+          if (next_listed_moe && streaming_->is_expert(tid)) continue;
+          streaming_->prefetch(tid);
+          try_prefetch_stream_h2d(tid);
         }
       }
     }
@@ -1125,7 +1197,19 @@ Error Session::run() {
     inputs.reserve(node->inputs.size());
     for (TensorId tid : node->inputs) {
       auto it = buffers_.find(tid);
-      if (it == buffers_.end() || it->second.data == nullptr) {
+      if (it == buffers_.end()) {
+        return Error::make(ErrorCode::NotFound,
+                           "missing input tensor " + std::to_string(tid));
+      }
+      if (it->second.data == nullptr) {
+        const bool listed_moe =
+            node->op_name == "MoEExpertsSwiGLU" &&
+            static_cast<int>(node->inputs.size()) ==
+                2 + 3 * static_cast<int>(node_int_attr(*node, "num_experts", 0));
+        if (listed_moe && streaming_ && streaming_->is_expert(tid)) {
+          inputs.push_back(view_of(it->second));
+          continue;
+        }
         return Error::make(ErrorCode::NotFound,
                            "missing input tensor " + std::to_string(tid));
       }
@@ -1204,11 +1288,18 @@ std::string Session::debug_stats() const {
   if (options_.enable_profiler) oss << " profile={" << profiler_.summary() << "}";
   if (streaming_) {
     oss << " stream_io=" << streaming_->bytes_read() << "B";
+    oss << " expert_cache_hits=" << streaming_->expert_cache_hits()
+        << " misses=" << streaming_->expert_cache_misses()
+        << " used=" << streaming_->expert_cache_used_bytes() << "B";
   }
   options_.peak_rss_bytes =
       std::max(options_.peak_rss_bytes, process_peak_rss_bytes());
   if (options_.peak_rss_bytes > 0) {
     oss << " peak_rss_bytes=" << options_.peak_rss_bytes;
+  }
+  if (kv_ && kv_->configured()) {
+    oss << " kv_window=" << kv_->max_seq() << " kv_len=" << kv_->past_len()
+        << " kv_pos=" << kv_->rope_pos();
   }
   if (options_.pin_layers > 0) {
     oss << " pin_layers=" << options_.pin_layers;

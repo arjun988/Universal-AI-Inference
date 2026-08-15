@@ -39,7 +39,9 @@ export default function Page() {
               <td>
                 <code>doctor</code>
               </td>
-              <td>Modules, GEMM, backends, plugins</td>
+              <td>
+                Modules, GEMM, backends, <code>recommended:</code> auto device
+              </td>
             </tr>
             <tr>
               <td>
@@ -72,8 +74,9 @@ export default function Page() {
                 <code>generate</code>
               </td>
               <td>
-                Text generation from HF CausalLM dirs, GGUF <code>blk.*</code>, or{" "}
-                <code>--demo</code>; presets / <code>--json</code> / <code>--stream</code>
+                HF CausalLM dirs, GGUF <code>blk.*</code>, or <code>--demo</code>;{" "}
+                <code>--preset laptop</code>, <code>--backend auto</code>,{" "}
+                <code>--kv-window</code>, <code>--json</code> / <code>--stream</code>
               </td>
             </tr>
             <tr>
@@ -88,7 +91,9 @@ export default function Page() {
               <td>
                 <code>run</code>
               </td>
-              <td>Execute IR or <code>--demo …</code></td>
+              <td>
+                Execute IR or <code>--demo …</code>
+              </td>
             </tr>
             <tr>
               <td>
@@ -107,12 +112,26 @@ export default function Page() {
       </div>
 
       <h2>Generate / chat</h2>
+      <p>
+        Default device is <code>--backend auto</code>: native GPU if this binary can use it,
+        otherwise CPU. Pass <code>--backend cpu</code> to pin the host. A GPU that exists but
+        was built with <code>UAII_WITH_CUDA=OFF</code> (host-fallback only) does not count —
+        auto stays on CPU.
+      </p>
+      <p>
+        Default memory dial is <code>--preset laptop</code> (~8 GiB, pin 2 layers, expert LRU,
+        KV window 2048 + 4 sinks). GGUF Mixtral/Qwen packed banks are split per expert; only
+        routed top-k experts are paged. <code>--preset none</code> disables streaming.
+      </p>
       <pre>{`# One-shot (any GGUF with blk.* tensors)
 uaii generate --model path/to/model.gguf \\
   --prompt "Hello" --max-new-tokens 64 --stream
 
 # Built-in tiny model (no download)
 uaii generate --demo --prompt "hi" --max-new-tokens 8 --json
+
+# Longer chats on a laptop: keep sliding KV (default 2048)
+uaii generate --model path/to/model.gguf --kv-window 2048 --prompt "Hello"
 
 # Warm worker for dashboard / automation
 uaii chat --model path/to/model.gguf --jsonl`}</pre>
@@ -126,7 +145,7 @@ uaii convert model.gguf -o model.uaii.json
 uaii tokenize encode hello world
 uaii generate --model model.gguf --prompt "hi" --json
 uaii run --demo toy_mlp
-uaii run <ir> --input x=1,2,3,4 --backend cpu
+uaii run <ir> --input x=1,2,3,4 --backend auto
 uaii profile --demo --output uaii_profile.json
 uaii benchmark --demo
 uaii cache status`}</pre>

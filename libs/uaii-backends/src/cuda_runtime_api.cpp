@@ -519,7 +519,7 @@ Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
   }
   if (base_pos < 0.f) {
     runtime::KvCache* cache = kernels::active_kv_cache();
-    base_pos = (cache != nullptr) ? static_cast<float>(cache->past_len()) : 0.f;
+    base_pos = (cache != nullptr) ? static_cast<float>(cache->rope_pos()) : 0.f;
   }
   const std::int64_t rows =
       static_cast<std::int64_t>(in.numel() / static_cast<std::size_t>(dim));

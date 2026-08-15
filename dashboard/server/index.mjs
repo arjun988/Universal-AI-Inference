@@ -139,6 +139,12 @@ function effectiveBackend() {
   return probeGpuBackend();
 }
 
+/** CLI flag: explicit settings pin a backend; otherwise let `uaii --backend auto` pick GPU or CPU. */
+function spawnBackend() {
+  if (config.backend && config.backend !== "auto") return config.backend;
+  return "auto";
+}
+
 
 function pushLog(entry) {
   logs.unshift({ ts: new Date().toISOString(), ...entry });
@@ -694,7 +700,7 @@ app.post("/api/run/demo", async (req, res) => {
   if (!DEMOS.includes(demo)) {
     return res.status(400).json({ error: "unknown demo", allowed: DEMOS });
   }
-  const result = await runUaii(["run", "--demo", demo, "--backend", effectiveBackend()]);
+  const result = await runUaii(["run", "--demo", demo, "--backend", spawnBackend()]);
   res.status(result.ok ? 200 : 502).json(result);
 });
 
@@ -711,7 +717,7 @@ app.post("/api/run/model", async (req, res) => {
       "run",
       full,
       "--backend",
-      effectiveBackend(),
+      spawnBackend(),
       "--weight-init",
       req.body?.weightInit || "ones",
     ];
@@ -895,6 +901,7 @@ async function ensureWorker(resolved) {
   if (existing) return existing;
 
   const L = uaiiLauncher.resolve();
+  const backendArg = spawnBackend();
   const backend = effectiveBackend();
   const device = backend === "cpu" ? "cpu" : "gpu";
   let modelPath = "";
@@ -943,7 +950,7 @@ async function ensureWorker(resolved) {
       modelPath,
       modelLabel: resolved.label,
       demo: resolved.kind === "demo",
-      backend,
+      backend: backendArg,
       maxContext: Number(config.maxContext || 0),
       env: childEnv(),
     }),
@@ -1059,7 +1066,7 @@ async function runLlmChat(body, { onToken = null, onStatus = null } = {}) {
     if (!name) return { ok: false, status: 400, error: "model required for ir mode" };
     const full = path.join(config.modelDir, path.basename(name));
     if (!fs.existsSync(full)) return { ok: false, status: 404, error: "model not found" };
-    const args = ["run", full, "--backend", effectiveBackend(), "--weight-init", "ones"];
+    const args = ["run", full, "--backend", spawnBackend(), "--weight-init", "ones"];
     if (body.input) args.push("--input", body.input);
     else if (prompt) args.push("--input", `x=${prompt.split(/\s+/).slice(0, 8).join(",") || "1,2,3,4"}`);
     const result = await runUaii(args);
@@ -1076,7 +1083,7 @@ async function runLlmChat(body, { onToken = null, onStatus = null } = {}) {
   if (mode === "cli-demo") {
     const demo = body.demo || "gguf";
     if (!DEMOS.includes(demo)) return { ok: false, status: 400, error: "bad demo" };
-    const result = await runUaii(["run", "--demo", demo, "--backend", effectiveBackend()]);
+    const result = await runUaii(["run", "--demo", demo, "--backend", spawnBackend()]);
     return {
       ok: result.ok,
       status: result.ok ? 200 : 502,

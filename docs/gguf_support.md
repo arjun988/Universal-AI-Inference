@@ -12,7 +12,7 @@ Import is driven by **tensor layout + metadata**, not a short name whitelist.
 | Arch-prefixed KV (`{arch}.block_count`, `{arch}.attention.head_count`, …) | Read first; fall back to `llama.*` / `general.*` |
 | Missing `general.architecture` but `blk.0.*` present | Still imports (legacy / hand-built) |
 | Tied embeddings (no `output.weight`) | Reuse `token_embd.weight` as lm_head |
-| MoE (`expert_count` / `ffn_gate_inp` + `ffn_*_exps`) | **Supported** — `MoERouter` + `MoEExpertsSwiGLU` (optional `*_shexp` shared experts) |
+| MoE (`expert_count` / `ffn_gate_inp` + `ffn_*_exps`) | **Supported** — banks split to listed per-expert tensors (`#e=N`); top-k paging |
 | MLA (`attn_kv_a` / `attn_k_b` / `attn_v_b`, DeepSeek V2/V3) | **Supported** — expand-then-attend (full KV cache); see below |
 | Weights-only dump (no emb + lm stack) | Any architecture — `Identity` graph |
 | Non-`blk.*` layouts (raw GPT-2/Bloom naming, Mamba, RWKV, …) | Not auto-mapped yet — weights graph or convert to `blk.*` GGUF |
@@ -60,7 +60,7 @@ Use `gguf_type_supported()` before `gguf_type_to_quant()`; unknown types are not
 ## Runtime
 
 - Prefill + decode via `Session::generate` (greedy or temp / top-k / top-p / repetition penalty)
-- Long sequence bounded by `{arch}.context_length` / `max_context` (fail-closed in generate)
+- Long sequence uses a **sliding KV window** (`--kv-window`, laptop default 2048) plus 4 sink tokens. `--preset none` still fail-closes at `--max-context`.
 - Env:
   - `UAII_MAX_LAYERS` — optional cap (`0` = unlimited up to 512 absolute max; unset = model `block_count`)
   - `UAII_GEMM`, `UAII_NUM_THREADS`

@@ -20,7 +20,7 @@ void print_usage() {
       << "                    optimize|streaming|profile|quant\n"
       << "  uaii run <ir-path> --input name=v1,v2,... [options]\n\n"
       << "Options:\n"
-      << "  --backend <name>          cpu|cuda|metal|vulkan|webgpu|rocm (default: cpu)\n"
+      << "  --backend <name>          auto (GPU if present, else CPU) | cpu|cuda|metal|vulkan|webgpu|rocm\n"
       << "  --force-host-fallback     Prefer host kernels even if native compiled\n"
       << "  --no-fusion               Disable Phase 6 fusion\n"
       << "  --no-memory-reuse         Disable memory reuse planner\n"
@@ -251,7 +251,7 @@ int cmd_run(const std::vector<std::string>& args) {
   opts.weights_dir = get_opt(args, "--weights-dir");
   opts.weight_init = parse_weight_init(get_opt(args, "--weight-init", "none"));
   opts.allow_unknown_ops = has_flag(args, "--allow-unknown-ops");
-  opts.backend_name = get_opt(args, "--backend", "cpu");
+  opts.backend_name = get_opt(args, "--backend", "auto");
   opts.force_host_fallback = has_flag(args, "--force-host-fallback");
   opts.prefer_native = !opts.force_host_fallback;
   opts.enable_fusion = !has_flag(args, "--no-fusion");

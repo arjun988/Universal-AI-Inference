@@ -41,12 +41,46 @@ std::vector<BackendDescriptor> list_backends() {
 
 bool backend_exists(const std::string& name) noexcept {
   const std::string n = normalize_name(name);
+  if (n.empty() || n == "auto" || n == "default") return true;
   for (const auto& d : list_backends()) {
     if (d.name == n) {
       return true;
     }
   }
   return false;
+}
+
+bool gpu_native_ready(const std::string& name) {
+  if (name == "cuda") {
+    return CudaBackend::native_device_available();
+  }
+  if ((name == "metal" && !MetalBackend::native_compiled()) ||
+      (name == "rocm" && !RocmBackend::native_compiled()) ||
+      (name == "vulkan" && !VulkanBackend::native_compiled())) {
+    return false;
+  }
+  if (name != "metal" && name != "rocm" && name != "vulkan") return false;
+  std::unique_ptr<IBackend> be;
+  BackendCreateOptions bo;
+  bo.prefer_native = true;
+  if (!create_backend(name, bo, &be).ok() || !be) return false;
+  if (!be->initialize().ok()) return false;
+  const BackendCapabilities caps = be->capabilities();
+  const bool ok = caps.native_available && !caps.host_fallback;
+  be->shutdown();
+  return ok;
+}
+
+std::string select_runtime_backend(const std::string& requested) {
+  const std::string n = normalize_name(requested);
+  if (!n.empty() && n != "auto" && n != "default") {
+    return n;
+  }
+  static const char* kOrder[] = {"cuda", "metal", "rocm", "vulkan"};
+  for (const char* name : kOrder) {
+    if (gpu_native_ready(name)) return std::string(name);
+  }
+  return "cpu";
 }
 
 Error create_backend(const std::string& name,

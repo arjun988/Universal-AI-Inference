@@ -8,7 +8,7 @@ export default function Page() {
     <DocLayout
       title="Operator UI"
       active="/docs/dashboard/"
-      lede="Local and self-host operator console over the uaii CLI — not a signed consumer installer. Chat with HF decoder dirs and GGUF blk.* models, Hub pull, doctor, benches, OpenAI-compatible API. Lives in dashboard/."
+      lede="Local and self-host operator console over the uaii CLI — not a signed consumer installer. Chat with HF decoder dirs and GGUF blk.* models, Hub pull, auto GPU, laptop paging. Lives in dashboard/."
     >
       <h2>What you get</h2>
       <ul>
@@ -18,7 +18,7 @@ export default function Page() {
           top-p / top-k / repetition penalty, Stop; FIFO request queue
         </li>
         <li>
-          <strong>Hugging Face</strong> — Hub pull + import folder for allowlisted CausalLM
+          <strong>Hugging Face</strong> — Hub pull + import folder for decoder-only CausalLM
           dirs (needs rebuilt <code>uaii</code>). See{" "}
           <Link href="/docs/huggingface/">Hugging Face</Link>
         </li>
@@ -36,7 +36,8 @@ export default function Page() {
           <strong>Benchmarks</strong> — run <code>uaii_bench</code>, table + JSON
         </li>
         <li>
-          <strong>Settings</strong> — bind, port, binaries, GEMM, threads, auth token
+          <strong>Settings</strong> — bind, port, binaries, <strong>backend auto</strong> (GPU if
+          native, else CPU), GEMM, threads, auth token
         </li>
         <li>
           <strong>API</strong> — REST <code>/api/*</code> + OpenAI-style{" "}
@@ -89,8 +90,9 @@ docker compose up --build`}</pre>
       <h2>How to configure</h2>
       <p>
         Copy <code>dashboard/uaii-dash.example.json</code> → <code>uaii-dash.json</code>, or use
-        environment variables (env wins). Change bind/port in Settings UI, then restart the
-        process.
+        environment variables (env wins). Default <code>&quot;backend&quot;: &quot;auto&quot;</code>
+        . If an older config still has <code>&quot;cpu&quot;</code>, Settings → Auto-detect GPU.
+        Change bind/port in Settings UI, then restart the process.
       </p>
       <div className="table-wrap">
         <table className="data">
@@ -170,12 +172,24 @@ docker compose up --build`}</pre>
             </tr>
             <tr>
               <td>
+                <code>UAII_BACKEND</code>
+              </td>
+              <td>
+                <code>auto</code>
+              </td>
+              <td>
+                Device for chat/run. <code>auto</code> uses GPU if native; pin{" "}
+                <code>cpu</code> / <code>cuda</code> / …
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <code>UAII_MAX_CONTEXT</code>
               </td>
               <td>
                 <code>0</code>
               </td>
-              <td>Session max context for chat workers</td>
+              <td>Session max context for chat workers (sliding KV still applies via CLI laptop preset)</td>
             </tr>
           </tbody>
         </table>
@@ -186,6 +200,10 @@ docker compose up --build`}</pre>
         <li>
           <strong>Smoke chat</strong> — Chat → Tiny demo / <code>uaii-tiny-demo</code> → Run
           (streams tokens)
+        </li>
+        <li>
+          <strong>Hugging Face</strong> — Models → Pull from Hub (or Import HF folder) → Chat →
+          select the folder → Run (laptop paging + backend auto)
         </li>
         <li>
           <strong>Real GGUF</strong> — Models → Import <code>.gguf</code> → Chat → select model →

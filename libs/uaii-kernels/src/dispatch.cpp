@@ -251,14 +251,22 @@ Error dispatch_cpu(const std::string& op_name,
                            static_cast<int>(attr_int(attrs, "num_experts", 1)));
   }
   if (op_name == "MoEExpertsSwiGLU") {
-    if (inputs.size() != 5 || outputs->size() != 1) {
+    if (outputs->size() != 1 || inputs.size() < 5) {
       return Error::make(ErrorCode::InvalidArgument,
-                         "MoEExpertsSwiGLU expects x,gate,up,down,probs");
+                         "MoEExpertsSwiGLU expects packed 5 inputs or listed 2+3E");
     }
-    return moe_experts_swiglu_f32(
-        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], &(*outputs)[0],
-        static_cast<int>(attr_int(attrs, "num_experts", 1)),
-        static_cast<int>(attr_int(attrs, "top_k", 2)));
+    const int nexp = static_cast<int>(attr_int(attrs, "num_experts", 1));
+    const int topk = static_cast<int>(attr_int(attrs, "top_k", 2));
+    if (inputs.size() == 5) {
+      return moe_experts_swiglu_f32(inputs[0], inputs[1], inputs[2], inputs[3], inputs[4],
+                                    &(*outputs)[0], nexp, topk);
+    }
+    if (static_cast<int>(inputs.size()) != 2 + 3 * nexp) {
+      return Error::make(ErrorCode::InvalidArgument,
+                         "MoEExpertsSwiGLU listed arity != 2+3*num_experts");
+    }
+    return moe_experts_swiglu_listed_f32(inputs[0], inputs[1], inputs.data() + 2, nexp, topk,
+                                         &(*outputs)[0]);
   }
   if (op_name == "Reshape") {
     if (inputs.size() != 1 || outputs->size() != 1) {

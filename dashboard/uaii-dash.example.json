@@ -7,5 +7,5 @@
   "token": "",
   "threads": 0,
   "gemm": "",
-  "backend": "cpu"
+  "backend": "auto"
 }

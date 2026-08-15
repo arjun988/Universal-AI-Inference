@@ -14,9 +14,9 @@ export default function HomePage() {
             <h1 className="hero-title">Any model → UAII IR → any hardware.</h1>
             <p className="hero-lede">
               Universal inference runtime — <strong>usable today</strong> for Hugging Face
-              decoder-only LLMs and GGUF <code>blk.*</code> transformers. One IR, honest
-              backends, CLI + operator dashboard. More architectures land as plugins; we fail
-              closed instead of silently wrong.
+              decoder-only LLMs and GGUF <code>blk.*</code> transformers. One IR, auto GPU when
+              this binary is native, laptop storage-first, CLI + operator dashboard. More
+              architectures land as plugins; we fail closed instead of silently wrong.
             </p>
             <div className="hero-cta">
               <Link className="btn btn-primary" href="/docs/getting-started/">
@@ -56,7 +56,9 @@ export default function HomePage() {
                 {"\n"}
                 {"  "}uaii-kernels{"     "}GEMM=ref-tiled
                 {"\n"}
-                {"  "}uaii-backends{"    "}CPU real · CUDA optional
+                {"  "}uaii-backends{"    "}CPU · auto GPU
+                {"\n"}
+                {"  "}recommended{"      "}cpu  (or cuda if native)
                 {"\n"}
                 {"  "}uaii-loaders{"     "}HF dirs · GGUF · Safetensors
                 {"\n\n"}
@@ -83,19 +85,27 @@ export default function HomePage() {
           <p className="section-label">Readiness</p>
           <h2>Ship decoder-only now; widen later</h2>
           <p className="section-lede">
-            Tell users the truth: HF CausalLM allowlist + GGUF decoders work today. Vision,
-            SSM, RWKV, and marketplace are development — not silent “universal” claims.
+            Hugging Face decoder-only folders and GGUF <code>blk.*</code> run today. CLI and
+            dashboard default to <code>auto</code>: a native GPU if this binary can actually
+            drive it, otherwise CPU. Generate uses a laptop RAM dial: pin a small trunk, page
+            the rest, slide KV. Vision, SSM, RWKV, and marketplace are still development.
           </p>
           <div className="flow">
             <div className="flow-step">
               <b>Ready</b>
               <h3>HF + GGUF decoders</h3>
-              <p>CLI pull/generate, dashboard chat, memory presets, IQ4_NL / Q-quants.</p>
+              <p>
+                CLI pull/generate, dashboard chat, laptop storage-first, IQ4_NL / Q-quants,
+                Mixtral/Qwen MoE paging.
+              </p>
             </div>
             <div className="flow-step">
-              <b>Partial</b>
-              <h3>CUDA / MoE dial</h3>
-              <p>Decode Attention on CUDA when enabled; expert stream / LRU still deepening.</p>
+              <b>Laptop scale</b>
+              <h3>30B+ / 500B MoE</h3>
+              <p>
+                Streaming + top-k expert I/O + 2048-token KV window. Slow on disk, not silent
+                OOM. Dense 500B or trillion-class RSS is not a proven claim.
+              </p>
             </div>
             <div className="flow-step">
               <b>Building</b>
@@ -175,7 +185,9 @@ export default function HomePage() {
             <div className="flow-step">
               <b>03</b>
               <h3>Execute</h3>
-              <p>Quant GEMM, KV-cache generate, streaming weights, honest GPU caps.</p>
+              <p>
+                Quant GEMM, sliding KV, top-k expert paging, honest GPU auto-select.
+              </p>
             </div>
             <div className="flow-step">
               <b>04</b>
@@ -198,7 +210,8 @@ export default function HomePage() {
               <h3>Hugging Face decoder-only</h3>
               <p>
                 First-class Hub folders: strict <code>config.json</code>, shards, RoPE/GQA,
-                tied emb. Allowlisted CausalLM families — not every Hub card.
+                tied emb. Any <code>*ForCausalLM</code> / GPT-2 / Mixtral layout we can map —
+                not vision, SSM, or HF MLA.
               </p>
               <div className="chip-row">
                 <span className="chip">uaii pull</span>
@@ -210,8 +223,8 @@ export default function HomePage() {
             <div className="bento-item">
               <h3>GGUF blk.* transformers</h3>
               <p>
-                Capability-based import for llama.cpp-style tensors: dense or MoE, DeepSeek
-                MLA expand path, common Q/K quants + IQ4_NL.
+                Capability-based import for llama.cpp-style tensors: dense or MoE (packed banks
+                split per expert), DeepSeek MLA expand path, common Q/K quants + IQ4_NL.
               </p>
               <div className="chip-row">
                 <span className="chip">llama</span>
@@ -254,8 +267,10 @@ export default function HomePage() {
             <div className="bento-item">
               <h3>GPU backends, honest caps</h3>
               <p>
-                CUDA decode Attention/RoPE when enabled; Metal/Vulkan/WebGPU/ROCm with
-                host-fallback never silent — <code>uaii doctor</code> tells the truth.
+                CLI/dashboard <code>--backend auto</code>: CPU unless native CUDA/Metal/ROCm/Vulkan
+                is compiled and a device is present. CUDA decode Attention/RoPE when enabled;
+                host-fallback is never silent — <code>uaii doctor</code> prints{" "}
+                <code>recommended:</code>.
               </p>
             </div>
             <div className="bento-item wide">
@@ -338,7 +353,7 @@ cmake --build build --config Release --parallel`}</pre>
               </header>
               <pre>{`uaii doctor
 uaii pull org/model --outdir ./hf-model
-uaii generate --model ./hf-model --prompt "hi"
+uaii generate --model ./hf-model --prompt "hi" --preset laptop
 uaii generate --model model.gguf --prompt "hi"`}</pre>
             </div>
             <div className="code-card">

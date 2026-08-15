@@ -125,6 +125,13 @@ namespace kernels {
                                                     int num_experts,
                                                     int top_k);
 
+[[nodiscard]] UAII_API Error moe_experts_swiglu_listed_f32(const TensorView& x,
+                                                           const TensorView& probs,
+                                                           const TensorView* expert_triples,
+                                                           int num_experts,
+                                                           int top_k,
+                                                           TensorView* out);
+
 [[nodiscard]] UAII_API Error reshape_f32(const TensorView& in, TensorView* out);
 
 /// Slice contiguous range [start, end) on the last dimension (rank-2 [B,D] only).

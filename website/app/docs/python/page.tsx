@@ -47,10 +47,16 @@ print(session.profile_summary())`}</pre>
           <code>weight_init=&quot;none&quot;</code> — fail closed (no silent Ones fill)
         </li>
         <li>
-          GPU backend names require a native build + device for real device kernels; otherwise
-          host-fallback applies and is reported by doctor / capabilities
+          <code>backend=&quot;cpu&quot;</code> — Python / C API stay on the host unless you pass{" "}
+          <code>backend=&quot;auto&quot;</code> (native GPU if this binary can use it, else CPU).
+          Host-fallback stubs are reported by <code>uaii doctor</code>
+        </li>
+        <li>
+          Laptop streaming + sliding KV are CLI/dashboard presets.{" "}
+          <code>Session.from_path</code> does not apply <code>--preset laptop</code>
         </li>
       </ul>
+      <pre>{`session = uaii.Session.from_path("model.gguf", backend="auto")`}</pre>
     </DocLayout>
   );
 }

@@ -64,6 +64,8 @@ Error resolve_memory_preset(MemoryPreset preset, std::uint64_t ram_gb_override,
       out->ram_budget_bytes = gib(8);
       out->pin_layers = 2;
       out->expert_cache_bytes = gib(1);
+      out->kv_window = 2048;
+      out->kv_sink = 4;
       out->enable_streaming = true;
       out->label = "laptop";
       break;
@@ -71,6 +73,8 @@ Error resolve_memory_preset(MemoryPreset preset, std::uint64_t ram_gb_override,
       out->ram_budget_bytes = gib(32);
       out->pin_layers = 16;
       out->expert_cache_bytes = gib(4);
+      out->kv_window = 4096;
+      out->kv_sink = 4;
       out->enable_streaming = true;
       out->label = "desktop";
       break;
@@ -78,6 +82,8 @@ Error resolve_memory_preset(MemoryPreset preset, std::uint64_t ram_gb_override,
       out->ram_budget_bytes = gib(128);
       out->pin_layers = 0;  // keep all dense when budget allows
       out->expert_cache_bytes = gib(32);
+      out->kv_window = 8192;
+      out->kv_sink = 4;
       out->enable_streaming = true;
       out->label = "server";
       break;
@@ -104,10 +110,13 @@ void apply_memory_preset(const MemoryPresetConfig& cfg, SessionOptions* opts) {
   opts->enable_streaming = cfg.enable_streaming;
   opts->pin_layers = cfg.pin_layers;
   opts->expert_cache_bytes = cfg.expert_cache_bytes;
+  opts->kv_window = cfg.kv_window;
+  opts->kv_sink = cfg.kv_sink;
   if (!cfg.label.empty()) {
     log::info("memory") << "preset=" << cfg.label
                         << " budget_bytes=" << cfg.ram_budget_bytes
                         << " pin_layers=" << cfg.pin_layers
+                        << " kv_window=" << cfg.kv_window
                         << " streaming=" << (cfg.enable_streaming ? "on" : "off");
   }
 }

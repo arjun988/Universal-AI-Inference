@@ -7,6 +7,12 @@ function queueMaxFromEnv() {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 16;
 }
 
+function deviceOf(backend) {
+  const b = String(backend || "auto").toLowerCase();
+  if (!b || b === "cpu" || b === "auto" || b === "default") return "cpu";
+  return "gpu";
+}
+
 /**
  * Warm `uaii chat --jsonl` process: loads GGUF or HF dir once, serves generate requests.
  * `launch` is { cmd, prefix, mode, toModelPath } from uaii_launch.mjs.
@@ -21,7 +27,7 @@ export class ChatWorker {
     modelPath,
     modelLabel = "",
     demo = false,
-    backend = "cpu",
+    backend = "auto",
     maxContext = 0,
     env = {},
   }) {
@@ -46,7 +52,7 @@ export class ChatWorker {
       model: this.modelLabel,
       modelPath: this.modelPath,
       backend: this.backend,
-      device: this.backend === "cpu" ? "cpu" : "gpu",
+      device: deviceOf(this.backend),
       loaded: 0,
       total: 0,
       pct: 0,
@@ -99,7 +105,10 @@ export class ChatWorker {
     this.ready = false;
     this.#setStatus({
       phase: "starting",
-      message: `Starting runtime on ${this.backend}…`,
+      message:
+        !this.backend || this.backend === "auto"
+          ? "Starting runtime (GPU if present, else CPU)…"
+          : `Starting runtime on ${this.backend}…`,
       error: "",
       loaded: 0,
       total: 0,
@@ -108,10 +117,10 @@ export class ChatWorker {
       startedAt: Date.now(),
       readyAt: null,
       backend: this.backend,
-      device: this.backend === "cpu" ? "cpu" : "gpu",
+      device: deviceOf(this.backend),
     });
 
-    const uaiiArgs = ["chat", "--jsonl", "--backend", this.backend || "cpu", "--log-level", "error"];
+    const uaiiArgs = ["chat", "--jsonl", "--backend", this.backend || "auto", "--log-level", "error"];
     if (this.demo) uaiiArgs.push("--demo");
     else uaiiArgs.push("--model", this.modelPath);
     if (this.maxContext > 0) uaiiArgs.push("--max-context", String(this.maxContext));
@@ -243,7 +252,7 @@ export class ChatWorker {
         phase: "loading",
         message: `Loading model onto ${ev.device === "gpu" ? "GPU" : "CPU"} (${ev.backend || this.backend})…`,
         backend: ev.backend || this.backend,
-        device: ev.device || (this.backend === "cpu" ? "cpu" : "gpu"),
+        device: ev.device || deviceOf(ev.backend || this.backend),
         pct: 0,
         loaded: 0,
         total: 0,
@@ -266,7 +275,7 @@ export class ChatWorker {
         pct,
         tensor: ev.tensor || "",
         backend: ev.backend || this.backend,
-        device: ev.device || (this.backend === "cpu" ? "cpu" : "gpu"),
+        device: ev.device || deviceOf(ev.backend || this.backend),
         message:
           total > 0
             ? `Loading weights onto ${ev.device === "gpu" ? "GPU" : "CPU"} — ${pct}% (${loaded}/${total})`
@@ -282,7 +291,7 @@ export class ChatWorker {
         pct: 100,
         message: `Model ready on ${ev.device === "gpu" ? "GPU" : "CPU"} (${ev.backend || this.backend})`,
         backend: ev.backend || this.backend,
-        device: ev.device || (this.backend === "cpu" ? "cpu" : "gpu"),
+        device: ev.device || deviceOf(ev.backend || this.backend),
         chatTemplate: this.chatTemplate,
         readyAt: Date.now(),
         error: "",

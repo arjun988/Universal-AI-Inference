@@ -33,12 +33,15 @@ class UAII_API KvCache {
   }
 
   /// Configure with possibly different K and V widths (MLA).
+  /// `max_seq` is the **resident window** (not the model's 128k).
+  /// `sink` keeps the first N tokens (StreamingLLM-style) when sliding.
   [[nodiscard]] Error configure(std::int64_t n_layers,
                                 std::int64_t batch,
                                 std::int64_t max_seq,
                                 std::int64_t k_dim,
                                 std::int64_t v_dim,
-                                std::int64_t n_heads) {
+                                std::int64_t n_heads,
+                                std::int64_t sink = 4) {
     if (n_layers <= 0 || batch <= 0 || max_seq <= 0 || k_dim <= 0 || v_dim <= 0 ||
         n_heads <= 0) {
       return Error::make(ErrorCode::InvalidArgument, "KvCache::configure invalid dims");
@@ -53,8 +56,11 @@ class UAII_API KvCache {
     v_dim_ = v_dim;
     dim_ = k_dim;  // legacy alias (K width)
     n_heads_ = n_heads;
+    sink_ = sink < 0 ? 0 : sink;
+    if (sink_ >= max_seq_) sink_ = 0;
     past_len_ = 0;
     pending_seq_ = 0;
+    abs_pos_ = 0;
     const std::size_t k_elems =
         static_cast<std::size_t>(batch_) * static_cast<std::size_t>(max_seq_) *
         static_cast<std::size_t>(k_dim_);
@@ -69,12 +75,16 @@ class UAII_API KvCache {
   void reset() noexcept {
     past_len_ = 0;
     pending_seq_ = 0;
+    abs_pos_ = 0;
     for (auto& buf : k_) std::fill(buf.begin(), buf.end(), 0.f);
     for (auto& buf : v_) std::fill(buf.begin(), buf.end(), 0.f);
   }
 
   [[nodiscard]] std::int64_t current_seq() const noexcept { return past_len_; }
   [[nodiscard]] std::int64_t past_len() const noexcept { return past_len_; }
+  /// Absolute RoPE position of the token currently being encoded (does not rewind on slide).
+  [[nodiscard]] std::int64_t rope_pos() const noexcept { return abs_pos_; }
+  [[nodiscard]] std::int64_t sink() const noexcept { return sink_; }
   [[nodiscard]] std::int64_t max_seq() const noexcept { return max_seq_; }
   [[nodiscard]] std::int64_t n_layers() const noexcept { return n_layers_; }
   [[nodiscard]] std::int64_t batch() const noexcept { return batch_; }
@@ -118,6 +128,10 @@ class UAII_API KvCache {
     if (batch != batch_ || vb != batch_ || kd != k_dim_ || vd != v_dim_ || seq != vs) {
       return Error::make(ErrorCode::InvalidArgument, "KvCache append shape mismatch");
     }
+    if (seq > max_seq_) {
+      return Error::make(ErrorCode::InvalidArgument, "KvCache append seq exceeds window");
+    }
+    compact_to_fit(seq);
     err = ensure_capacity(past_len_ + seq);
     if (!err.ok()) return err;
 
@@ -145,8 +159,9 @@ class UAII_API KvCache {
     return Error::success();
   }
 
-  /// Advance past_len_ by the seq appended this step (call once after a full forward).
+  /// Advance occupancy and the absolute RoPE counter (call once after a full forward).
   void commit_step() noexcept {
+    abs_pos_ += pending_seq_;
     past_len_ += pending_seq_;
     pending_seq_ = 0;
   }
@@ -160,6 +175,38 @@ class UAII_API KvCache {
   }
 
  private:
+  void compact_to_fit(std::int64_t incoming) {
+    const std::int64_t need = past_len_ + incoming;
+    if (need <= max_seq_) return;
+    std::int64_t drop = need - max_seq_;
+    const std::int64_t keep_sink = std::min(sink_, past_len_);
+    const std::int64_t movable = past_len_ - keep_sink;
+    if (drop > movable) drop = movable;
+    if (drop <= 0) return;
+    const std::int64_t tail = past_len_ - keep_sink - drop;
+    for (std::int64_t layer = 0; layer < n_layers_; ++layer) {
+      float* kdst = k_[static_cast<std::size_t>(layer)].data();
+      float* vdst = v_[static_cast<std::size_t>(layer)].data();
+      for (std::int64_t b = 0; b < batch_; ++b) {
+        if (tail > 0) {
+          const std::size_t k_dst = static_cast<std::size_t>(
+              (b * max_seq_ + keep_sink) * k_dim_);
+          const std::size_t k_src = static_cast<std::size_t>(
+              (b * max_seq_ + keep_sink + drop) * k_dim_);
+          std::memmove(kdst + k_dst, kdst + k_src,
+                       static_cast<std::size_t>(tail * k_dim_) * sizeof(float));
+          const std::size_t v_dst = static_cast<std::size_t>(
+              (b * max_seq_ + keep_sink) * v_dim_);
+          const std::size_t v_src = static_cast<std::size_t>(
+              (b * max_seq_ + keep_sink + drop) * v_dim_);
+          std::memmove(vdst + v_dst, vdst + v_src,
+                       static_cast<std::size_t>(tail * v_dim_) * sizeof(float));
+        }
+      }
+    }
+    past_len_ -= drop;
+  }
+
   static Error parse_kv_shape(const kernels::TensorView& t,
                               std::int64_t* batch,
                               std::int64_t* seq,
@@ -213,6 +260,8 @@ class UAII_API KvCache {
   std::int64_t n_heads_ = 0;
   std::int64_t past_len_ = 0;
   std::int64_t pending_seq_ = 0;
+  std::int64_t abs_pos_ = 0;
+  std::int64_t sink_ = 4;
   std::vector<std::vector<float>> k_;
   std::vector<std::vector<float>> v_;
   mutable std::int64_t view_shape_[3]{};

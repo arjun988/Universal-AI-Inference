@@ -24,6 +24,9 @@ struct MemoryPresetConfig {
   std::int64_t pin_layers = 0;
   /// Expert LRU capacity in bytes (MoE); 0 = auto.
   std::uint64_t expert_cache_bytes = 0;
+  /// Sliding KV window (tokens). 0 = unset / do not apply.
+  std::int64_t kv_window = 0;
+  std::int64_t kv_sink = 4;
   bool enable_streaming = false;
   std::string label;
 };

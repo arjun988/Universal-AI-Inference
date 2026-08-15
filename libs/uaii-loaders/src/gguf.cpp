@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <string>
+#include <vector>
 
 namespace uaii {
 namespace loaders {
@@ -285,6 +287,16 @@ std::size_t numel_of(const std::vector<std::uint64_t>& dims) {
   return n;
 }
 
+/// `name#e=3` → expert 3 of a packed Mixtral/Qwen GGUF bank (outermost GGUF dim).
+int parse_expert_slice(std::string* name) {
+  if (name == nullptr) return -1;
+  const auto pos = name->find("#e=");
+  if (pos == std::string::npos) return -1;
+  const int e = std::atoi(name->c_str() + static_cast<std::ptrdiff_t>(pos + 3));
+  name->resize(pos);
+  return e;
+}
+
 }  // namespace
 
 const char* to_string(GgufType type) noexcept {
@@ -466,22 +478,46 @@ Error gguf_load_tensor_f32(const GgufFile& file,
   if (out == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "out null");
   }
+  std::string key = tensor_name;
+  const int expert = parse_expert_slice(&key);
   const GgufTensorInfo* info = nullptr;
   for (const auto& t : file.tensors) {
-    if (t.name == tensor_name) {
+    if (t.name == key) {
       info = &t;
       break;
     }
   }
   if (info == nullptr) {
-    return Error::make(ErrorCode::NotFound, "GGUF tensor not found: " + tensor_name);
+    return Error::make(ErrorCode::NotFound, "GGUF tensor not found: " + key);
   }
 
-  const std::size_t n = numel_of(info->dims);
+  const std::size_t n_full = numel_of(info->dims);
+  std::size_t e_count = 1;
+  std::size_t e_idx = 0;
+  if (expert >= 0) {
+    if (info->dims.size() < 3) {
+      return Error::make(ErrorCode::InvalidArgument,
+                         "GGUF expert slice needs rank-3 bank: " + key);
+    }
+    e_count = static_cast<std::size_t>(info->dims.back());
+    if (e_count == 0 || n_full % e_count != 0 ||
+        static_cast<std::size_t>(expert) >= e_count) {
+      return Error::make(ErrorCode::InvalidArgument,
+                         "GGUF expert slice out of range for " + key);
+    }
+    e_idx = static_cast<std::size_t>(expert);
+  }
+  const std::size_t n = n_full / e_count;
+  const auto qf = gguf_type_to_quant(info->type);
+  std::size_t packed_before = quant::packed_nbytes(qf, e_idx * n);
+  if (packed_before == 0) {
+    packed_before = e_idx * n * gguf_type_nbytes_per_elem(info->type);
+  }
+
   detail::ByteReader r({});
   Error err = detail::ByteReader::from_file(file.path, &r);
   if (!err.ok()) return err;
-  r.seek(static_cast<std::size_t>(file.data_offset + info->offset));
+  r.seek(static_cast<std::size_t>(file.data_offset + info->offset + packed_before));
 
   out->resize(n);
   if (info->type == GgufType::F32) {
@@ -547,7 +583,6 @@ Error gguf_load_tensor_f32(const GgufFile& file,
              info->type == GgufType::Q5_K || info->type == GgufType::Q6_K ||
              info->type == GgufType::IQ4_NL) {
     // K-quants / extra block quants: load packed bytes then dequant to f32.
-    const auto qf = gguf_type_to_quant(info->type);
     if (!quant::supports_gguf_dequant(qf)) {
       return Error::make(ErrorCode::NotImplemented,
                          "no dequant for GGUF dtype: " + std::string(to_string(info->type)));
@@ -569,6 +604,9 @@ Error gguf_load_tensor_f32(const GgufFile& file,
 
   if (out_shape) {
     *out_shape = dims_to_shape(info->dims);
+    if (expert >= 0 && !out_shape->dims.empty()) {
+      out_shape->dims.erase(out_shape->dims.begin());
+    }
   }
   return Error::success();
 }
@@ -581,17 +619,35 @@ Error gguf_load_tensor_raw(const GgufFile& file,
   if (out == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "raw out null");
   }
+  std::string key = tensor_name;
+  const int expert = parse_expert_slice(&key);
   const GgufTensorInfo* info = nullptr;
   for (const auto& t : file.tensors) {
-    if (t.name == tensor_name) {
+    if (t.name == key) {
       info = &t;
       break;
     }
   }
   if (info == nullptr) {
-    return Error::make(ErrorCode::NotFound, "tensor not in gguf: " + tensor_name);
+    return Error::make(ErrorCode::NotFound, "tensor not in gguf: " + key);
   }
-  const std::size_t n = numel_of(info->dims);
+  const std::size_t n_full = numel_of(info->dims);
+  std::size_t e_count = 1;
+  std::size_t e_idx = 0;
+  if (expert >= 0) {
+    if (info->dims.size() < 3) {
+      return Error::make(ErrorCode::InvalidArgument,
+                         "GGUF expert slice needs rank-3 bank: " + key);
+    }
+    e_count = static_cast<std::size_t>(info->dims.back());
+    if (e_count == 0 || n_full % e_count != 0 ||
+        static_cast<std::size_t>(expert) >= e_count) {
+      return Error::make(ErrorCode::InvalidArgument,
+                         "GGUF expert slice out of range for " + key);
+    }
+    e_idx = static_cast<std::size_t>(expert);
+  }
+  const std::size_t n = n_full / e_count;
   if (!gguf_type_supported(info->type)) {
     return Error::make(ErrorCode::NotImplemented,
                        "unsupported GGUF type for raw load: " +
@@ -607,14 +663,23 @@ Error gguf_load_tensor_raw(const GgufFile& file,
                        "unsupported GGUF type for raw load: " +
                            std::string(to_string(info->type)));
   }
+  std::size_t packed_before = quant::packed_nbytes(qf, e_idx * n);
+  if (packed_before == 0) {
+    packed_before = e_idx * n * gguf_type_nbytes_per_elem(info->type);
+  }
   detail::ByteReader r({});
   Error err = detail::ByteReader::from_file(file.path, &r);
   if (!err.ok()) return err;
-  r.seek(static_cast<std::size_t>(file.data_offset + info->offset));
+  r.seek(static_cast<std::size_t>(file.data_offset + info->offset + packed_before));
   out->resize(nbytes);
   err = r.read_bytes(out->data(), nbytes);
   if (!err.ok()) return err;
-  if (out_shape) *out_shape = dims_to_shape(info->dims);
+  if (out_shape) {
+    *out_shape = dims_to_shape(info->dims);
+    if (expert >= 0 && !out_shape->dims.empty()) {
+      out_shape->dims.erase(out_shape->dims.begin());
+    }
+  }
   if (out_type) *out_type = info->type;
   return Error::success();
 }
@@ -1099,9 +1164,6 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       TensorId w_up = 0;
       TensorId w_down = 0;
       TensorId w_gate_inp = 0;
-      TensorId w_gate_exps = 0;
-      TensorId w_up_exps = 0;
-      TensorId w_down_exps = 0;
       TensorId w_gate_shexp = 0;
       TensorId w_up_shexp = 0;
       TensorId w_down_shexp = 0;
@@ -1172,12 +1234,8 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "ffn_gate_inp.weight", &w_gate_inp);
       if (!err.ok()) return err;
-      err = add_weight_ref(pfx + "ffn_gate_exps.weight", &w_gate_exps);
-      if (!err.ok()) return err;
-      err = add_weight_ref(pfx + "ffn_up_exps.weight", &w_up_exps);
-      if (!err.ok()) return err;
-      err = add_weight_ref(pfx + "ffn_down_exps.weight", &w_down_exps);
-      if (!err.ok()) return err;
+      // Packed Mixtral/Qwen banks are split into per-expert IR tensors below
+      // (`#e=N` slices). Do not register the whole bank as one weight.
       err = add_weight_ref(pfx + "ffn_gate_shexp.weight", &w_gate_shexp);
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "ffn_up_shexp.weight", &w_up_shexp);
@@ -1492,12 +1550,20 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         return dim * 4;
       };
 
-      if (w_gate_inp && w_gate_exps && w_up_exps && w_down_exps) {
+      if (w_gate_inp && find_tensor(file, pfx + "ffn_gate_exps.weight") &&
+          find_tensor(file, pfx + "ffn_up_exps.weight") &&
+          find_tensor(file, pfx + "ffn_down_exps.weight")) {
         // Mixtral / Qwen2MoE-style: router + top-k SwiGLU experts (+ optional shared).
-        const GgufTensorInfo* exps_info = find_tensor(file, pfx + "ffn_gate_exps.weight");
-        Shape exps_shape = exps_info ? dims_to_shape(exps_info->dims) : Shape{};
+        // Split packed [E,I,D]/[E,D,I] banks into listed per-expert tensors so the
+        // expert LRU pages one expert (kimi-style) instead of the whole bank.
+        const GgufTensorInfo* gate_info = find_tensor(file, pfx + "ffn_gate_exps.weight");
+        const GgufTensorInfo* up_info = find_tensor(file, pfx + "ffn_up_exps.weight");
+        const GgufTensorInfo* down_info = find_tensor(file, pfx + "ffn_down_exps.weight");
+        Shape gate_shape = dims_to_shape(gate_info->dims);
+        Shape up_shape = dims_to_shape(up_info->dims);
+        Shape down_shape = dims_to_shape(down_info->dims);
         std::int64_t n_experts = kv_i64_arch(file, arch, "expert_count", 0);
-        if (n_experts <= 0 && exps_shape.dims.size() >= 1) n_experts = exps_shape.dims[0];
+        if (n_experts <= 0 && gate_shape.dims.size() >= 1) n_experts = gate_shape.dims[0];
         if (n_experts <= 0) {
           return Error::make(ErrorCode::InvalidArgument,
                              "MoE layer " + pfx + " missing expert_count / expert dims");
@@ -1505,6 +1571,15 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         std::int64_t top_k = kv_i64_arch(file, arch, "expert_used_count", 2);
         if (top_k <= 0) top_k = 2;
         if (top_k > n_experts) top_k = n_experts;
+        if (gate_shape.dims.size() != 3 || up_shape.dims.size() != 3 ||
+            down_shape.dims.size() != 3 || gate_shape.dims[0] != n_experts ||
+            up_shape.dims[0] != n_experts || down_shape.dims[0] != n_experts) {
+          return Error::make(ErrorCode::InvalidArgument,
+                             pfx + " packed expert banks must be rank-3 [E,...]");
+        }
+        const Shape g_one{{gate_shape.dims[1], gate_shape.dims[2]}};
+        const Shape u_one{{up_shape.dims[1], up_shape.dims[2]}};
+        const Shape d_one{{down_shape.dims[1], down_shape.dims[2]}};
 
         TensorId router_probs =
             b.add_tensor(pfx + "moe_probs", DType::F32, Shape{{1, n_experts}});
@@ -1515,9 +1590,24 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
                    {ir::make_int_attr("num_experts", n_experts),
                     ir::make_int_attr("top_k", top_k)});
 
+        std::vector<TensorId> moe_ins = {mlp_in, router_probs};
+        for (std::int64_t e = 0; e < n_experts; ++e) {
+          const std::string es = std::to_string(e);
+          moe_ins.push_back(b.add_weight(
+              pfx + "exp." + es + ".ffn_gate.weight", DType::F32, g_one,
+              path + "#" + gate_info->name + "#e=" + es,
+              gguf_type_to_quant(gate_info->type)));
+          moe_ins.push_back(b.add_weight(
+              pfx + "exp." + es + ".ffn_up.weight", DType::F32, u_one,
+              path + "#" + up_info->name + "#e=" + es, gguf_type_to_quant(up_info->type)));
+          moe_ins.push_back(b.add_weight(
+              pfx + "exp." + es + ".ffn_down.weight", DType::F32, d_one,
+              path + "#" + down_info->name + "#e=" + es,
+              gguf_type_to_quant(down_info->type)));
+        }
+
         TensorId ff_out = b.add_tensor(pfx + "ff_out", DType::F32, Shape{{1, dim}});
-        b.add_node(pfx + "moe_exps", "MoEExpertsSwiGLU", "1",
-                   {mlp_in, w_gate_exps, w_up_exps, w_down_exps, router_probs}, {ff_out},
+        b.add_node(pfx + "moe_exps", "MoEExpertsSwiGLU", "1", moe_ins, {ff_out},
                    {ir::make_int_attr("num_experts", n_experts),
                     ir::make_int_attr("top_k", top_k)});
 

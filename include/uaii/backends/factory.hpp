@@ -37,6 +37,10 @@ struct BackendDescriptor {
                                             const BackendCreateOptions& options,
                                             std::unique_ptr<IBackend>* out);
 
+/// Resolve `"auto"` / empty → first native GPU that actually has a device, else `"cpu"`.
+/// Explicit names (`cpu`, `cuda`, …) are returned normalized. Priority: cuda, metal, rocm, vulkan.
+[[nodiscard]] UAII_API std::string select_runtime_backend(const std::string& requested = "auto");
+
 [[nodiscard]] UAII_API const char* device_type_backend_name(DeviceType type) noexcept;
 
 }  // namespace backends

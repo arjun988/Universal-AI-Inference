@@ -11,9 +11,10 @@ export default function Page() {
       lede="Build the C++ runtime, try an HF decoder or GGUF, then wire the C API or Python SDK."
     >
       <p>
-        <strong>Recommended first try:</strong> allowlisted Hugging Face CausalLM folder or a
-        GGUF <code>blk.*</code> model. Details:{" "}
-        <Link href="/docs/huggingface/">Hugging Face</Link>.
+        <strong>Recommended first try:</strong> Hugging Face CausalLM folder or a GGUF{" "}
+        <code>blk.*</code> model. Defaults: <code>--preset laptop</code> (stream weights,
+        sliding KV) and <code>--backend auto</code> (CPU unless a native GPU is present).
+        Details: <Link href="/docs/huggingface/">Hugging Face</Link>.
       </p>
 
       <h2>Prerequisites</h2>
@@ -38,11 +39,11 @@ cmake --build build --config Release --parallel`}</pre>
       <pre>{`uaii version
 uaii doctor
 
-# Hugging Face decoder-only (allowlisted CausalLM)
+# Hugging Face decoder-only
 uaii pull org/model --outdir ./models/hf/org__model
 uaii generate --model ./models/hf/org__model --prompt "hi" --max-new-tokens 64 --preset laptop
 
-# Or GGUF blk.* transformer
+# Or GGUF blk.* transformer (same laptop dial + auto GPU)
 uaii generate --model path/to/model.gguf --prompt "hi" --max-new-tokens 64
 
 # Tiny IR smoke (no LLM weights)
@@ -64,8 +65,9 @@ UAII_BIN=/path/to/uaii npm start
 # Self-host
 UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=secret npm start`}</pre>
       <p>
-        Hub pull, HF/GGUF chat, doctor, benches, OpenAI-compatible <code>/v1</code>. Full
-        guide: <Link href="/docs/dashboard/">Dashboard</Link>.
+        Hub pull, HF/GGUF chat, doctor, benches, OpenAI-compatible <code>/v1</code>. Settings
+        backend default is Auto-detect GPU. Full guide:{" "}
+        <Link href="/docs/dashboard/">Dashboard</Link>.
       </p>
 
       <h2>Run a graph</h2>
@@ -89,7 +91,8 @@ python examples/python/load_run_profile.py`}</pre>
       <h2>Next</h2>
       <ul>
         <li>
-          <Link href="/docs/huggingface/">Hugging Face</Link> — decoder-only Hub path
+          <Link href="/docs/huggingface/">Hugging Face</Link> — decoder-only Hub path, size
+          limits, laptop paging
         </li>
         <li>
           <Link href="/docs/features/">Features</Link> — formats, quants, runtime

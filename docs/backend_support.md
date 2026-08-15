@@ -11,4 +11,10 @@
 
 `DeviceScheduler` places ops on the backend's preferred device. When `attention_host_fallback` is true, **Attention** and **RoPE** are scheduled to CPU. With native CUDA init, they are scheduled to the GPU device and run via staged or on-device kernels (prefill Attention still falls back to CPU inside dispatch).
 
-Doctor prints GEMM provider and per-backend capability details. Silent “GPU name, CPU math” without `host_fallback` in caps is a bug.
+### Default: CPU, GPU if present
+
+CLI (`generate` / `chat` / `run`) and the dashboard default to `--backend auto`. That resolves to the first **native** GPU that actually has a device (priority: CUDA, Metal, ROCm, Vulkan). If none, it uses CPU. `--backend cpu` (or Settings → CPU) pins the host. A GPU that is installed but built with `UAII_WITH_CUDA=OFF` (host-fallback only) does **not** count as detected — auto stays on CPU.
+
+The C API / Python `Session` still default to `"cpu"` (explicit ABI). Pass `"auto"` there if you want the same probe.
+
+Doctor prints GEMM provider, per-backend capability details, and a `recommended:` line matching auto-select. Silent “GPU name, CPU math” without `host_fallback` in caps is a bug.

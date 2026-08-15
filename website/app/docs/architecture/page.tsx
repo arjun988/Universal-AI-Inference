@@ -7,7 +7,7 @@ export default function Page() {
     <DocLayout
       title="Architecture"
       active="/docs/architecture/"
-      lede="Models become UAII IR. The session plans and executes that graph on a chosen backend."
+      lede="Models become UAII IR. The session plans and executes that graph on CPU, or on a native GPU when auto-select finds one."
     >
       <h2>Pipeline</h2>
       <div className="pipeline" aria-label="Architecture pipeline">
@@ -30,7 +30,8 @@ export default function Page() {
           <code>uaii-ir</code> — graph, tensors, operator registry, validator, serialize, plan
         </li>
         <li>
-          <code>uaii-runtime</code> — session lifecycle, DeviceScheduler, KV cache, demos
+          <code>uaii-runtime</code> — session lifecycle, DeviceScheduler, sliding KV, memory
+          presets
         </li>
         <li>
           <code>uaii-kernels</code> — CPU ops, <code>IGemm</code>, quant GEMM
@@ -39,7 +40,8 @@ export default function Page() {
           <code>uaii-backends</code> — CPU + optional CUDA / Metal / Vulkan / WebGPU / ROCm
         </li>
         <li>
-          <code>uaii-loaders</code> — GGUF, Safetensors, ONNX, MLX, PyTorch
+          <code>uaii-loaders</code> — HF directories, GGUF (per-expert MoE slices), Safetensors,
+          ONNX, MLX, PyTorch
         </li>
         <li>
           <code>uaii-tokenizers</code> — Simple, BPE, SentencePiece, GGUF wiring
@@ -48,12 +50,43 @@ export default function Page() {
           <code>uaii-planner</code> — fusion, memory/storage plans, disk cache
         </li>
         <li>
-          <code>uaii-storage</code> — mmap, streaming weights
+          <code>uaii-storage</code> — mmap, streaming weights, expert LRU
         </li>
         <li>
           <code>uaii-capi</code> — stable C ABI for SDKs
         </li>
       </ul>
+
+      <h2>Storage-first (CLI / dashboard)</h2>
+      <p>
+        Generate and chat default to a laptop memory dial so the process pages weights instead
+        of mapping a whole checkpoint. That is the product path for 30B+ decoders and ~500B-class
+        MoE on a laptop — slow NVMe I/O, not a silent OOM, and not a proven trillion-parameter
+        RSS claim.
+      </p>
+      <ul>
+        <li>
+          Pin embed / lm_head / final norm plus a few trunk layers; stream the rest via{" "}
+          <code>file#tensor</code> refs
+        </li>
+        <li>
+          Sliding KV: resident window (laptop default 2048) + attention sinks (default 4).
+          RoPE keeps absolute positions; long chats compact the window instead of growing RAM
+        </li>
+        <li>
+          MoE: GGUF packed expert banks split to per-expert refs (<code>#e=N</code>); after
+          routing, only top-k experts are staged. Unused experts stay on disk
+        </li>
+        <li>
+          Backends: <code>auto</code> picks the first native GPU with a real device; host-fallback
+          stubs do not count
+        </li>
+      </ul>
+      <p>
+        C API 0.3.0 and the Python default session do <strong>not</strong> apply that laptop
+        preset — they stay on <code>cpu</code> with <code>kv_window = 0</code> unless you pass
+        options the ABI exposes. Dense tensors larger than RAM can still fail.
+      </p>
 
       <h2>IR on disk</h2>
       <ul>

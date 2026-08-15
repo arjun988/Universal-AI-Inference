@@ -2,6 +2,32 @@
 
 All notable changes to Universal AI Inference (UAII) are documented here.
 
+## [0.3.1] — 2026-08-15
+
+### Device auto-select
+
+- CLI `generate` / `chat` / `run` default `--backend auto`: CPU unless a native GPU backend is actually available (CUDA, then Metal, ROCm, Vulkan)
+- Dashboard Settings default is `auto` (same rule). Pin `--backend cpu` or Settings → CPU to force host
+- `uaii doctor` prints `recommended:` for the name auto would pick
+
+### Hugging Face decoder-generic
+
+- Any `*ForCausalLM` / `*LMHeadModel` (deny vision/audio/encoder/SSM/RWKV) instead of a closed class allowlist
+- Layout auto-detect: Llama split QKV, fused `qkv_proj`/`W_pack`/GPT-NeoX, GPT-2 Conv1D + GELU + LayerNorm, Mixtral/Qwen2-MoE per-expert SwiGLU
+- HF MoE configs accepted; experts are individual IR weights and page through the expert LRU
+- HF DeepSeek MLA still fail-closed (use GGUF)
+
+### Storage-first (kimi DNA)
+
+- `generate` / `chat` default `--preset laptop` (~8 GiB, pin trunk, stream rest, KV window 2048)
+- Storage plan never pins MoE experts; streaming loads `file#tensor` via the real GGUF/safetensors readers (not raw file offset 0)
+- Expert LRU with a hot window so several expert tensors can be resident for one MoE op
+- `MoEExpertsSwiGLU` listed arity (`x, probs, g0,u0,d0, …`) for HF Mixtral and GGUF packed banks split to `#e=N` slices
+- Session pages only the routed top-k experts per token
+- Sliding KV + attention sink so long chats cannot grow the cache without bound
+
+---
+
 ## [0.3.0] — 2026-08-14
 
 ### Hugging Face loader

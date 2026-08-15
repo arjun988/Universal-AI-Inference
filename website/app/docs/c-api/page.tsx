@@ -34,7 +34,9 @@ export default function Page() {
       </p>
       <ul>
         <li>
-          <code>backend</code>, <code>weights_dir</code>, <code>weight_init</code> (default NONE)
+          <code>backend</code> (default <code>&quot;cpu&quot;</code>; pass{" "}
+          <code>&quot;auto&quot;</code> to match CLI GPU probe), <code>weights_dir</code>,{" "}
+          <code>weight_init</code> (default NONE)
         </li>
         <li>
           <code>enable_fusion</code>, <code>enable_memory_reuse</code>,{" "}
@@ -42,9 +44,14 @@ export default function Page() {
         </li>
         <li>
           <code>compute_dtype</code>, <code>keep_quantized_weights</code>,{" "}
-          <code>max_context</code>
+          <code>max_context</code> (generate bound; 0 = graph metadata)
         </li>
       </ul>
+      <p>
+        Sliding KV (<code>kv_window</code>) and the laptop memory preset are CLI / C++{" "}
+        <code>SessionOptions</code> — not fields on this ABI yet. A C session therefore does not
+        get the 2048-token window unless you add it in a later struct_size bump.
+      </p>
 
       <h2>Core calls</h2>
       <pre>{`uaii_session_options opts;

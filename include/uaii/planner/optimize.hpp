@@ -22,6 +22,7 @@ struct OptimizeOptions {
   std::uint64_t ram_budget_bytes = 0;
   bool prefer_mmap = true;
   std::int64_t pin_layers = 0;
+  std::uint64_t expert_cache_bytes = 0;
 };
 
 struct OptimizeResult {

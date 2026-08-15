@@ -20,6 +20,14 @@ uaii inspect examples/ir/toy_mlp.uaii.json
 uaii graph examples/ir/toy_mlp.uaii.json --format text
 uaii graph examples/ir/toy_mlp.uaii.json --format plan`}</pre>
 
+      <h2>Generate (HF / GGUF)</h2>
+      <pre>{`# Laptop storage-first + auto GPU (CLI defaults)
+uaii generate --model ./hf-dir --prompt "hi" --preset laptop --backend auto
+uaii generate --model model.gguf --prompt "hi" --kv-window 2048 --stream
+
+# Pin the host
+uaii generate --model model.gguf --prompt "hi" --backend cpu --preset none`}</pre>
+
       <h2>Built-in demos</h2>
       <pre>{`uaii run --demo toy_mlp
 uaii run --demo tiny_block
@@ -38,13 +46,18 @@ uaii run --demo quant --format int8`}</pre>
   --input x=1,2,3,4 \\
   --output y_prob
 
-# Optional backend (host-fallback without vendor SDK)
+# Auto-select native GPU if this binary can use it
+uaii run examples/ir/toy_mlp.uaii.json \\
+  --backend auto --weight-init ones --input x=1,2,3,4 --output y_prob
+
+# Named GPU with host-fallback (no vendor SDK in this binary)
 uaii run examples/ir/toy_mlp.uaii.json \\
   --backend cuda --force-host-fallback \\
   --weight-init ones --input x=1,2,3,4 --output y_prob`}</pre>
 
       <h2>Convert models</h2>
-      <pre>{`uaii convert model.gguf -o model.uaii.json
+      <pre>{`uaii convert ./hf-dir -o model.uaii.json
+uaii convert model.gguf -o model.uaii.json
 uaii convert model.safetensors -o model.uaii.json
 uaii convert model.onnx -o model.uaii.json`}</pre>
 
@@ -85,7 +98,7 @@ print(session.profile_summary())`}</pre>
       <pre>{`uaii_session_options opts;
 uaii_session_options_init(&opts);
 opts.struct_size = sizeof(opts);
-opts.backend = "cpu";
+opts.backend = "auto";  /* or "cpu" to pin the host */
 
 uaii_session* s = NULL;
 uaii_session_create("model.uaii.json", &opts, &s);

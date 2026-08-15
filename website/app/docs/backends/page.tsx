@@ -7,7 +7,7 @@ export default function Page() {
     <DocLayout
       title="Backends"
       active="/docs/backends/"
-      lede="CPU is always real. Optional GPU backends expose device memory and kernels when built with the matching SDK — and advertise host-fallback honestly."
+      lede="CPU is always real. CLI and dashboard default to auto: native GPU if this binary can actually drive a device, otherwise CPU. Host-fallback is never silent."
     >
       <div className="table-wrap">
         <table className="data">
@@ -33,7 +33,8 @@ export default function Page() {
               <td>Host-fallback executable</td>
               <td>
                 Device memory, <strong>cuBLASLt</strong>, Add/Mul/RMSNorm/Softmax/Silu;
-                Attention may host-fallback (flagged)
+                decode Attention + RoPE on GPU when native init OK; prefill Attention may still
+                CPU
               </td>
             </tr>
             <tr>
@@ -68,6 +69,16 @@ export default function Page() {
         </table>
       </div>
 
+      <h2>Auto-select</h2>
+      <p>
+        <code>uaii generate</code>, <code>chat</code>, <code>run</code>, and the dashboard
+        default to <code>--backend auto</code>. That picks the first native GPU that actually
+        has a device (CUDA, then Metal, ROCm, Vulkan). Host-fallback stubs do <strong>not</strong>{" "}
+        count — auto stays on CPU. <code>--backend cpu</code> (or Settings → CPU) pins the
+        host. The C API / Python <code>Session</code> still default to <code>&quot;cpu&quot;</code>;
+        pass <code>&quot;auto&quot;</code> if you want the same probe.
+      </p>
+
       <h2>Scheduling</h2>
       <p>
         <code>DeviceScheduler</code> places ops on the preferred device. When{" "}
@@ -78,9 +89,9 @@ export default function Page() {
       <h2>Doctor</h2>
       <pre>{`uaii doctor`}</pre>
       <p>
-        Prints the active GEMM provider and per-backend <code>host_fallback</code> /{" "}
-        <code>attention_host_fallback</code> flags. Silent “GPU name, CPU math” without those
-        flags is treated as a bug.
+        Prints the active GEMM provider, per-backend <code>host_fallback</code> /{" "}
+        <code>attention_host_fallback</code> flags, and a <code>recommended:</code> line matching
+        auto-select. Silent “GPU name, CPU math” without those flags is treated as a bug.
       </p>
     </DocLayout>
   );

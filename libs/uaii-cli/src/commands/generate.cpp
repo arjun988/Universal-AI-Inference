@@ -1,5 +1,6 @@
 #include "commands/generate.hpp"
 
+#include "uaii/backends/factory.hpp"
 #include "uaii/core/log.hpp"
 #include "uaii/interfaces/tokenizer.hpp"
 #include "uaii/ir/graph.hpp"
@@ -45,8 +46,10 @@ void print_generate_usage() {
       << "  --tokenizer-gguf <path>  Tokenizer source when --model is IR/GGUF override\n"
       << "  --max-new-tokens <n>     Default 64\n"
       << "  --max-context <n>        Session max context (0 = model default)\n"
-      << "  --backend <name>         Default cpu\n"
-      << "  --preset <name>          Memory dial: laptop|desktop|server\n"
+      << "  --kv-window <n>          Sliding KV slots (laptop default 2048; 0 = grow until max-context)\n"
+      << "  --kv-sink <n>            Keep first N tokens when sliding (default 4)\n"
+      << "  --backend <name>         auto (GPU if present, else CPU) | cpu|cuda|metal|vulkan|rocm\n"
+      << "  --preset <name>          Memory dial: laptop (default)|desktop|server|none\n"
       << "  --ram-gb <n>             Override RAM budget (enables streaming)\n"
       << "  --pin-layers <n>         Pin first N layers resident when streaming\n"
       << "  --stream-weights         Enable weight streaming under budget\n"
@@ -66,7 +69,7 @@ void print_generate_usage() {
 void print_chat_usage() {
   std::cout
       << "Usage:\n"
-      << "  uaii chat --model <path.gguf> --jsonl\n"
+      << "  uaii chat --model <path.gguf|hf-dir> --jsonl [--preset laptop]\n"
       << "  uaii chat --demo --jsonl\n\n"
       << "JSONL protocol (one JSON object per stdin line):\n"
       << "  {\"cmd\":\"generate\",\"id\":\"1\",\"prompt\":\"hi\",\"max_new_tokens\":64,\n"
@@ -78,7 +81,10 @@ void print_chat_usage() {
       << "  {\"event\":\"ready\",\"model\":\"...\"}\n"
       << "  {\"event\":\"token\",\"id\":\"1\",\"token\":3,\"text\":\"hello\"}\n"
       << "  {\"event\":\"done\",\"id\":\"1\",\"text\":\"...\",\"prompt_tokens\":N,\"new_tokens\":M,\"ms\":T}\n"
-      << "  {\"event\":\"error\",\"id\":\"1\",\"error\":\"...\"}\n";
+      << "  {\"event\":\"error\",\"id\":\"1\",\"error\":\"...\"}\n\n"
+      << "Options:\n"
+      << "  --backend <name>         auto (GPU if present, else CPU) | cpu|cuda|metal|vulkan|rocm\n"
+      << "  --kv-window <n>          Sliding KV slots (laptop default 2048)\n";
 }
 
 bool has_flag(const std::vector<std::string>& args, const std::string& flag) {
@@ -105,6 +111,41 @@ std::vector<std::int64_t> get_opt_i64_all(const std::vector<std::string>& args,
     }
   }
   return out;
+}
+
+bool parse_memory_args(const std::vector<std::string>& args, runtime::MemoryPresetConfig* mem) {
+  if (!mem) return false;
+  const std::string preset_name = get_opt(args, "--preset");
+  const std::uint64_t ram_gb =
+      static_cast<std::uint64_t>(std::strtoull(get_opt(args, "--ram-gb", "0").c_str(), nullptr, 10));
+  runtime::MemoryPreset preset = runtime::MemoryPreset::Laptop;
+  if (!preset_name.empty()) {
+    if (!runtime::parse_memory_preset(preset_name, &preset)) {
+      std::cerr << "unknown --preset (use laptop|desktop|server|none)\n";
+      return false;
+    }
+  }
+  Error perr = runtime::resolve_memory_preset(preset, ram_gb, mem);
+  if (!perr.ok()) {
+    std::cerr << perr.to_string() << '\n';
+    return false;
+  }
+  if (has_flag(args, "--stream-weights")) {
+    mem->enable_streaming = true;
+  }
+  const std::string pin = get_opt(args, "--pin-layers");
+  if (!pin.empty()) {
+    mem->pin_layers = std::strtoll(pin.c_str(), nullptr, 10);
+  }
+  const std::string kvw = get_opt(args, "--kv-window");
+  if (!kvw.empty()) {
+    mem->kv_window = std::strtoll(kvw.c_str(), nullptr, 10);
+  }
+  const std::string kvs = get_opt(args, "--kv-sink");
+  if (!kvs.empty()) {
+    mem->kv_sink = std::strtoll(kvs.c_str(), nullptr, 10);
+  }
+  return true;
 }
 
 std::string json_escape(const std::string& s) {
@@ -338,7 +379,7 @@ Error load_generator(const std::string& model_path,
   runtime::SessionOptions opts;
   opts.validate = true;
   opts.weight_init = runtime::WeightInit::None;
-  opts.backend_name = backend.empty() ? "cpu" : backend;
+  opts.backend_name = backends::select_runtime_backend(backend.empty() ? "auto" : backend);
   opts.max_context = max_context;
   if (mem) {
     runtime::apply_memory_preset(*mem, &opts);
@@ -476,7 +517,7 @@ int cmd_generate(const std::vector<std::string>& args) {
   std::string prompt = get_opt(args, "--prompt");
   const std::string prompt_file = get_opt(args, "--prompt-file");
   const std::string system = get_opt(args, "--system");
-  const std::string backend = get_opt(args, "--backend", "cpu");
+  const std::string backend = get_opt(args, "--backend", "auto");
   const std::int64_t max_new =
       std::strtoll(get_opt(args, "--max-new-tokens", "64").c_str(), nullptr, 10);
   const std::int64_t max_ctx =
@@ -488,29 +529,8 @@ int cmd_generate(const std::vector<std::string>& args) {
   const bool stream = has_flag(args, "--stream");
 
   runtime::MemoryPresetConfig mem{};
-  {
-    const std::string preset_name = get_opt(args, "--preset");
-    const std::uint64_t ram_gb =
-        static_cast<std::uint64_t>(std::strtoull(get_opt(args, "--ram-gb", "0").c_str(), nullptr, 10));
-    runtime::MemoryPreset preset = runtime::MemoryPreset::None;
-    if (!preset_name.empty()) {
-      if (!runtime::parse_memory_preset(preset_name, &preset)) {
-        std::cerr << "unknown --preset (use laptop|desktop|server)\n";
-        return 1;
-      }
-    }
-    Error perr = runtime::resolve_memory_preset(preset, ram_gb, &mem);
-    if (!perr.ok()) {
-      std::cerr << perr.to_string() << '\n';
-      return 1;
-    }
-    if (has_flag(args, "--stream-weights")) {
-      mem.enable_streaming = true;
-    }
-    const std::string pin = get_opt(args, "--pin-layers");
-    if (!pin.empty()) {
-      mem.pin_layers = std::strtoll(pin.c_str(), nullptr, 10);
-    }
+  if (!parse_memory_args(args, &mem)) {
+    return 1;
   }
 
   if (!prompt_file.empty()) {
@@ -616,10 +636,15 @@ int cmd_chat(const std::vector<std::string>& args) {
   const bool demo = has_flag(args, "--demo");
   std::string model = get_opt(args, "--model");
   std::string tokenizer_gguf = get_opt(args, "--tokenizer-gguf");
-  const std::string backend = get_opt(args, "--backend", "cpu");
+  const std::string backend =
+      backends::select_runtime_backend(get_opt(args, "--backend", "auto"));
   const std::int64_t max_ctx =
       std::strtoll(get_opt(args, "--max-context", "0").c_str(), nullptr, 10);
   const auto default_stops = get_opt_i64_all(args, "--stop-token-id");
+  runtime::MemoryPresetConfig mem{};
+  if (!parse_memory_args(args, &mem)) {
+    return 1;
+  }
 
   if (demo) {
     Error err = runtime::materialize_tiny_gguf_demo(&model);
@@ -642,7 +667,7 @@ int cmd_chat(const std::vector<std::string>& args) {
   std::cout.flush();
 
   LoadedGen gen;
-  Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo);
+  Error err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo, &mem);
   if (!err.ok()) {
     std::cout << "{\"event\":\"error\",\"error\":\"" << json_escape(err.to_string()) << "\"}\n";
     return 1;
@@ -689,7 +714,7 @@ int cmd_chat(const std::vector<std::string>& args) {
     }
     if (cmd == "reset") {
       // Reload session to clear KV / planner state.
-      err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo);
+      err = load_generator(model, tokenizer_gguf, backend, max_ctx, &gen, demo, &mem);
       if (!err.ok()) {
         std::cout << "{\"event\":\"error\",\"id\":\"" << json_escape(id)
                   << "\",\"error\":\"" << json_escape(err.to_string()) << "\"}\n";

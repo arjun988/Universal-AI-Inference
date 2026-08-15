@@ -1,8 +1,25 @@
 # Hugging Face support
 
-First-class **directory** load for decoder-only LLMs: `config.json` + tokenizer files + `*.safetensors` (single file or Hub shards).
+First-class **directory** load for **decoder-only** LLMs: `config.json` + tokenizer files + `*.safetensors` (single file or Hub shards).
 
 Related: [gguf_support.md](gguf_support.md) · [upgrade.md](../upgrade.md)
+
+## Laptop / CPU memory dial (kimi-style)
+
+`uaii generate` and `uaii chat` default to **`--preset laptop`**:
+
+| Preset | Resident target | Pin | Expert LRU | KV window | Streaming |
+|---|---|---|---|---|---|
+| `laptop` (default) | ~8 GiB | first 2 layers + embed/lm_head/norm | 1 GiB | 2048 tokens (+ 4 sink) | on when weights exceed budget |
+| `desktop` | ~32 GiB | 16 layers | 4 GiB | 4096 | on under pressure |
+| `server` | ~128 GiB | dense if it fits | 32 GiB | 8192 | on under pressure |
+| `none` | unlimited | — | — | grow with `--max-context` | off |
+
+Weights stay on disk (`file#tensor` refs). The session **pins the trunk** (embeddings, final norm, lm_head, first N layers) and **pages the rest** through a double buffer. Routed MoE expert tensors are **never fully pinned**; an LRU keeps recently used experts in RAM. KV is a **sliding window** (default 2048 on laptop, plus 4 attention-sink tokens) so long chats cannot OOM. GGUF Mixtral/Qwen banks are split per expert (`#e=N`) and only the **top-k** experts of that token are staged — the kimi-k3-in-c residency rule. Peak RSS is reported on generate.
+
+This is the same idea as kimi-k3-in-c: **storage is a scheduler resource**. A 30B+ decoder and **500B-class MoE** (page top-k experts, bounded KV) can run on an 8 GB laptop; it will be **slow** (disk + CPU) rather than OOM. Token latency is dominated by paging, not by “the model is small so it should be instant.” Override KV with `--kv-window`. Dense checkpoints still stream layer tensors; a single un-sliced FFN bank that is larger than RAM is the remaining fail case (`--preset none` if everything already fits).
+
+Disable with `--preset none` if the whole checkpoint already fits in RAM and you want the fastest load.
 
 ## Directory layout
 
@@ -10,116 +27,50 @@ A model directory is accepted when it contains `config.json` (see `HfLoader::acc
 
 | File / pattern | Role |
 |---|---|
-| `config.json` | **Required.** Strict architecture + dim fields (fail closed). |
+| `config.json` | **Required.** Architecture + dim fields (fail closed). |
 | `*.safetensors` | Weights. Single `model.safetensors` or shards. |
-| `model.safetensors.index.json` | Optional Hub shard map (`weight_map`: tensor → shard filename). Any `*.safetensors.index.json` is also accepted. |
-| `tokenizer.json` / `tokenizer.model` / related | Optional for tokenize; loader does not require them to build the IR graph. |
-| `tokenizer_config.json` | Optional; `chat_template` string is read when present. |
-| `generation_config.json` | Ignored by the loader today. |
+| `model.safetensors.index.json` | Optional Hub shard map. Any `*.safetensors.index.json` is also accepted. |
+| `tokenizer.json` / `tokenizer.model` | Optional for tokenize. |
+| `tokenizer_config.json` | Optional; `chat_template` when present. |
 
-Without an index file, UAII scans all `*.safetensors` in the directory and builds a tensor → shard map from headers.
+## Architectures
 
-Expected tensor naming is **Llama-style**:
+Any Hub card whose `architectures[0]` is a **decoder-only** class:
 
-- `model.embed_tokens.weight` (or `embed_tokens.weight`)
-- `model.layers.{i}.self_attn.{q,k,v,o}_proj.weight`
-- `model.layers.{i}.input_layernorm.weight` / `post_attention_layernorm.weight`
-- `model.layers.{i}.mlp.{gate,up,down}_proj.weight`
-- `model.norm.weight`
-- `lm_head.weight` **or** tied embeddings (reuse embed)
+- suffix `ForCausalLM` or `LMHeadModel` (Llama, Mistral, Mixtral, Qwen, Gemma, Phi, GPT-2, GPT-NeoX, Falcon, Olmo, Granite, …)
+- **Denied:** vision / audio / encoder-decoder / T5 / BERT / Whisper / Mamba / RWKV / LLaVA-style towers
 
-## Allowlisted architectures
+Unknown tensor **layouts** still fail closed with a clear error (not a silent Identity graph).
 
-From `include/uaii/loaders/hf.hpp` / `libs/uaii-loaders/src/hf.cpp` (`kSupportedArchs` / `hf_architecture_supported`):
+Layout is **detected from weight names**, not a hard allowlist of class strings:
 
-| Architecture |
-|---|
-| `LlamaForCausalLM` |
-| `MistralForCausalLM` |
-| `Qwen2ForCausalLM` |
-| `Qwen3ForCausalLM` |
-| `GemmaForCausalLM` |
-| `Gemma2ForCausalLM` |
-| `Gemma3ForCausalLM` |
-| `Phi3ForCausalLM` |
-| `PhiForCausalLM` |
-| `InternLM2ForCausalLM` |
-| `InternLMForCausalLM` |
-| `StableLmForCausalLM` |
-| `CohereForCausalLM` |
-| `OlmoForCausalLM` |
-| `Olmo2ForCausalLM` |
-| `GraniteForCausalLM` |
-| `ExaoneForCausalLM` |
-
-Unknown `architectures[0]` → `NotImplemented` with a clear error (no silent Identity graph).
-
-## Required `config.json` fields + aliases
-
-Critical fields **fail closed** (missing / non-positive → `InvalidArgument`).
-
-| Canonical field | Accepted aliases |
+| Family | Tensor hints |
 |---|---|
-| `architectures[0]` | (required array; first string used) |
-| `hidden_size` | `n_embd`, `d_model` |
-| `num_hidden_layers` | `n_layer`, `n_layers` |
-| `num_attention_heads` | `n_head` |
-| `intermediate_size` | `n_inner`, `ffn_dim` |
-| `vocab_size` | — |
-| `max_position_embeddings` | `n_positions`, `max_sequence_length` |
-| `rms_norm_eps` | `rms_norm_epsilon`, `layer_norm_eps`, `layer_norm_epsilon` |
+| Llama / Mistral / Qwen / Gemma / Phi | `model.layers.*.self_attn.{q,k,v,o}_proj` + `mlp.{gate,up,down}_proj` |
+| Fused QKV | `qkv_proj` / `W_pack` / `attention.query_key_value` (sliced) |
+| GPT-2 | `transformer.h.*.attn.c_attn` (Conv1D) + GELU MLP + LayerNorm (no RoPE) |
+| Mixtral / Qwen2-MoE | `block_sparse_moe` or `mlp.experts.*` — per-expert weights, streamed via expert LRU |
 
-Optional / derived:
+## Required `config.json` fields
 
-| Field | Behavior |
-|---|---|
-| `model_type` | Stored in graph metadata when present. |
-| `num_key_value_heads` | Defaults to `num_attention_heads` (MHA) when omitted. |
-| `rope_theta` | Defaults to `10000` when omitted. |
-| `head_dim` | Defaults to `hidden_size / num_attention_heads`. |
-| `tie_word_embeddings` | Bool; if true or `lm_head` missing, reuse embed weights. |
+Critical dims fail closed. Aliases: `n_embd`, `n_layer`, `n_head`, `n_inner`, `n_positions`, `layer_norm_epsilon`, `rotary_emb_base`. GPT-2-style configs may omit `intermediate_size` (defaults to `4 * hidden`).
 
-**Rejected** (fail closed): MoE keys (`num_local_experts`, `num_experts`, `moe_intermediate_size`); MLA keys (`kv_lora_rank`, `q_lora_rank`) — message points to **DeepSeek GGUF + UAII MLA expand path**.
+**MoE** keys (`num_local_experts`, `num_experts_per_tok`) are **accepted**. **HF DeepSeek MLA** (`q_a_proj` / `kv_a_proj_with_mqa`) still fails closed — use **DeepSeek GGUF** (expand-then-attend).
 
-RoPE mode is chosen from architecture name: NeoX-style (`mode=2`) for Qwen / Gemma / Phi / Olmo / StableLM families; interleaved (`mode=0`) otherwise (e.g. Llama / Mistral).
-
-## What works
-
-- **RoPE** on Q/K (theta + head_dim + mode), same class of graph as GGUF
-- **GQA** via `num_key_value_heads` → Attention `kv_heads`
-- **Tied embeddings** when `lm_head` is absent or `tie_word_embeddings`
-- Dense **SwiGLU** MLP (`gate` / `up` / `down`)
-- **Sharded** Hub repos via index JSON
-- CLI: `uaii generate --model ./hf-dir`, `uaii convert ./hf-dir`, `uaii pull <org/model>`
-
-## What does **not** work (yet)
+## What is not decoder HF yet
 
 | Gap | Notes |
 |---|---|
-| **MoE HF** | Rejected when expert config keys are present; use GGUF MoE `ffn_*_exps` instead |
-| **MLA / DeepSeek HF** | `kv_lora_rank` / `q_lora_rank` fail closed — use DeepSeek GGUF MLA expand path |
-| **GPT-2 layouts** | `transformer.h.*` not mapped |
-| **Vision / multimodal** | Out of scope for this loader |
-| **IQ\* via HF** | HF path is F32 safetensors today; IQ\* remains a GGUF gap |
-| Fused QKV / `W_pack`, GPT-NeoX alternate names, encoder-decoder | Not auto-mapped |
+| HF DeepSeek MLA | Use GGUF MLA path |
+| Learned GPT-2 `wpe` | Attention runs; absolute position table is not added |
+| Vision / audio / encoder-decoder / SSM / RWKV | Out of scope (plugin scaffolds) |
+| IQ* via HF | HF path is F16/F32 safetensors; GGUF carries packed quants |
 
-## CLI examples
+## CLI
 
 ```bash
-# Download a Hub repo into a local cache/dir
-uaii pull hf-internal-testing/tiny-random-LlamaForCausalLM
-uaii pull Qwen/Qwen2.5-0.5B-Instruct --outdir ./models/qwen
-
-# Generate from an HF directory (memory dial)
-uaii generate --model ./models/qwen --preset laptop -p "Hello" -n 32
-
-# Convert HF directory → UAII IR JSON (+ weight refs)
-uaii convert ./models/qwen -o qwen.uaii.json
+uaii pull org/model --outdir ./models/hf/org__model
+uaii generate --model ./models/hf/org__model --prompt "Hello" --json
+# storage-first is the default (laptop). Override:
+uaii generate --model ./models/hf/org__model --preset desktop --ram-gb 24 -p "Hello"
 ```
-
-## Fixtures
-
-Tiny Llama-shaped config (weights produced by unit tests):  
-[`tests/fixtures/hf/tiny_llama/`](../tests/fixtures/hf/tiny_llama/).
-
-Env: `UAII_MAX_LAYERS` caps imported layers (same idea as GGUF).

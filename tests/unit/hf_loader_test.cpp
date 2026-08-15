@@ -83,6 +83,22 @@ void test_parse_config() {
 
 void test_reject_unknown_arch() {
   const char* json = R"({
+    "architectures": ["BertModel"],
+    "hidden_size": 32,
+    "num_hidden_layers": 1,
+    "num_attention_heads": 4,
+    "intermediate_size": 64,
+    "vocab_size": 128,
+    "max_position_embeddings": 128,
+    "rms_norm_eps": 1e-5
+  })";
+  uaii::loaders::HfConfig cfg;
+  const uaii::Error err = uaii::loaders::hf_parse_config_json(json, &cfg);
+  expect(!err.ok(), "reject encoder BertModel");
+}
+
+void test_accept_generic_causal() {
+  const char* json = R"({
     "architectures": ["TotallyFakeForCausalLM"],
     "hidden_size": 32,
     "num_hidden_layers": 1,
@@ -94,12 +110,12 @@ void test_reject_unknown_arch() {
   })";
   uaii::loaders::HfConfig cfg;
   const uaii::Error err = uaii::loaders::hf_parse_config_json(json, &cfg);
-  expect(!err.ok(), "reject unknown architecture");
+  expect(err.ok(), "accept generic *ForCausalLM");
 }
 
-void test_reject_moe() {
+void test_moe_config_ok() {
   const char* json = R"({
-    "architectures": ["LlamaForCausalLM"],
+    "architectures": ["MixtralForCausalLM"],
     "hidden_size": 32,
     "num_hidden_layers": 1,
     "num_attention_heads": 4,
@@ -107,17 +123,22 @@ void test_reject_moe() {
     "vocab_size": 128,
     "max_position_embeddings": 128,
     "rms_norm_eps": 1e-5,
-    "num_local_experts": 8
+    "num_local_experts": 4,
+    "num_experts_per_tok": 2
   })";
   uaii::loaders::HfConfig cfg;
   const uaii::Error err = uaii::loaders::hf_parse_config_json(json, &cfg);
-  expect(!err.ok(), "reject MoE config");
+  expect(err.ok(), "Mixtral config parses");
+  expect(cfg.num_experts == 4, "num_experts");
+  expect(cfg.num_experts_per_tok == 2, "top_k");
 }
 
 void test_architecture_supported() {
   expect(uaii::loaders::hf_architecture_supported("LlamaForCausalLM"), "llama supported");
   expect(uaii::loaders::hf_architecture_supported("Qwen2ForCausalLM"), "qwen2 supported");
   expect(uaii::loaders::hf_architecture_supported("Gemma2ForCausalLM"), "gemma2 supported");
+  expect(uaii::loaders::hf_architecture_supported("GPT2LMHeadModel"), "gpt2 supported");
+  expect(uaii::loaders::hf_architecture_supported("MixtralForCausalLM"), "mixtral supported");
   expect(!uaii::loaders::hf_architecture_supported("BertModel"), "bert unsupported");
   expect(!uaii::loaders::hf_architecture_supported(""), "empty unsupported");
 }
@@ -202,14 +223,76 @@ void test_hf_loader_roundtrip() {
   fs::remove_all(dir, ec);
 }
 
+void test_hf_gpt2_layout() {
+  const fs::path dir = fs::temp_directory_path() / "uaii_hf_gpt2_test_tiny";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir, ec);
+
+  {
+    std::ofstream cfg(dir / "config.json");
+    cfg << R"({
+  "architectures": ["GPT2LMHeadModel"],
+  "model_type": "gpt2",
+  "n_embd": 32,
+  "n_layer": 1,
+  "n_head": 4,
+  "vocab_size": 64,
+  "n_positions": 64,
+  "layer_norm_epsilon": 1e-5,
+  "activation_function": "gelu_new"
+})";
+  }
+
+  constexpr std::int64_t hidden = 32;
+  constexpr std::int64_t vocab = 64;
+  std::unordered_map<std::string, std::pair<uaii::Shape, std::vector<float>>> tensors;
+  put_tensor(&tensors, "transformer.wte.weight", {vocab, hidden}, 1.f);
+  put_tensor(&tensors, "transformer.ln_f.weight", {hidden}, 2.f);
+  put_tensor(&tensors, "transformer.ln_f.bias", {hidden}, 2.5f);
+  put_tensor(&tensors, "transformer.h.0.ln_1.weight", {hidden}, 3.f);
+  put_tensor(&tensors, "transformer.h.0.ln_1.bias", {hidden}, 3.5f);
+  put_tensor(&tensors, "transformer.h.0.attn.c_attn.weight", {hidden, 3 * hidden}, 4.f);
+  put_tensor(&tensors, "transformer.h.0.attn.c_attn.bias", {3 * hidden}, 4.5f);
+  put_tensor(&tensors, "transformer.h.0.attn.c_proj.weight", {hidden, hidden}, 5.f);
+  put_tensor(&tensors, "transformer.h.0.ln_2.weight", {hidden}, 6.f);
+  put_tensor(&tensors, "transformer.h.0.ln_2.bias", {hidden}, 6.5f);
+  put_tensor(&tensors, "transformer.h.0.mlp.c_fc.weight", {hidden, hidden * 4}, 7.f);
+  put_tensor(&tensors, "transformer.h.0.mlp.c_proj.weight", {hidden * 4, hidden}, 8.f);
+
+  const uaii::Error werr =
+      uaii::loaders::safetensors_write_f32((dir / "model.safetensors").string(), tensors, {});
+  expect(werr.ok(), "gpt2 safetensors write");
+  uaii::loaders::HfLoader loader;
+  uaii::ir::Graph graph;
+  const uaii::Error lerr = loader.load(dir.string(), &graph);
+  expect(lerr.ok(), "HfLoader GPT-2 layout");
+  if (!lerr.ok()) {
+    std::cerr << "  gpt2 load: " << lerr.to_string() << '\n';
+  } else {
+    bool slice = false, gelu = false, ln = false;
+    for (const auto& n : graph.nodes) {
+      if (n.op_name == "Slice") slice = true;
+      if (n.op_name == "Gelu") gelu = true;
+      if (n.op_name == "LayerNorm") ln = true;
+    }
+    expect(slice, "GPT-2 fused QKV slices");
+    expect(gelu, "GPT-2 GELU mlp");
+    expect(ln, "GPT-2 LayerNorm");
+  }
+  fs::remove_all(dir, ec);
+}
+
 }  // namespace
 
 int main() {
   test_parse_config();
   test_reject_unknown_arch();
-  test_reject_moe();
+  test_accept_generic_causal();
+  test_moe_config_ok();
   test_architecture_supported();
   test_hf_loader_roundtrip();
+  test_hf_gpt2_layout();
 
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";

@@ -46,7 +46,8 @@ struct SessionOptions {
   std::string weights_sandbox;
   bool validate = true;
   bool allow_unknown_ops = false;
-  /// Backend name: cpu, cuda, metal, vulkan, webgpu, rocm.
+  /// Backend: cpu, cuda, metal, vulkan, webgpu, rocm. CLI/dashboard pass "auto"
+  /// (resolved in Session::create). Library default stays "cpu" for ABI tests.
   std::string backend_name = "cpu";
   bool prefer_native = true;
   bool force_host_fallback = false;
@@ -65,7 +66,13 @@ struct SessionOptions {
   /// Keep GGUF block-quant weights packed for in-memory quant GEMM when true.
   bool keep_quantized_weights = true;
   /// Max context length for generate / KV (0 = from graph metadata or unlimited).
+  /// With kv_window > 0 this is a soft generation cap, not a RAM allocation size.
   std::int64_t max_context = 0;
+  /// Resident KV window in tokens (0 = allocate full max_context / prompt+gen).
+  /// Laptop presets set 2048 so long chats cannot grow KV without bound.
+  std::int64_t kv_window = 0;
+  /// StreamingLLM-style attention sink: keep first N KV slots when sliding.
+  std::int64_t kv_sink = 4;
   /// Pin first N transformer layers resident when streaming (0 = stream all under budget).
   std::int64_t pin_layers = 0;
   /// MoE expert LRU budget in bytes (0 = unused / auto later).

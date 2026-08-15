@@ -126,6 +126,7 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
     }
     print_kv(b.name.c_str(), oss.str());
   }
+  print_kv("recommended", backends::select_runtime_backend("auto"));
   {
     const auto ops = plugins::OperatorHostRegistry::instance().names();
     print_kv("plugin_ops_registered", ops.empty() ? "(none)" : std::to_string(ops.size()));

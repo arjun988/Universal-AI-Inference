@@ -29,7 +29,7 @@ export const metadata: Metadata = {
     template: "%s · UAII",
   },
   description:
-    "Open-source inference runtime: load models into UAII IR and run on CPU or GPU through one session API, CLI, C ABI, and Python SDK.",
+    "Open-source inference runtime: Hugging Face decoder-only and GGUF transformers on CPU, auto GPU when native, laptop storage-first (stream weights, sliding KV, MoE paging).",
 };
 
 const themeBoot = `(function(){try{var k='uaii-theme';var t=localStorage.getItem(k);if(t!=='dark'&&t!=='light'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;

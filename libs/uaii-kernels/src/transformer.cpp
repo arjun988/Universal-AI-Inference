@@ -9,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace uaii {
 namespace kernels {
@@ -181,7 +182,7 @@ Error rope_f32(const TensorView& in,
 
   // Default position: KV cache length (seq=1 decode) or row index.
   const std::int64_t base_pos =
-      (active_kv_cache() != nullptr) ? active_kv_cache()->past_len() : 0;
+      (active_kv_cache() != nullptr) ? active_kv_cache()->rope_pos() : 0;
 
   for (std::size_t r = 0; r < rows; ++r) {
     float pos = static_cast<float>(base_pos + static_cast<std::int64_t>(r));
@@ -687,6 +688,107 @@ Error moe_experts_swiglu_f32(const TensorView& x,
                  De[static_cast<std::size_t>(o * I + i)];
         }
         expert_out[static_cast<std::size_t>(o)] = sum;
+        Y[static_cast<std::size_t>(b * D + o)] += w * sum;
+      }
+    }
+  }
+  return Error::success();
+}
+
+Error moe_experts_swiglu_listed_f32(const TensorView& x,
+                                    const TensorView& probs,
+                                    const TensorView* expert_triples,
+                                    int num_experts,
+                                    int top_k,
+                                    TensorView* out) {
+  if (out == nullptr || expert_triples == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "moe listed null");
+  }
+  if (x.rank != 2 || out->rank != 2 || probs.rank != 2 || num_experts <= 0) {
+    return Error::make(ErrorCode::InvalidArgument, "moe listed rank");
+  }
+  const std::int64_t B = x.dim(0);
+  const std::int64_t D = x.dim(1);
+  const std::int64_t E = num_experts;
+  if (probs.dim(0) != B || probs.dim(1) != E || out->dim(0) != B || out->dim(1) != D) {
+    return Error::make(ErrorCode::InvalidArgument, "moe listed shape mismatch");
+  }
+  const TensorView& g0 = expert_triples[0];
+  std::int64_t I = 0;
+  for (int e = 0; e < static_cast<int>(E); ++e) {
+    const TensorView& Ge = expert_triples[e * 3 + 0];
+    if (Ge.data != nullptr && Ge.rank == 2) {
+      I = Ge.dim(0);
+      break;
+    }
+  }
+  if (I <= 0 && g0.rank == 2) I = g0.dim(0);
+  if (I <= 0) {
+    return Error::make(ErrorCode::InvalidArgument, "moe listed expert width unknown");
+  }
+  int k = top_k > 0 ? top_k : 1;
+  if (k > static_cast<int>(E)) k = static_cast<int>(E);
+
+  for (int e = 0; e < static_cast<int>(E); ++e) {
+    const TensorView& Ge = expert_triples[e * 3 + 0];
+    const TensorView& Ue = expert_triples[e * 3 + 1];
+    const TensorView& De = expert_triples[e * 3 + 2];
+    if (Ge.data == nullptr && Ue.data == nullptr && De.data == nullptr) continue;
+    if (Ge.rank != 2 || Ue.rank != 2 || De.rank != 2 || Ge.data == nullptr ||
+        Ue.data == nullptr || De.data == nullptr || Ge.dim(0) != I || Ge.dim(1) != D ||
+        Ue.dim(0) != I || Ue.dim(1) != D || De.dim(0) != D || De.dim(1) != I) {
+      return Error::make(ErrorCode::InvalidArgument,
+                         "moe listed expert shape expected gate/up[I,D] down[D,I]");
+    }
+  }
+
+  const float* X = x.f32();
+  const float* P = probs.f32();
+  float* Y = out->f32();
+  std::vector<float> hid(static_cast<std::size_t>(I));
+  std::vector<std::pair<float, int>> ranked(static_cast<std::size_t>(E));
+
+  for (std::int64_t b = 0; b < B; ++b) {
+    for (std::int64_t e = 0; e < E; ++e) {
+      ranked[static_cast<std::size_t>(e)] = {
+          P[static_cast<std::size_t>(b * E + e)], static_cast<int>(e)};
+    }
+    std::partial_sort(ranked.begin(), ranked.begin() + k, ranked.end(),
+                      [](const auto& a, const auto& b2) { return a.first > b2.first; });
+    float mass = 0.0f;
+    for (int t = 0; t < k; ++t) mass += ranked[static_cast<std::size_t>(t)].first;
+    if (!(mass > 0.0f)) mass = 1.0f;
+    for (std::int64_t o = 0; o < D; ++o) Y[static_cast<std::size_t>(b * D + o)] = 0.0f;
+
+    const float* xb = X + static_cast<std::size_t>(b * D);
+    for (int t = 0; t < k; ++t) {
+      const int e = ranked[static_cast<std::size_t>(t)].second;
+      const float w = ranked[static_cast<std::size_t>(t)].first / mass;
+      if (expert_triples[e * 3 + 0].data == nullptr ||
+          expert_triples[e * 3 + 1].data == nullptr ||
+          expert_triples[e * 3 + 2].data == nullptr) {
+        return Error::make(ErrorCode::NotFound,
+                           "MoE expert " + std::to_string(e) + " was not paged in");
+      }
+      const float* Ge = expert_triples[e * 3 + 0].f32();
+      const float* Ue = expert_triples[e * 3 + 1].f32();
+      const float* De = expert_triples[e * 3 + 2].f32();
+      for (std::int64_t i = 0; i < I; ++i) {
+        float gsum = 0.0f;
+        float usum = 0.0f;
+        for (std::int64_t d = 0; d < D; ++d) {
+          const float xv = xb[static_cast<std::size_t>(d)];
+          gsum += xv * Ge[static_cast<std::size_t>(i * D + d)];
+          usum += xv * Ue[static_cast<std::size_t>(i * D + d)];
+        }
+        const float sig = 1.0f / (1.0f + std::exp(-gsum));
+        hid[static_cast<std::size_t>(i)] = (gsum * sig) * usum;
+      }
+      for (std::int64_t o = 0; o < D; ++o) {
+        float sum = 0.0f;
+        for (std::int64_t i = 0; i < I; ++i) {
+          sum += hid[static_cast<std::size_t>(i)] * De[static_cast<std::size_t>(o * I + i)];
+        }
         Y[static_cast<std::size_t>(b * D + o)] += w * sum;
       }
     }

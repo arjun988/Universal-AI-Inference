@@ -28,6 +28,9 @@ struct HfConfig {
   float rope_theta = 0.f;
   int rope_mode = 0;  // 0=interleaved, 2=NeoX
   bool tie_word_embeddings = false;
+  std::int64_t num_experts = 0;
+  std::int64_t num_experts_per_tok = 0;
+  std::string hidden_act;  // silu / gelu / ...
   std::string chat_template;  // optional from tokenizer_config.json
 };
 

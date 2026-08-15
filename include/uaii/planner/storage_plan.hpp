@@ -17,8 +17,10 @@ struct StoragePlacement {
   std::string name;
   StorageTier tier = StorageTier::Ram;
   bool stream = false;
+  /// Routed MoE expert weight — never pin; LRU-capped at expert_cache_bytes.
+  bool expert = false;
   std::uint64_t bytes = 0;
-  std::string uri;  // weight_ref path when streamed
+  std::string uri;  // weight_ref (file#tensor) when streamed
 };
 
 struct StreamingWindow {
@@ -33,6 +35,8 @@ struct StoragePlan {
   std::uint64_t ram_budget_bytes = 0;
   std::uint64_t total_weight_bytes = 0;
   std::uint64_t staging_bytes = 0;  // max single streamed weight
+  std::uint64_t expert_cache_bytes = 0;
+  std::size_t expert_windows = 0;
   bool streaming_required = false;
   std::string summary;
 };
@@ -43,7 +47,12 @@ struct StoragePlanOptions {
   bool enable_streaming = true;
   /// Keep weights whose name contains "l{i}." or "blk.{i}." for i < pin_layers resident.
   std::int64_t pin_layers = 0;
+  /// Expert LRU budget (bytes). 0 = experts still stream but are not cached across tokens.
+  std::uint64_t expert_cache_bytes = 0;
 };
+
+/// True for Mixtral/Qwen-MoE expert banks and per-expert HF tensors.
+[[nodiscard]] UAII_API bool is_moe_expert_weight_name(const std::string& name) noexcept;
 
 [[nodiscard]] UAII_API Error build_storage_plan(const ir::Graph& graph,
                                                 const StoragePlanOptions& options,
