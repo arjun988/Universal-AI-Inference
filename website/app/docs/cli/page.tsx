@@ -7,23 +7,37 @@ export default function Page() {
     <DocLayout
       title="CLI reference"
       active="/docs/cli/"
-      lede="The uaii binary diagnoses the install, pulls HF models, converts weights, and runs generation."
+      lede="One binary to diagnose the install, pull Hugging Face models, convert weights, and run generation."
     >
       <h2>Global flags</h2>
-      <ul>
-        <li>
-          <code>--config &lt;toml&gt;</code> — load configuration
-        </li>
-        <li>
-          <code>--log-level &lt;level&gt;</code> — trace / debug / info / warn / error
-        </li>
-        <li>
-          <code>--no-color</code> — disable ANSI color
-        </li>
-        <li>
-          <code>--load-plugins</code> — discover and load plugins (doctor)
-        </li>
-      </ul>
+      <dl className="deflist">
+        <div>
+          <dt>
+            <code>--config &lt;toml&gt;</code>
+          </dt>
+          <dd>Load a configuration file</dd>
+        </div>
+        <div>
+          <dt>
+            <code>--log-level &lt;level&gt;</code>
+          </dt>
+          <dd>One of trace, debug, info, warn, or error</dd>
+        </div>
+        <div>
+          <dt>
+            <code>--no-color</code>
+          </dt>
+          <dd>Disable ANSI colour output</dd>
+        </div>
+        <div>
+          <dt>
+            <code>--load-plugins</code>
+          </dt>
+          <dd>
+            Discover and load plugins, used with <code>doctor</code>
+          </dd>
+        </div>
+      </dl>
 
       <h2>Commands</h2>
       <div className="table-wrap">
@@ -40,43 +54,54 @@ export default function Page() {
                 <code>doctor</code>
               </td>
               <td>
-                Modules, GEMM, backends, <code>recommended:</code> auto device
+                Reports loaded modules, the active GEMM provider, backend capabilities, and the{" "}
+                <code>recommended:</code> device
               </td>
             </tr>
             <tr>
               <td>
                 <code>validate</code> / <code>inspect</code> / <code>graph</code>
               </td>
-              <td>IR validation and dumps (<code>text|dot|json|plan</code>)</td>
+              <td>
+                Validate an IR graph and dump it as <code>text</code>, <code>dot</code>,{" "}
+                <code>json</code>, or <code>plan</code>
+              </td>
             </tr>
             <tr>
               <td>
                 <code>pull</code>
               </td>
               <td>
-                Download a Hugging Face repo into a local directory (Hub decoder-only path)
+                Download a Hugging Face repository into a local directory for the decoder-only
+                path
               </td>
             </tr>
             <tr>
               <td>
                 <code>convert</code>
               </td>
-              <td>HF dir / GGUF / Safetensors / ONNX / MLX / PyTorch sidecar → UAII IR</td>
+              <td>
+                Compile a Hugging Face folder, GGUF, Safetensors, ONNX, MLX, or PyTorch sidecar
+                into UAII IR
+              </td>
             </tr>
             <tr>
               <td>
                 <code>tokenize</code>
               </td>
-              <td>Simple / BPE / SentencePiece / GGUF / HF encode & decode</td>
+              <td>
+                Encode and decode with simple, BPE, SentencePiece, GGUF, or Hugging Face
+                tokenizers
+              </td>
             </tr>
             <tr>
               <td>
                 <code>generate</code>
               </td>
               <td>
-                HF CausalLM dirs, GGUF <code>blk.*</code>, or <code>--demo</code>;{" "}
-                <code>--preset laptop</code>, <code>--backend auto</code>,{" "}
-                <code>--kv-window</code>, <code>--json</code> / <code>--stream</code>
+                Generate from a Hugging Face CausalLM folder, a GGUF <code>blk.*</code> model, or{" "}
+                <code>--demo</code>. Accepts <code>--preset</code>, <code>--backend</code>,{" "}
+                <code>--kv-window</code>, <code>--json</code>, and <code>--stream</code>
               </td>
             </tr>
             <tr>
@@ -84,7 +109,8 @@ export default function Page() {
                 <code>chat</code>
               </td>
               <td>
-                Warm JSONL worker (<code>--jsonl</code>) used by the Operator UI
+                Keep a warm session as a JSONL worker (<code>--jsonl</code>), which the operator UI
+                drives
               </td>
             </tr>
             <tr>
@@ -92,48 +118,50 @@ export default function Page() {
                 <code>run</code>
               </td>
               <td>
-                Execute IR or <code>--demo …</code>
+                Execute an IR graph, or a built-in graph with <code>--demo</code>
               </td>
             </tr>
             <tr>
               <td>
                 <code>profile</code> / <code>benchmark</code> / <code>cache</code>
               </td>
-              <td>Chrome-trace, timings, plan cache</td>
+              <td>Chrome-trace capture, operator timings, and plan cache management</td>
             </tr>
             <tr>
               <td>
                 <code>help</code> / <code>version</code>
               </td>
-              <td>Usage and version string</td>
+              <td>Usage text and the version string</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <h2>Generate / chat</h2>
+      <h2>Generate and chat</h2>
       <p>
-        Default device is <code>--backend auto</code>: native GPU if this binary can use it,
-        otherwise CPU. Pass <code>--backend cpu</code> to pin the host. A GPU that exists but
-        was built with <code>UAII_WITH_CUDA=OFF</code> (host-fallback only) does not count —
-        auto stays on CPU.
+        The device defaults to <code>--backend auto</code>, which uses a native GPU when this
+        binary can drive one and CPU otherwise. Pass <code>--backend cpu</code> to pin the host. A
+        physical GPU does not qualify if the binary was configured with{" "}
+        <code>UAII_WITH_CUDA=OFF</code>, since only host math is compiled in; auto stays on CPU in
+        that case.
       </p>
       <p>
-        Default memory dial is <code>--preset laptop</code> (~8 GiB, pin 2 layers, expert LRU,
-        KV window 2048 + 4 sinks). GGUF Mixtral/Qwen packed banks are split per expert; only
-        routed top-k experts are paged. <code>--preset none</code> disables streaming.
+        The memory budget defaults to <code>--preset laptop</code>: roughly 8 GiB, two pinned
+        layers, an expert LRU cache, and a 2048-token KV window with 4 sinks. GGUF Mixtral and
+        Qwen packed banks are split per expert, and only the routed top-k are paged in.{" "}
+        <code>--preset none</code> disables streaming entirely.
       </p>
-      <pre>{`# One-shot (any GGUF with blk.* tensors)
+      <pre>{`# One-shot generation from any GGUF with blk.* tensors
 uaii generate --model path/to/model.gguf \\
   --prompt "Hello" --max-new-tokens 64 --stream
 
-# Built-in tiny model (no download)
+# Built-in tiny model, no download required
 uaii generate --demo --prompt "hi" --max-new-tokens 8 --json
 
-# Longer chats on a laptop: keep sliding KV (default 2048)
+# Longer conversations, with the sliding KV window kept at its default
 uaii generate --model path/to/model.gguf --kv-window 2048 --prompt "Hello"
 
-# Warm worker for dashboard / automation
+# Warm worker for the dashboard or automation
 uaii chat --model path/to/model.gguf --jsonl`}</pre>
 
       <h2>Cheatsheet</h2>

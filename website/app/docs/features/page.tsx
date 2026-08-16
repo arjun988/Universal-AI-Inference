@@ -8,15 +8,16 @@ export default function Page() {
     <DocLayout
       title="Features"
       active="/docs/features/"
-      lede="Modular inference runtime: HF decoder dirs and GGUF blk.* LLMs are the ready product surface; other formats and arches plug in over time."
+      lede="A modular inference runtime. Hugging Face decoder folders and GGUF blk.* transformers are the supported surface today, and other formats and architectures arrive as plugins."
     >
       <h2>What UAII is</h2>
       <p>
-        An <strong>execution platform for AI inference</strong> — not a single-model engine.
-        Loaders, operators, backends, schedulers, and storage providers plug into a common
-        core. Today we recommend <Link href="/docs/huggingface/">Hugging Face decoder-only</Link>{" "}
-        and GGUF transformers. Layout auto-detect covers Llama-style, GPT-2, fused QKV, and
-        Mixtral experts; vision / SSM / HF MLA are still out.
+        An <strong>execution platform for AI inference</strong> rather than a single-model
+        engine. Loaders, operators, backends, schedulers, and storage providers all plug into a
+        common core. The supported paths today are{" "}
+        <Link href="/docs/huggingface/">Hugging Face decoder-only</Link> folders and GGUF
+        transformers. Layout detection covers Llama-style models, GPT-2, fused QKV, and Mixtral
+        experts. Vision, SSM, and HF MLA layouts are not yet mapped.
       </p>
 
       <h2>Model formats</h2>
@@ -34,9 +35,10 @@ export default function Page() {
                 <strong>Hugging Face dir</strong>
               </td>
               <td>
-                First-class for decoder-only <strong>CausalLM</strong> families (layout
-                auto-detect). <code>uaii pull</code>, <code>generate --model ./dir</code>,
-                dashboard Hub pull. Not vision / SSM / HF MLA.
+                Direct support for decoder-only <strong>CausalLM</strong> families with
+                automatic layout detection, through <code>uaii pull</code>,{" "}
+                <code>generate --model ./dir</code>, and dashboard Hub pulls. Vision, SSM, and
+                HF MLA layouts are excluded.
               </td>
             </tr>
             <tr>
@@ -44,10 +46,10 @@ export default function Page() {
                 <strong>GGUF</strong>
               </td>
               <td>
-                Capability-based import for llama.cpp-style <code>blk.*</code> decoder tensors
-                (dense or MoE with per-expert <code>#e=N</code> slices; DeepSeek MLA expand
-                path). Reads <code>{"{arch}.*"}</code> metadata. Common Q/K quants + IQ4_NL;
-                exotic IQ* fail closed.
+                Capability-based import for llama.cpp-style <code>blk.*</code> decoder tensors,
+                dense or MoE with per-expert <code>#e=N</code> slices, including the DeepSeek MLA
+                expand path. Reads <code>{"{arch}.*"}</code> metadata. Common Q and K quants plus
+                IQ4_NL are supported; other IQ variants stop with an error.
               </td>
             </tr>
             <tr>
@@ -55,21 +57,23 @@ export default function Page() {
                 <strong>Safetensors</strong>
               </td>
               <td>
-                Used inside HF dirs; standalone weight graphs also import when layout maps to IR
+                Used inside Hugging Face folders. Standalone weight graphs also import when the
+                layout maps to the IR
               </td>
             </tr>
             <tr>
               <td>
                 <strong>ONNX</strong>
               </td>
-              <td>Import to IR (sidecar JSON or proto when enabled)</td>
+              <td>Imports to the IR from a sidecar JSON file, or from proto when enabled</td>
             </tr>
             <tr>
               <td>
                 <strong>MLX</strong>
               </td>
               <td>
-                <code>config.json</code> + <code>.safetensors</code> (weights + config import)
+                <code>config.json</code> plus <code>.safetensors</code>, importing both weights
+                and configuration
               </td>
             </tr>
             <tr>
@@ -77,7 +81,7 @@ export default function Page() {
                 <strong>PyTorch</strong>
               </td>
               <td>
-                <code>.pt</code> / <code>.pth</code> via exported <code>.onnx</code> or{" "}
+                <code>.pt</code> and <code>.pth</code> through an exported <code>.onnx</code> or{" "}
                 <code>.uaii.json</code> sidecar
               </td>
             </tr>
@@ -91,61 +95,71 @@ export default function Page() {
           In-memory GGUF block quants: <code>Q4_0</code>, <code>Q4_1</code>, <code>Q5_0</code>
           , <code>Q5_1</code>, <code>Q8_0</code>, <code>Q2_K</code>–<code>Q6_K</code>
         </li>
-        <li>Pack/unpack helpers: F16, BF16, INT8, INT4, NF4, MXFP4</li>
+        <li>Pack and unpack helpers for F16, BF16, INT8, INT4, NF4, and MXFP4</li>
         <li>
-          Session policy: <code>compute_dtype</code> (F32 / F16),{" "}
+          Session policy through <code>compute_dtype</code>, either F32 or F16, and{" "}
           <code>keep_quantized_weights</code>
         </li>
         <li>
-          Unsupported / other IQ* GGUF types fail closed — no silent Ones fills (
-          <code>IQ4_NL</code> supported)
+          Unrecognised GGUF quantization types stop with an error and a conversion hint rather
+          than filling weights with placeholder values
         </li>
       </ul>
 
       <h2>LLM runtime</h2>
       <ul>
         <li>
-          Prefill + decode (greedy or temp/top-k/top-p) via <code>Session::generate</code> /{" "}
-          <code>uaii_session_generate</code>
+          Prefill and decode with greedy or temperature, top-k, and top-p sampling, through{" "}
+          <code>Session::generate</code> and <code>uaii_session_generate</code>
         </li>
         <li>
-          CLI: <code>uaii pull</code>, <code>uaii generate</code>, <code>uaii chat --jsonl</code>{" "}
-          (warm session for the dashboard)
-        </li>
-        <li>KV cache with a sliding window (laptop default 2048 + 4 sinks) and peak RSS</li>
-        <li>
-          Memory presets (<code>laptop</code> / <code>desktop</code> / <code>server</code>): pin
-          trunk, stream the rest, top-k MoE expert paging
+          CLI entry points <code>uaii pull</code>, <code>uaii generate</code>, and{" "}
+          <code>uaii chat --jsonl</code>, the warm session the dashboard drives
         </li>
         <li>
-          Tokenizers: HF tokenizer JSON, GGUF <code>tokenizer.ggml.*</code>, BPE /
-          SentencePiece (optional), SimpleTokenizer for demos
+          Sliding-window KV cache, 2048 tokens with 4 attention sinks on the laptop preset, with
+          peak RSS reporting
+        </li>
+        <li>
+          Memory presets <code>laptop</code>, <code>desktop</code>, and <code>server</code>: pin
+          a trunk of layers, stream the remainder, and page only routed MoE experts
+        </li>
+        <li>
+          Tokenizers for Hugging Face tokenizer JSON, GGUF <code>tokenizer.ggml.*</code> metadata,
+          BPE, optional SentencePiece, and a simple vocabulary for demos
         </li>
       </ul>
 
-      <h2>Dashboard</h2>
+      <h2>Operator dashboard</h2>
       <p>
-        Operator UI in <code>dashboard/</code> — local or self-host. HF Hub pull + GGUF/HF
-        chat with streaming, model library, doctor, benches, request queue, Bearer auth on
-        LAN, OpenAI-compatible <code>/v1/chat/completions</code>. See{" "}
-        <Link href="/docs/dashboard/">Dashboard</Link>.
+        The console in <code>dashboard/</code> runs locally or self-hosted. It provides Hub pulls,
+        streaming chat over GGUF and Hugging Face models, a model library, health checks,
+        benchmarks, a request queue, Bearer authentication for non-loopback binds, and an
+        OpenAI-compatible <code>/v1/chat/completions</code> endpoint. See{" "}
+        <Link href="/docs/dashboard/">Operator UI</Link>.
       </p>
 
       <h2>Hardware</h2>
       <p>
-        CPU is always first-class. CLI and dashboard default to <code>--backend auto</code>:
-        native GPU if this binary was built with the vendor SDK <em>and</em> a device is
-        present; otherwise CPU. <code>uaii doctor</code> prints{" "}
-        <code>recommended:</code> plus <code>host_fallback</code>. See{" "}
-        <Link href="/docs/backends/">Backends</Link>.
+        CPU execution is always fully supported. The CLI and dashboard default to{" "}
+        <code>--backend auto</code>, which selects a native GPU only when this binary was built
+        against the vendor SDK <em>and</em> a device is present, and CPU in every other case.{" "}
+        <code>uaii doctor</code> reports the <code>recommended:</code> device alongside any{" "}
+        <code>host_fallback</code> flags. See <Link href="/docs/backends/">Backends</Link>.
       </p>
 
       <h2>Runtime tooling</h2>
       <ul>
-        <li>Graph validator; JSON + binary IR (<code>.uaii.json</code> / <code>.uaii</code>)</li>
-        <li>Planner: fusion, memory reuse, storage plan, disk plan cache</li>
-        <li>Weight streaming; top-k expert I/O; CUDA async H2D overlap when native</li>
-        <li>Chrome-trace profiler, benchmark CLI, plugin operator ABI</li>
+        <li>
+          Graph validator with JSON and binary IR formats, <code>.uaii.json</code> and{" "}
+          <code>.uaii</code>
+        </li>
+        <li>Planner covering fusion, memory reuse, storage plans, and a disk plan cache</li>
+        <li>
+          Weight streaming, top-k expert I/O, and asynchronous CUDA host-to-device overlap when
+          native support is compiled in
+        </li>
+        <li>Chrome-trace profiler, benchmark CLI, and a versioned plugin operator ABI</li>
       </ul>
     </DocLayout>
   );

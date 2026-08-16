@@ -1,5 +1,10 @@
 import Link from "next/link";
-import { GITHUB_REPO_URL } from "@/lib/site";
+import {
+  GITHUB_CONTRIBUTING_URL,
+  GITHUB_ISSUES_URL,
+  GITHUB_NEW_ISSUE_URL,
+  GITHUB_REPO_URL,
+} from "@/lib/site";
 
 export function SiteFooter() {
   return (
@@ -8,7 +13,7 @@ export function SiteFooter() {
         <div>
           <div className="foot-brand">UAII</div>
           <p className="foot-note">
-            Universal AI Inference Runtime — any model to any hardware. MIT licensed.
+            Universal AI Inference Runtime. One IR, any model, any hardware. MIT licensed.
           </p>
           <p className="foot-note" style={{ marginTop: "0.85rem" }}>
             <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
@@ -31,6 +36,19 @@ export function SiteFooter() {
           <Link href="/docs/dashboard/">Dashboard</Link>
           <Link href="/docs/python/">Python SDK</Link>
           <Link href="/docs/c-api/">C API</Link>
+        </div>
+        <div>
+          <h4>Community</h4>
+          <Link href="/docs/contribute/">Contribute</Link>
+          <a href={GITHUB_ISSUES_URL} target="_blank" rel="noopener noreferrer">
+            Issues
+          </a>
+          <a href={GITHUB_NEW_ISSUE_URL} target="_blank" rel="noopener noreferrer">
+            Report a bug
+          </a>
+          <a href={GITHUB_CONTRIBUTING_URL} target="_blank" rel="noopener noreferrer">
+            Contributing guide
+          </a>
           <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
             GitHub
           </a>

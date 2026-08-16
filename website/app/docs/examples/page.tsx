@@ -7,7 +7,7 @@ export default function Page() {
     <DocLayout
       title="Examples"
       active="/docs/examples/"
-      lede="Copy-paste oriented examples for the CLI, IR execution, conversion, tokenization, and profiling."
+      lede="Commands you can copy directly, covering the CLI, IR execution, conversion, tokenization, and profiling."
     >
       <h2>Environment check</h2>
       <pre>{`uaii doctor
@@ -20,12 +20,12 @@ uaii inspect examples/ir/toy_mlp.uaii.json
 uaii graph examples/ir/toy_mlp.uaii.json --format text
 uaii graph examples/ir/toy_mlp.uaii.json --format plan`}</pre>
 
-      <h2>Generate (HF / GGUF)</h2>
-      <pre>{`# Laptop storage-first + auto GPU (CLI defaults)
+      <h2>Generate from Hugging Face or GGUF</h2>
+      <pre>{`# CLI defaults: streamed weights and automatic device selection
 uaii generate --model ./hf-dir --prompt "hi" --preset laptop --backend auto
 uaii generate --model model.gguf --prompt "hi" --kv-window 2048 --stream
 
-# Pin the host
+# Pin the host and disable streaming
 uaii generate --model model.gguf --prompt "hi" --backend cpu --preset none`}</pre>
 
       <h2>Built-in demos</h2>
@@ -46,11 +46,11 @@ uaii run --demo quant --format int8`}</pre>
   --input x=1,2,3,4 \\
   --output y_prob
 
-# Auto-select native GPU if this binary can use it
+# Select a native GPU when this binary can drive one
 uaii run examples/ir/toy_mlp.uaii.json \\
   --backend auto --weight-init ones --input x=1,2,3,4 --output y_prob
 
-# Named GPU with host-fallback (no vendor SDK in this binary)
+# Name a GPU backend and run its math on the host
 uaii run examples/ir/toy_mlp.uaii.json \\
   --backend cuda --force-host-fallback \\
   --weight-init ones --input x=1,2,3,4 --output y_prob`}</pre>
@@ -62,13 +62,13 @@ uaii convert model.safetensors -o model.uaii.json
 uaii convert model.onnx -o model.uaii.json`}</pre>
 
       <h2>Tokenize</h2>
-      <pre>{`# Demo / simple vocab
+      <pre>{`# Simple demo vocabulary
 uaii tokenize encode hello world
 
 # GPT-2 style BPE
 uaii tokenize encode "hello" --bpe vocab.json --merges merges.txt
 
-# SentencePiece (requires UAII_WITH_SENTENCEPIECE)
+# SentencePiece, which requires UAII_WITH_SENTENCEPIECE
 uaii tokenize encode "hello" --sp tokenizer.model
 
 # From GGUF tokenizer metadata
@@ -94,11 +94,11 @@ session.run()
 print(session.get_tensor("y_prob"))
 print(session.profile_summary())`}</pre>
 
-      <h2>C API sketch</h2>
+      <h2>C API</h2>
       <pre>{`uaii_session_options opts;
 uaii_session_options_init(&opts);
 opts.struct_size = sizeof(opts);
-opts.backend = "auto";  /* or "cpu" to pin the host */
+opts.backend = "auto";  /* use "cpu" to pin the host */
 
 uaii_session* s = NULL;
 uaii_session_create("model.uaii.json", &opts, &s);

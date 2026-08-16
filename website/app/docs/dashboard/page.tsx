@@ -8,52 +8,76 @@ export default function Page() {
     <DocLayout
       title="Operator UI"
       active="/docs/dashboard/"
-      lede="Local and self-host operator console over the uaii CLI — not a signed consumer installer. Chat with HF decoder dirs and GGUF blk.* models, Hub pull, auto GPU, laptop paging. Lives in dashboard/."
+      lede="A web console for the uaii CLI, running locally or self-hosted from dashboard/. Chat with Hugging Face decoder folders and GGUF blk.* models, pull from the Hub, and manage device and memory settings."
     >
-      <h2>What you get</h2>
-      <ul>
-        <li>
-          <strong>LLM chat</strong> — real generate via <code>uaii generate</code> / warm{" "}
-          <code>uaii chat --jsonl</code>, streaming, system prompt, max tokens, temperature /
-          top-p / top-k / repetition penalty, Stop; FIFO request queue
-        </li>
-        <li>
-          <strong>Hugging Face</strong> — Hub pull + import folder for decoder-only CausalLM
-          dirs (needs rebuilt <code>uaii</code>). See{" "}
-          <Link href="/docs/huggingface/">Hugging Face</Link>
-        </li>
-        <li>
-          <strong>GGUF</strong> — <code>blk.*</code> dense/MoE transformers (MLA expand path)
-          or the built-in tiny demo model
-        </li>
-        <li>
-          <strong>Models</strong> — upload GGUF, list HF + GGUF, convert, delete
-        </li>
-        <li>
-          <strong>Runtime</strong> — <code>uaii doctor --load-plugins</code>
-        </li>
-        <li>
-          <strong>Benchmarks</strong> — run <code>uaii_bench</code>, table + JSON
-        </li>
-        <li>
-          <strong>Settings</strong> — bind, port, binaries, <strong>backend auto</strong> (GPU if
-          native, else CPU), GEMM, threads, auth token
-        </li>
-        <li>
-          <strong>API</strong> — REST <code>/api/*</code> + OpenAI-style{" "}
-          <code>/v1/models</code> and <code>/v1/chat/completions</code>
-        </li>
-        <li>
-          <strong>Light / dark</strong> UI (black / white / grey)
-        </li>
-      </ul>
+      <h2>What it provides</h2>
+      <dl className="deflist">
+        <div>
+          <dt>Chat</dt>
+          <dd>
+            Generation through <code>uaii generate</code> or a warm{" "}
+            <code>uaii chat --jsonl</code> worker, with streaming output, system prompt, token
+            limit, temperature, top-p, top-k, repetition penalty, cancellation, and a FIFO
+            request queue.
+          </dd>
+        </div>
+        <div>
+          <dt>Hugging Face</dt>
+          <dd>
+            Hub pulls and folder imports for decoder-only CausalLM checkpoints, which require a
+            current <code>uaii</code> build. See{" "}
+            <Link href="/docs/huggingface/">Hugging Face</Link>.
+          </dd>
+        </div>
+        <div>
+          <dt>GGUF</dt>
+          <dd>
+            Dense and MoE <code>blk.*</code> transformers including the MLA expand path, plus a
+            built-in demo model for smoke tests.
+          </dd>
+        </div>
+        <div>
+          <dt>Model library</dt>
+          <dd>Upload GGUF files, list Hugging Face and GGUF models, convert, and delete.</dd>
+        </div>
+        <div>
+          <dt>Runtime health</dt>
+          <dd>
+            Run <code>uaii doctor --load-plugins</code> from the browser.
+          </dd>
+        </div>
+        <div>
+          <dt>Benchmarks</dt>
+          <dd>
+            Run <code>uaii_bench</code> and read the results as a table or raw JSON.
+          </dd>
+        </div>
+        <div>
+          <dt>Settings</dt>
+          <dd>
+            Bind address, port, binary paths, device selection defaulting to{" "}
+            <strong>auto</strong>, GEMM provider, thread count, and auth token.
+          </dd>
+        </div>
+        <div>
+          <dt>API</dt>
+          <dd>
+            A REST surface under <code>/api/*</code> plus OpenAI-compatible{" "}
+            <code>/v1/models</code> and <code>/v1/chat/completions</code>.
+          </dd>
+        </div>
+        <div>
+          <dt>Themes</dt>
+          <dd>Light and dark, following your system preference by default.</dd>
+        </div>
+      </dl>
 
-      <h2>Local (laptop)</h2>
+      <h2>Running locally</h2>
       <p>Build the runtime first, then start the dashboard on loopback:</p>
       <pre>{`# 1) Build UAII
 cmake --build build --target uaii uaii_bench --parallel
 
-# Windows App Control often blocks unsigned .exe — use WSL:
+# Windows App Control frequently blocks unsigned .exe files. Build under WSL:
 #   bash scripts/build_uaii_wsl.sh
 #   bash scripts/test_generate_wsl.sh
 
@@ -63,18 +87,21 @@ npm run install:all
 npm run build && npm start
 # → http://127.0.0.1:8787
 
-# Dev (hot UI)
+# Development, with hot reload
 npm run dev   # UI :5174 · API :8787`}</pre>
       <p>
-        Windows helper: <code>dashboard/scripts/start-local.ps1</code>. Linux/macOS:{" "}
-        <code>dashboard/scripts/start-local.sh</code>.
+        Helper scripts: <code>dashboard/scripts/start-local.ps1</code> on Windows and{" "}
+        <code>dashboard/scripts/start-local.sh</code> on Linux and macOS.
       </p>
 
-      <h2>Self-host (LAN / server)</h2>
-      <p>
-        Bind off localhost requires a token — the process <strong>refuses to start</strong> without
-        one.
-      </p>
+      <h2>Self-hosting on a LAN or server</h2>
+      <div className="callout">
+        <span className="callout-label">Required</span>
+        <p>
+          Binding to any address other than loopback requires a token. The process{" "}
+          <strong>refuses to start</strong> without one.
+        </p>
+      </div>
       <pre>{`export UAII_DASH_TOKEN=$(openssl rand -hex 16)
 export UAII_DASH_BIND=0.0.0.0
 cd dashboard
@@ -87,12 +114,13 @@ export UAII_HOST_BENCH=$PWD/../build/benchmarks/uaii_bench
 cd dashboard
 docker compose up --build`}</pre>
 
-      <h2>How to configure</h2>
+      <h2>Configuration</h2>
       <p>
-        Copy <code>dashboard/uaii-dash.example.json</code> → <code>uaii-dash.json</code>, or use
-        environment variables (env wins). Default <code>&quot;backend&quot;: &quot;auto&quot;</code>
-        . If an older config still has <code>&quot;cpu&quot;</code>, Settings → Auto-detect GPU.
-        Change bind/port in Settings UI, then restart the process.
+        Copy <code>dashboard/uaii-dash.example.json</code> to <code>uaii-dash.json</code>, or set
+        environment variables, which take precedence over the file. The default device is{" "}
+        <code>&quot;backend&quot;: &quot;auto&quot;</code>; an older config pinned to{" "}
+        <code>&quot;cpu&quot;</code> keeps that value until you reset it in Settings. Bind address
+        and port changes take effect after restarting the process.
       </p>
       <div className="table-wrap">
         <table className="data">
@@ -135,7 +163,7 @@ docker compose up --build`}</pre>
                 <code>127.0.0.1</code>
               </td>
               <td>
-                Use <code>0.0.0.0</code> to self-host
+                Set to <code>0.0.0.0</code> to self-host
               </td>
             </tr>
             <tr>
@@ -153,7 +181,7 @@ docker compose up --build`}</pre>
               </td>
               <td>(empty)</td>
               <td>
-                <strong>Required</strong> if bind ≠ loopback
+                <strong>Required</strong> when the bind address is not loopback
               </td>
             </tr>
             <tr>
@@ -168,7 +196,9 @@ docker compose up --build`}</pre>
                 <code>UAII_USE_WSL</code> / <code>UAII_WSL_BIN</code>
               </td>
               <td>auto on Windows</td>
-              <td>Force WSL <code>uaii</code> when App Control blocks .exe</td>
+              <td>
+                Force the WSL <code>uaii</code> binary when Windows App Control blocks the .exe
+              </td>
             </tr>
             <tr>
               <td>
@@ -178,8 +208,8 @@ docker compose up --build`}</pre>
                 <code>auto</code>
               </td>
               <td>
-                Device for chat/run. <code>auto</code> uses GPU if native; pin{" "}
-                <code>cpu</code> / <code>cuda</code> / …
+                Device for chat and run jobs. <code>auto</code> uses a native GPU when available,
+                or pin <code>cpu</code>, <code>cuda</code>, and so on
               </td>
             </tr>
             <tr>
@@ -189,35 +219,43 @@ docker compose up --build`}</pre>
               <td>
                 <code>0</code>
               </td>
-              <td>Session max context for chat workers (sliding KV still applies via CLI laptop preset)</td>
+              <td>
+                Maximum session context for chat workers. The sliding KV window from the CLI
+                preset still applies
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <h2>Typical flows</h2>
-      <ol>
+      <h2>Common workflows</h2>
+      <ol className="steps">
         <li>
-          <strong>Smoke chat</strong> — Chat → Tiny demo / <code>uaii-tiny-demo</code> → Run
-          (streams tokens)
+          <strong>Verify the install</strong>
+          Open Chat, select the <code>uaii-tiny-demo</code> model, and run. Tokens stream
+          immediately with no download.
         </li>
         <li>
-          <strong>Hugging Face</strong> — Models → Pull from Hub (or Import HF folder) → Chat →
-          select the folder → Run (laptop paging + backend auto)
+          <strong>Run a Hugging Face model</strong>
+          Open Models, choose Pull from Hub or Import HF folder, then switch to Chat, select the
+          folder, and run with paging and device selection applied.
         </li>
         <li>
-          <strong>Real GGUF</strong> — Models → Import <code>.gguf</code> → Chat → select model →
-          set max tokens → Run
+          <strong>Run a GGUF model</strong>
+          Open Models, import a <code>.gguf</code> file, then switch to Chat, select it, set a
+          token limit, and run.
         </li>
         <li>
-          <strong>Health</strong> — Runtime → Run doctor
+          <strong>Check runtime health</strong>
+          Open Runtime and run doctor.
         </li>
         <li>
-          <strong>Perf</strong> — Benchmarks → Run microbench
+          <strong>Measure performance</strong>
+          Open Benchmarks and run the microbenchmark suite.
         </li>
         <li>
-          <strong>Team API</strong> — self-host + Bearer token on{" "}
-          <code>/v1/chat/completions</code>
+          <strong>Serve a team</strong>
+          Self-host, then issue a Bearer token for <code>/v1/chat/completions</code>.
         </li>
       </ol>
 
@@ -230,22 +268,24 @@ curl -s http://SERVER:8787/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{"model":"uaii-tiny-demo","messages":[{"role":"user","content":"hi"}]}'
 
-# Or a local file: "uaii-file-my-model.gguf"`}</pre>
+# Reference a local file as "uaii-file-my-model.gguf"`}</pre>
 
       <h2>Related</h2>
       <ul>
         <li>
-          Repo folder <code>dashboard/README.md</code> and PRD{" "}
-          <code>docs/prd-dashboard.md</code>
+          <code>dashboard/README.md</code> and <code>docs/prd-dashboard.md</code> in the
+          repository
         </li>
         <li>
-          <Link href="/docs/cli/">CLI</Link> — <code>generate</code> / <code>chat</code>
+          <Link href="/docs/cli/">CLI</Link> — the <code>generate</code> and <code>chat</code>{" "}
+          commands the console drives
         </li>
         <li>
-          <Link href="/docs/features/">Features</Link> — GGUF multi-arch details
+          <Link href="/docs/features/">Features</Link> — GGUF architecture coverage
         </li>
         <li>
-          <Link href="/docs/configuration/">Configuration</Link> — runtime + dashboard env
+          <Link href="/docs/configuration/">Configuration</Link> — runtime and dashboard
+          environment variables
         </li>
       </ul>
     </DocLayout>

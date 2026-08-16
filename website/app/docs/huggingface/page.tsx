@@ -8,13 +8,14 @@ export default function Page() {
     <DocLayout
       title="Hugging Face"
       active="/docs/huggingface/"
-      lede="Decoder-only Hub folders — layout auto-detect, laptop memory dial, CPU unless a native GPU is present."
+      lede="Run decoder-only Hub folders directly: automatic layout detection, a configurable memory budget, and CPU execution unless a native GPU is present."
     >
-      <h2>Supported now</h2>
+      <h2>What loads</h2>
       <p>
-        A folder with <code>config.json</code> + <code>*.safetensors</code> (± shard index) for
-        decoder-only classes (<code>*ForCausalLM</code>, <code>*LMHeadModel</code>). Tensor
-        names are auto-detected — Llama-style, GPT-2, fused QKV, Mixtral experts.
+        Any folder containing <code>config.json</code> and <code>*.safetensors</code>, with or
+        without a shard index, for decoder-only classes such as <code>*ForCausalLM</code> and{" "}
+        <code>*LMHeadModel</code>. Tensor names are detected automatically across Llama-style
+        layouts, GPT-2, fused QKV, and Mixtral experts.
       </p>
       <div className="chip-row" style={{ marginBottom: "1rem" }}>
         <span className="chip">Llama / Qwen / Gemma</span>
@@ -24,56 +25,61 @@ export default function Page() {
         <span className="chip">backend auto</span>
       </div>
       <p>
-        Generate/chat default to a kimi-style <strong>storage-first</strong> laptop budget:
-        pin embed + first layers, stream the rest, LRU + <strong>top-k-only</strong> paging for
-        MoE experts, sliding KV (2048 tokens + 4 sinks). Big models stay on disk; they are
-        slow, not silent-OOM. Details: repo <code>docs/huggingface_support.md</code>.
+        Generation and chat default to a <strong>storage-first</strong> memory budget sized for a
+        laptop: pin the embeddings and first layers, stream the remainder from disk, page MoE
+        experts through an LRU cache limited to the routed top-k, and slide the KV cache across a
+        2048-token window with 4 attention sinks. Large checkpoints stay on disk and remain
+        runnable at reduced throughput. See <code>docs/huggingface_support.md</code> in the
+        repository for the implementation details.
       </p>
 
-      <h2>What size fits</h2>
+      <h2>Model sizes</h2>
       <div className="table-wrap">
         <table className="data">
           <thead>
             <tr>
               <th>Scale</th>
-              <th>Expectation on ~8 GB</th>
+              <th>Behaviour on roughly 8 GB of RAM</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td>
-                <strong>~0.5B–8B</strong>
+                <strong>0.5B to 8B</strong>
               </td>
-              <td>Comfortable in RAM (still a cold load on first generate)</td>
+              <td>Fits in memory comfortably, with a cold load on the first generate</td>
             </tr>
             <tr>
               <td>
-                <strong>30B+ decoder</strong>
+                <strong>30B and above, dense</strong>
               </td>
-              <td>Designed to run by paging weights; disk + CPU bound, not OOM</td>
+              <td>Runs by paging weights. Bound by disk and CPU rather than capacity</td>
             </tr>
             <tr>
               <td>
-                <strong>~500B-class MoE</strong>
+                <strong>500B-class MoE</strong>
               </td>
               <td>
-                Same path: page routed experts, bound KV. Slow NVMe traffic. Experts still
-                dequant to f32 one-at-a-time (not kimi MXFP4 packed matmul)
+                Same path: page the routed experts and bound the KV cache. NVMe traffic dominates
+                latency, and experts currently dequantize to f32 one at a time rather than
+                running a packed matmul
               </td>
             </tr>
             <tr>
               <td>
-                <strong>Trillion / 1.5 TB</strong>
+                <strong>Trillion-parameter</strong>
               </td>
-              <td>Not a measured RSS claim</td>
+              <td>Not benchmarked, so no resident-memory figure is published</td>
             </tr>
           </tbody>
         </table>
       </div>
       <p>
-        A dense checkpoint whose <em>single</em> FFN tensor exceeds RAM can still fail. MoE is
-        the laptop path. Override with <code>--preset desktop|server|none</code>,{" "}
-        <code>--ram-gb</code>, <code>--kv-window</code>.
+        Paging works at tensor granularity, so a dense checkpoint with a single FFN tensor larger
+        than available RAM can still fail to load. Mixture-of-experts checkpoints are the
+        reliable path on constrained machines. Adjust the budget with{" "}
+        <code>--preset desktop|server|none</code>, <code>--ram-gb</code>, and{" "}
+        <code>--kv-window</code>.
       </p>
 
       <h2>CLI</h2>
@@ -83,26 +89,33 @@ uaii generate --model ./models/hf/org__model --preset none --prompt "Hello"
 uaii generate --model ./models/hf/org__model --kv-window 4096 --prompt "Hello"
 uaii convert ./models/hf/org__model -o model.uaii.json`}</pre>
       <p>
-        Device default is <code>--backend auto</code> (native GPU if this binary can use it,
-        else CPU). Pin with <code>--backend cpu</code>.
+        The device defaults to <code>--backend auto</code>, which uses a native GPU when this
+        binary can drive one and CPU otherwise. Pass <code>--backend cpu</code> to pin the host.
       </p>
 
       <h2>Dashboard</h2>
       <p>
-        Models → <strong>Pull from Hub</strong> or <strong>Import HF folder</strong>, then Chat.
-        Settings → Backend defaults to Auto-detect GPU. Point <code>UAII_BIN</code> at a
-        rebuilt <code>uaii</code>. If an older <code>uaii-dash.json</code> still has{" "}
-        <code>&quot;backend&quot;: &quot;cpu&quot;</code>, switch it back to Auto.
-      </p>
-      <p>
-        See <Link href="/docs/dashboard/">Operator UI</Link>.
+        Open <strong>Models</strong>, choose <strong>Pull from Hub</strong> or{" "}
+        <strong>Import HF folder</strong>, then switch to <strong>Chat</strong>. The backend
+        setting defaults to automatic GPU detection. Point <code>UAII_BIN</code> at a current{" "}
+        <code>uaii</code> build. An older <code>uaii-dash.json</code> pinned to{" "}
+        <code>&quot;backend&quot;: &quot;cpu&quot;</code> keeps that value, so reset it to Auto in
+        Settings. Full guide: <Link href="/docs/dashboard/">Operator UI</Link>.
       </p>
 
-      <h2>Not every Hub model</h2>
+      <h2>Current limitations</h2>
       <ul>
-        <li>Vision / audio / encoder-decoder / SSM / RWKV — later (plugin scaffolds)</li>
-        <li>HF DeepSeek MLA — use DeepSeek GGUF expand path</li>
-        <li>GPT-2 learned <code>wpe</code> table is not applied</li>
+        <li>
+          Vision, audio, encoder-decoder, SSM, and RWKV models are not supported yet. Plugin
+          scaffolds exist for the architectures on the roadmap
+        </li>
+        <li>
+          Hugging Face DeepSeek MLA checkpoints are not mapped. Use the DeepSeek GGUF expand path
+          instead
+        </li>
+        <li>
+          The GPT-2 learned positional embedding table (<code>wpe</code>) is not applied
+        </li>
       </ul>
     </DocLayout>
   );

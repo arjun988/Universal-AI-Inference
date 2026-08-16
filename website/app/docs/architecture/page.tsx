@@ -7,7 +7,7 @@ export default function Page() {
     <DocLayout
       title="Architecture"
       active="/docs/architecture/"
-      lede="Models become UAII IR. The session plans and executes that graph on CPU, or on a native GPU when auto-select finds one."
+      lede="Every model compiles to UAII IR. The session plans that graph, then executes it on CPU or on a native GPU when device selection finds one."
     >
       <h2>Pipeline</h2>
       <div className="pipeline" aria-label="Architecture pipeline">
@@ -25,81 +25,126 @@ export default function Page() {
       </div>
 
       <h2>Modules</h2>
-      <ul>
-        <li>
-          <code>uaii-ir</code> — graph, tensors, operator registry, validator, serialize, plan
-        </li>
-        <li>
-          <code>uaii-runtime</code> — session lifecycle, DeviceScheduler, sliding KV, memory
-          presets
-        </li>
-        <li>
-          <code>uaii-kernels</code> — CPU ops, <code>IGemm</code>, quant GEMM
-        </li>
-        <li>
-          <code>uaii-backends</code> — CPU + optional CUDA / Metal / Vulkan / WebGPU / ROCm
-        </li>
-        <li>
-          <code>uaii-loaders</code> — HF directories, GGUF (per-expert MoE slices), Safetensors,
-          ONNX, MLX, PyTorch
-        </li>
-        <li>
-          <code>uaii-tokenizers</code> — Simple, BPE, SentencePiece, GGUF wiring
-        </li>
-        <li>
-          <code>uaii-planner</code> — fusion, memory/storage plans, disk cache
-        </li>
-        <li>
-          <code>uaii-storage</code> — mmap, streaming weights, expert LRU
-        </li>
-        <li>
-          <code>uaii-capi</code> — stable C ABI for SDKs
-        </li>
-      </ul>
+      <dl className="deflist">
+        <div>
+          <dt>
+            <code>uaii-ir</code>
+          </dt>
+          <dd>
+            Graph and tensor types, operator registry, validator, serialization, and plan
+            representation
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>uaii-runtime</code>
+          </dt>
+          <dd>
+            Session lifecycle, <code>DeviceScheduler</code>, sliding KV cache, and memory presets
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>uaii-kernels</code>
+          </dt>
+          <dd>
+            CPU operators, the <code>IGemm</code> interface, and quantized GEMM
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>uaii-backends</code>
+          </dt>
+          <dd>CPU, plus optional CUDA, Metal, Vulkan, WebGPU, and ROCm</dd>
+        </div>
+        <div>
+          <dt>
+            <code>uaii-loaders</code>
+          </dt>
+          <dd>
+            Hugging Face directories, GGUF including per-expert MoE slices, Safetensors, ONNX,
+            MLX, and PyTorch
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>uaii-tokenizers</code>
+          </dt>
+          <dd>Simple vocabularies, BPE, SentencePiece, and GGUF metadata</dd>
+        </div>
+        <div>
+          <dt>
+            <code>uaii-planner</code>
+          </dt>
+          <dd>Fusion, memory and storage plans, and the disk plan cache</dd>
+        </div>
+        <div>
+          <dt>
+            <code>uaii-storage</code>
+          </dt>
+          <dd>Memory mapping, weight streaming, and the expert LRU cache</dd>
+        </div>
+        <div>
+          <dt>
+            <code>uaii-capi</code>
+          </dt>
+          <dd>The stable C ABI that SDKs build on</dd>
+        </div>
+      </dl>
 
-      <h2>Storage-first (CLI / dashboard)</h2>
+      <h2>Storage-first execution</h2>
       <p>
-        Generate and chat default to a laptop memory dial so the process pages weights instead
-        of mapping a whole checkpoint. That is the product path for 30B+ decoders and ~500B-class
-        MoE on a laptop — slow NVMe I/O, not a silent OOM, and not a proven trillion-parameter
-        RSS claim.
+        The CLI and dashboard apply a memory budget by default, so the process pages weights in
+        rather than mapping an entire checkpoint into RAM. This is how 30B-class dense decoders
+        and 500B-class MoE checkpoints run on a laptop: throughput becomes bound by NVMe
+        bandwidth, and capacity stops being the limit.
       </p>
       <ul>
         <li>
-          Pin embed / lm_head / final norm plus a few trunk layers; stream the rest via{" "}
-          <code>file#tensor</code> refs
+          Embeddings, <code>lm_head</code>, the final norm, and a few trunk layers stay pinned.
+          Everything else streams through <code>file#tensor</code> references
         </li>
         <li>
-          Sliding KV: resident window (laptop default 2048) + attention sinks (default 4).
-          RoPE keeps absolute positions; long chats compact the window instead of growing RAM
+          The KV cache keeps a resident window, 2048 tokens by default, plus 4 attention sinks.
+          RoPE preserves absolute positions, so long conversations compact the window instead of
+          growing memory
         </li>
         <li>
-          MoE: GGUF packed expert banks split to per-expert refs (<code>#e=N</code>); after
-          routing, only top-k experts are staged. Unused experts stay on disk
+          GGUF packed expert banks are split into per-expert references (<code>#e=N</code>). After
+          routing, only the top-k experts are staged, and the rest remain on disk
         </li>
         <li>
-          Backends: <code>auto</code> picks the first native GPU with a real device; host-fallback
-          stubs do not count
+          <code>auto</code> selects the first native GPU that reports a real device. A backend
+          built without its vendor SDK does not qualify
         </li>
       </ul>
       <p>
-        C API 0.3.0 and the Python default session do <strong>not</strong> apply that laptop
-        preset — they stay on <code>cpu</code> with <code>kv_window = 0</code> unless you pass
-        options the ABI exposes. Dense tensors larger than RAM can still fail.
+        C API 0.3.0 and the default Python session do <strong>not</strong> apply this preset. They
+        run on <code>cpu</code> with <code>kv_window = 0</code> unless you set the options the ABI
+        exposes. Because paging works per tensor, a dense tensor larger than available RAM can
+        still fail to load.
       </p>
 
       <h2>IR on disk</h2>
-      <ul>
-        <li>
-          <code>.uaii.json</code> — hand-authored / debug JSON
-        </li>
-        <li>
-          <code>.uaii</code> — native binary (magic <code>UAIR</code>; schema-aligned with{" "}
-          <code>schemas/uaii_ir.fbs</code>)
-        </li>
-      </ul>
+      <dl className="deflist">
+        <div>
+          <dt>
+            <code>.uaii.json</code>
+          </dt>
+          <dd>Readable JSON for hand-authored graphs and debugging</dd>
+        </div>
+        <div>
+          <dt>
+            <code>.uaii</code>
+          </dt>
+          <dd>
+            Native binary with the <code>UAIR</code> magic number, aligned to the schema in{" "}
+            <code>schemas/uaii_ir.fbs</code>
+          </dd>
+        </div>
+      </dl>
       <p>
-        Deep dive: repository file <code>docs/architecture.md</code>.
+        Full detail is in <code>docs/architecture.md</code> in the repository.
       </p>
     </DocLayout>
   );

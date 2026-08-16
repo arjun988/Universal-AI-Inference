@@ -29,6 +29,10 @@ const groups = [
       { href: "/docs/plugins/", label: "Plugins" },
     ],
   },
+  {
+    label: "Community",
+    items: [{ href: "/docs/contribute/", label: "Contribute" }],
+  },
 ];
 
 export function DocLayout({
@@ -48,18 +52,21 @@ export function DocLayout({
         <div className="doc">
           <aside className="side" aria-label="Documentation">
             {groups.map((g) => (
-              <div key={g.label}>
-                <div className="side-label">{g.label}</div>
-                {g.items.map((s) => (
-                  <Link
-                    key={s.href}
-                    href={s.href}
-                    className={s.href === active ? "active" : undefined}
-                  >
-                    {s.label}
-                  </Link>
-                ))}
-              </div>
+              <nav className="side-group" key={g.label} aria-label={g.label}>
+                <p className="side-label">{g.label}</p>
+                <div className="side-links">
+                  {g.items.map((s) => (
+                    <Link
+                      key={s.href}
+                      href={s.href}
+                      aria-current={s.href === active ? "page" : undefined}
+                      className={s.href === active ? "active" : undefined}
+                    >
+                      {s.label}
+                    </Link>
+                  ))}
+                </div>
+              </nav>
             ))}
           </aside>
           <article className="content">

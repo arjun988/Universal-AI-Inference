@@ -8,7 +8,7 @@ export default function Page() {
     <DocLayout
       title="Benchmarks"
       active="/docs/benchmarks/"
-      lede="uaii_bench v3 — multi-provider GEMM (ref + OpenBLAS), memory bandwidth, attention, session, and Q4."
+      lede="Absolute measurements from uaii_bench v3: multi-provider GEMM, memory bandwidth, attention, session throughput, and Q4 memory footprint."
     >
       <div className="matrix-wrap" style={{ marginBottom: "1.75rem" }}>
         <table className="matrix">
@@ -27,7 +27,7 @@ export default function Page() {
               <td>
                 <strong>141 / 284 / 425 GFLOP/s</strong>
               </td>
-              <td>32 threads · WSL2</td>
+              <td>32 threads on WSL2</td>
             </tr>
             <tr>
               <td>
@@ -36,7 +36,7 @@ export default function Page() {
               <td>
                 <strong>7.7 / 11.8 / 15.1 GFLOP/s</strong>
               </td>
-              <td>Always-on baseline</td>
+              <td>Built-in kernel, no vendor BLAS</td>
             </tr>
             <tr>
               <td>
@@ -45,7 +45,7 @@ export default function Page() {
               <td>
                 <strong>16.6 GB/s</strong>
               </td>
-              <td>~256 MiB STREAM-style</td>
+              <td>STREAM triad, 256 MiB working set</td>
             </tr>
             <tr>
               <td>
@@ -54,7 +54,7 @@ export default function Page() {
               <td>
                 <strong>59.7 ms</strong>
               </td>
-              <td>B1 H8 S512 D64 · ref GEMM</td>
+              <td>B1 H8 S512 D64 on the ref GEMM</td>
             </tr>
             <tr>
               <td>
@@ -74,15 +74,15 @@ export default function Page() {
               <td>
                 <strong>7.11×</strong> · 4.5 MiB
               </td>
-              <td>vs 32 MiB f32</td>
+              <td>Compression against 32 MiB in f32</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <p>
-        <strong>Host:</strong> local WSL2 · Intel Core i9-14900HX · Release · linked{" "}
-        <code>ref</code> + <code>openblas</code>. JSON:{" "}
+        <strong>Host:</strong> WSL2 on an Intel Core i9-14900HX, Release build, with{" "}
+        <code>ref</code> and <code>openblas</code> linked. Raw output is committed at{" "}
         <code>benchmarks/results/local_wsl.json</code>.
       </p>
 
@@ -93,31 +93,52 @@ TRIALS=21 bash scripts/run_bench_wsl.sh
 ./build/benchmarks/uaii_bench --suite all --providers all --trials 21 --json`}</pre>
 
       <h2>Suites</h2>
-      <ul>
-        <li>
-          <code>gemm</code> — cycles linked providers (<code>ref</code>, <code>onednn</code>,{" "}
-          <code>openblas</code>)
-        </li>
-        <li>
-          <code>bandwidth</code> — STREAM copy / scale / add / triad
-        </li>
-        <li>
-          <code>attention</code> — QKᵀ + softmax + AV microbench
-        </li>
-        <li>
-          <code>session</code> / <code>quant</code> — IR stack + Q4_0 packed path
-        </li>
-      </ul>
+      <dl className="deflist">
+        <div>
+          <dt>
+            <code>gemm</code>
+          </dt>
+          <dd>
+            Cycles every linked provider: <code>ref</code>, <code>onednn</code>, and{" "}
+            <code>openblas</code>
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>bandwidth</code>
+          </dt>
+          <dd>STREAM copy, scale, add, and triad</dd>
+        </div>
+        <div>
+          <dt>
+            <code>attention</code>
+          </dt>
+          <dd>QKᵀ, softmax, and AV as one microbenchmark</dd>
+        </div>
+        <div>
+          <dt>
+            <code>session</code>, <code>quant</code>
+          </dt>
+          <dd>The IR execution stack and the Q4_0 packed path</dd>
+        </div>
+      </dl>
 
-      <h2>What we do not claim</h2>
+      <h2>Scope of these numbers</h2>
+      <p>
+        Everything above is a kernel or session measurement on one host. Three figures are
+        deliberately absent, because they are not measured yet:
+      </p>
       <ul>
-        <li>Tokens/s on public LLMs</li>
-        <li>Wins vs llama.cpp / ONNX Runtime / TensorRT</li>
-        <li>oneDNN numbers unless <code>onednn</code> is in <code>linked_providers</code></li>
+        <li>Tokens per second on public LLM checkpoints</li>
+        <li>Comparisons against llama.cpp, ONNX Runtime, or TensorRT</li>
+        <li>
+          oneDNN throughput, which is only reported when <code>onednn</code> appears in{" "}
+          <code>linked_providers</code>
+        </li>
       </ul>
 
       <p>
-        Deep dive: repository <code>docs/benchmarks.md</code>. Also see{" "}
+        Full methodology is in <code>docs/benchmarks.md</code> in the repository. See also{" "}
         <Link href="/docs/examples/">Examples</Link>.
       </p>
     </DocLayout>

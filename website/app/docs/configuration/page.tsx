@@ -8,12 +8,12 @@ export default function Page() {
     <DocLayout
       title="Configuration"
       active="/docs/configuration/"
-      lede="Control logging, plugins, GEMM, backends, and session policy through CMake, TOML, environment variables, and API options."
+      lede="Control logging, plugins, GEMM providers, backends, and session policy through CMake options, a TOML file, environment variables, and API options."
     >
-      <h2>Default config file</h2>
+      <h2>Configuration file</h2>
       <p>
-        Load <code>configs/uaii.toml</code> (or pass <code>--config path</code>). Environment
-        overlays win over file values.
+        The runtime loads <code>configs/uaii.toml</code>, or the file you pass to{" "}
+        <code>--config</code>. Environment variables override file values.
       </p>
 
       <h2>Environment variables</h2>
@@ -31,15 +31,15 @@ export default function Page() {
                 <strong>UAII_LOG_LEVEL</strong>
               </td>
               <td>
-                <code>trace</code> · <code>debug</code> · <code>info</code> · <code>warn</code>{" "}
-                · <code>error</code>
+                Verbosity: <code>trace</code>, <code>debug</code>, <code>info</code>,{" "}
+                <code>warn</code>, or <code>error</code>
               </td>
             </tr>
             <tr>
               <td>
                 <strong>UAII_LOG_COLOR</strong>
               </td>
-              <td>Enable / disable ANSI color in logs</td>
+              <td>Enable or disable ANSI colour in log output</td>
             </tr>
             <tr>
               <td>
@@ -57,14 +57,15 @@ export default function Page() {
               <td>
                 <strong>UAII_GEMM</strong>
               </td>
-              <td>Preferred GEMM provider hint when multiple are built</td>
+              <td>Preferred GEMM provider when more than one is linked</td>
             </tr>
             <tr>
               <td>
                 <strong>UAII_MAX_LAYERS</strong>
               </td>
               <td>
-                Cap GGUF transformer layers (<code>0</code> = unlimited up to hard max)
+                Cap the number of GGUF transformer layers loaded. <code>0</code> means unlimited,
+                up to the hard maximum
               </td>
             </tr>
             <tr>
@@ -72,15 +73,17 @@ export default function Page() {
                 <strong>UAII_BACKEND</strong>
               </td>
               <td>
-                Dashboard / env override for device: <code>auto</code> (default),{" "}
-                <code>cpu</code>, <code>cuda</code>, …
+                Device override for the dashboard and CLI jobs: <code>auto</code> by default, or{" "}
+                <code>cpu</code>, <code>cuda</code>, and so on
               </td>
             </tr>
             <tr>
               <td>
                 <strong>UAII_CAPI_PATH</strong>
               </td>
-              <td>Path to <code>uaii_capi</code> shared library for Python / ctypes</td>
+              <td>
+                Path to the <code>uaii_capi</code> shared library, used by the Python ctypes loader
+              </td>
             </tr>
           </tbody>
         </table>
@@ -102,7 +105,7 @@ export default function Page() {
                 <code>UAII_BUILD_TESTS</code>
               </td>
               <td>ON</td>
-              <td>Unit / smoke tests</td>
+              <td>Unit and smoke tests</td>
             </tr>
             <tr>
               <td>
@@ -116,21 +119,21 @@ export default function Page() {
                 <code>UAII_BUILD_PYTHON</code>
               </td>
               <td>OFF</td>
-              <td>pybind11 extension</td>
+              <td>Native pybind11 extension for the Python SDK</td>
             </tr>
             <tr>
               <td>
                 <code>UAII_WITH_ONEDNN</code> / <code>OPENBLAS</code>
               </td>
               <td>OFF</td>
-              <td>Competitive CPU GEMM</td>
+              <td>Link a vendor BLAS for faster CPU GEMM</td>
             </tr>
             <tr>
               <td>
                 <code>UAII_WITH_CUDA</code>
               </td>
               <td>OFF</td>
-              <td>CUDA + cuBLASLt device path</td>
+              <td>CUDA device path with cuBLASLt</td>
             </tr>
             <tr>
               <td>
@@ -145,7 +148,7 @@ export default function Page() {
                 <code>UAII_WITH_SENTENCEPIECE</code>
               </td>
               <td>OFF</td>
-              <td>SentencePiece tokenizer</td>
+              <td>SentencePiece tokenizer support</td>
             </tr>
           </tbody>
         </table>
@@ -153,58 +156,93 @@ export default function Page() {
 
       <h2>Session options</h2>
       <p>
-        CLI <code>generate</code> / <code>chat</code> apply the laptop preset and{" "}
-        <code>--backend auto</code>. The C API 0.3.0 struct is smaller: library default{" "}
-        <code>backend = &quot;cpu&quot;</code>, no <code>kv_window</code> field yet.
+        The CLI <code>generate</code> and <code>chat</code> commands apply the laptop preset and{" "}
+        <code>--backend auto</code>. The C API 0.3.0 struct exposes a smaller surface: it defaults
+        to <code>backend = &quot;cpu&quot;</code> and has no <code>kv_window</code> field yet.
       </p>
-      <ul>
-        <li>
-          <code>backend_name</code> / C <code>backend</code> — pass <code>auto</code> to probe
-          a native GPU; otherwise <code>cpu</code> / <code>cuda</code> / <code>metal</code> / …
-        </li>
-        <li>
-          <code>compute_dtype</code> — F32 or F16 policy
-        </li>
-        <li>
-          <code>keep_quantized_weights</code> — keep GGUF packs for quant GEMM
-        </li>
-        <li>
-          <code>max_context</code> — generate length bound (0 = from graph metadata). With
-          sliding KV this is a soft cap, not the RAM allocation
-        </li>
-        <li>
-          C++ / CLI: <code>kv_window</code> / <code>kv_sink</code> — resident KV window
-          (laptop 2048 / 4 sinks). Not in C API 0.3.0
-        </li>
-        <li>
-          C++ / CLI: <code>pin_layers</code>, <code>expert_cache_bytes</code> — storage-first
-          trunk / MoE LRU
-        </li>
-        <li>
-          <code>enable_fusion</code>, <code>enable_memory_reuse</code>,{" "}
-          <code>enable_streaming</code>, <code>enable_profiler</code>
-        </li>
-        <li>
-          <code>weight_init</code> — default <strong>none</strong> (fail closed)
-        </li>
-        <li>
-          <code>weights_dir</code> / <code>weights_sandbox</code> — weight resolution + path
-          sandbox
-        </li>
-      </ul>
+      <dl className="deflist">
+        <div>
+          <dt>
+            <code>backend_name</code>
+          </dt>
+          <dd>
+            Named <code>backend</code> in C. Pass <code>auto</code> to probe for a native GPU, or
+            name a device such as <code>cpu</code>, <code>cuda</code>, or <code>metal</code>
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>compute_dtype</code>
+          </dt>
+          <dd>F32 or F16 compute policy</dd>
+        </div>
+        <div>
+          <dt>
+            <code>keep_quantized_weights</code>
+          </dt>
+          <dd>Retain GGUF blocks so quantized GEMM can run directly</dd>
+        </div>
+        <div>
+          <dt>
+            <code>max_context</code>
+          </dt>
+          <dd>
+            Generation length bound, where 0 reads graph metadata. With a sliding KV cache this
+            bounds sequence length, not the memory allocation
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>kv_window</code>, <code>kv_sink</code>
+          </dt>
+          <dd>
+            C++ and CLI only. The resident KV window, 2048 tokens with 4 sinks on the laptop
+            preset
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>pin_layers</code>, <code>expert_cache_bytes</code>
+          </dt>
+          <dd>C++ and CLI only. The pinned trunk and the MoE expert LRU budget</dd>
+        </div>
+        <div>
+          <dt>
+            <code>enable_fusion</code> and related
+          </dt>
+          <dd>
+            Also <code>enable_memory_reuse</code>, <code>enable_streaming</code>, and{" "}
+            <code>enable_profiler</code>
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>weight_init</code>
+          </dt>
+          <dd>
+            Defaults to <strong>none</strong>, so missing weights raise an error
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>weights_dir</code>, <code>weights_sandbox</code>
+          </dt>
+          <dd>Weight resolution and the path sandbox</dd>
+        </div>
+      </dl>
       <p>
-        C API callers must set <code>struct_size = sizeof(uaii_session_options)</code> after{" "}
-        <code>uaii_session_options_init</code>.
+        C API callers must set <code>struct_size = sizeof(uaii_session_options)</code> immediately
+        after <code>uaii_session_options_init</code>.
       </p>
 
-      <h2>CLI globals</h2>
+      <h2>Global CLI flags</h2>
       <pre>{`uaii --config configs/uaii.toml --log-level info --load-plugins doctor`}</pre>
 
       <h2>Dashboard configuration</h2>
       <p>
-        The operator UI reads <code>dashboard/uaii-dash.json</code> (see{" "}
-        <code>uaii-dash.example.json</code>) and these environment variables. Full guide:{" "}
-        <Link href="/docs/dashboard/">Dashboard</Link>.
+        The operator UI reads <code>dashboard/uaii-dash.json</code>, modelled on{" "}
+        <code>uaii-dash.example.json</code>, plus the environment variables below. Full guide:{" "}
+        <Link href="/docs/dashboard/">Operator UI</Link>.
       </p>
       <div className="table-wrap">
         <table className="data">
@@ -220,7 +258,7 @@ export default function Page() {
                 <strong>UAII_DASH_BIND</strong>
               </td>
               <td>
-                <code>127.0.0.1</code> local · <code>0.0.0.0</code> self-host
+                <code>127.0.0.1</code> for local use, or <code>0.0.0.0</code> to self-host
               </td>
             </tr>
             <tr>
@@ -233,13 +271,13 @@ export default function Page() {
               <td>
                 <strong>UAII_DASH_TOKEN</strong>
               </td>
-              <td>Bearer token — required for non-loopback bind</td>
+              <td>Bearer token, required for any non-loopback bind</td>
             </tr>
             <tr>
               <td>
                 <strong>UAII_BIN</strong> / <strong>UAII_BENCH_BIN</strong>
               </td>
-              <td>Override detected CLI binaries</td>
+              <td>Override the auto-detected CLI binaries</td>
             </tr>
             <tr>
               <td>
@@ -251,24 +289,26 @@ export default function Page() {
               <td>
                 <strong>UAII_USE_WSL</strong> / <strong>UAII_WSL_BIN</strong>
               </td>
-              <td>Use WSL <code>uaii</code> when Windows blocks unsigned .exe</td>
+              <td>
+                Use the WSL <code>uaii</code> binary when Windows blocks unsigned executables
+              </td>
             </tr>
             <tr>
               <td>
                 <strong>UAII_BACKEND</strong>
               </td>
               <td>
-                Device for chat/run: <code>auto</code> (default), <code>cpu</code>,{" "}
-                <code>cuda</code>, …
+                Device for chat and run jobs: <code>auto</code> by default, or <code>cpu</code>,{" "}
+                <code>cuda</code>, and so on
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-      <pre>{`# Local
+      <pre>{`# Local, on loopback
 cd dashboard && npm start
 
-# Self-host
+# Self-hosted, which requires a token
 UAII_DASH_BIND=0.0.0.0 UAII_DASH_TOKEN=secret npm start`}</pre>
     </DocLayout>
   );

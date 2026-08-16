@@ -9,8 +9,8 @@ const links = [
   { href: "/docs/features/", label: "Product" },
   { href: "/docs/dashboard/", label: "Dashboard" },
   { href: "/docs/benchmarks/", label: "Benchmarks" },
-  { href: "/docs/examples/", label: "Examples" },
   { href: "/docs/getting-started/", label: "Docs" },
+  { href: "/docs/contribute/", label: "Contribute" },
 ];
 
 export function SiteNav() {

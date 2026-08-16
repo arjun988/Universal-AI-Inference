@@ -8,11 +8,12 @@ export default function Page() {
     <DocLayout
       title="Plugin marketplace"
       active="/docs/marketplace/"
-      lede="No marketplace service ships with UAII today. Use the local plugin ABI instead."
+      lede="No hosted registry ships with UAII today. Extensions load through the local plugin ABI."
     >
       <p>
-        See the <Link href="/docs/plugins/">Plugins</Link> guide for ABI exports, example
-        plugins, and how to load them with <code>uaii doctor --load-plugins</code>.
+        The <Link href="/docs/plugins/">Plugins</Link> guide covers the required ABI exports, the
+        reference plugins in the repository, and how to load them with{" "}
+        <code>uaii doctor --load-plugins</code>.
       </p>
     </DocLayout>
   );

@@ -1,4 +1,5 @@
 import { DocLayout } from "@/components/DocLayout";
+import Link from "next/link";
 
 export const metadata = { title: "Plugins" };
 
@@ -7,10 +8,10 @@ export default function Page() {
     <DocLayout
       title="Plugins"
       active="/docs/plugins/"
-      lede="Extend UAII with dynamic libraries that match the plugin ABI. Discovery is local — there is no marketplace service in-tree today."
+      lede="Extend the runtime with dynamic libraries that implement the plugin ABI. Discovery is local, and no hosted registry ships with the project today."
     >
-      <h2>ABI exports</h2>
-      <p>Every plugin dynamic library must export:</p>
+      <h2>Required exports</h2>
+      <p>Every plugin library must export three symbols:</p>
       <ul>
         <li>
           <code>uaii_plugin_get_info</code>
@@ -23,29 +24,38 @@ export default function Page() {
         </li>
       </ul>
       <p>
-        The host rejects plugins whose <code>abi_version != UAII_PLUGIN_ABI_VERSION</code>.
-        See <code>include/uaii/c_api/plugin_abi.h</code>.
+        The host rejects any plugin whose <code>abi_version</code> does not match{" "}
+        <code>UAII_PLUGIN_ABI_VERSION</code>. The contract is defined in{" "}
+        <code>include/uaii/c_api/plugin_abi.h</code>.
       </p>
 
-      <h2>Examples in-tree</h2>
-      <ul>
-        <li>
-          <code>plugins/example_probe</code> — discovery / load validation
-        </li>
-        <li>
-          <code>plugins/example_op</code> — registers a <code>Neg</code> operator into the CPU
-          dispatch path
-        </li>
-      </ul>
+      <h2>Reference plugins</h2>
+      <dl className="deflist">
+        <div>
+          <dt>
+            <code>example_probe</code>
+          </dt>
+          <dd>Validates discovery and loading</dd>
+        </div>
+        <div>
+          <dt>
+            <code>example_op</code>
+          </dt>
+          <dd>
+            Registers a <code>Neg</code> operator into the CPU dispatch path
+          </dd>
+        </div>
+      </dl>
 
-      <h2>Doctor</h2>
+      <h2>Loading plugins</h2>
       <pre>{`uaii doctor --load-plugins`}</pre>
 
-      <h2>Future marketplace</h2>
+      <h2>Distribution</h2>
       <p>
-        A multi-registry marketplace for third-party loaders, ops, and backends is intentionally
-        out of scope for the current product freeze. Design notes may live under{" "}
-        <code>docs/marketplace.md</code>; nothing ships as a hosted service today.
+        A hosted registry for third-party loaders, operators, and backends is out of scope for the
+        current release. Design notes may appear in <code>docs/marketplace.md</code>, but plugins
+        are loaded from local directories today. If you want to contribute a plugin, start with the{" "}
+        <Link href="/docs/contribute/">contribution guide</Link>.
       </p>
     </DocLayout>
   );

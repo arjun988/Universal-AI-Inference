@@ -29,7 +29,7 @@ export const metadata: Metadata = {
     template: "%s · UAII",
   },
   description:
-    "Open-source inference runtime: Hugging Face decoder-only and GGUF transformers on CPU, auto GPU when native, laptop storage-first (stream weights, sliding KV, MoE paging).",
+    "Open-source inference runtime for Hugging Face decoder-only and GGUF transformers. Runs on CPU or a native GPU, with weight streaming, a sliding KV cache, and MoE expert paging to fit large models into a laptop memory budget.",
 };
 
 const themeBoot = `(function(){try{var k='uaii-theme';var t=localStorage.getItem(k);if(t!=='dark'&&t!=='light'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;

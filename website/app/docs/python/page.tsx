@@ -7,7 +7,7 @@ export default function Page() {
     <DocLayout
       title="Python SDK"
       active="/docs/python/"
-      lede="Load a model or UAII IR, run inference, and capture profiles without reading C++ internals."
+      lede="Load a model or an IR graph, run inference, and capture profiles without touching the C++ internals."
     >
       <h2>Install</h2>
       <pre>{`cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -16,15 +16,15 @@ cmake --build build --config Release --parallel
 python bindings/python/scripts/bundle_native.py --build-dir build
 pip install -e bindings/python`}</pre>
       <p>
-        Optional native extension: configure with <code>-DUAII_BUILD_PYTHON=ON</code> (pybind11
-        via FetchContent). Otherwise the package uses ctypes against <code>uaii_capi</code>.
+        For the native extension, configure with <code>-DUAII_BUILD_PYTHON=ON</code>, which fetches
+        pybind11. Without it, the package calls <code>uaii_capi</code> through ctypes.
       </p>
       <p>
-        If the shared library is not found, set <code>UAII_CAPI_PATH</code> to the full path of{" "}
+        If the shared library cannot be found, set <code>UAII_CAPI_PATH</code> to the full path of{" "}
         <code>uaii_capi</code>.
       </p>
 
-      <h2>Load → run → profile</h2>
+      <h2>Load, run, profile</h2>
       <pre>{`import uaii
 
 session = uaii.Session.from_path(
@@ -41,21 +41,36 @@ print(session.profile_summary())`}</pre>
       <h2>Convert models</h2>
       <pre>{`uaii.convert_model("model.gguf", "model.uaii.json")`}</pre>
 
-      <h2>Defaults</h2>
-      <ul>
-        <li>
-          <code>weight_init=&quot;none&quot;</code> — fail closed (no silent Ones fill)
-        </li>
-        <li>
-          <code>backend=&quot;cpu&quot;</code> — Python / C API stay on the host unless you pass{" "}
-          <code>backend=&quot;auto&quot;</code> (native GPU if this binary can use it, else CPU).
-          Host-fallback stubs are reported by <code>uaii doctor</code>
-        </li>
-        <li>
-          Laptop streaming + sliding KV are CLI/dashboard presets.{" "}
-          <code>Session.from_path</code> does not apply <code>--preset laptop</code>
-        </li>
-      </ul>
+      <h2>Defaults worth knowing</h2>
+      <dl className="deflist">
+        <div>
+          <dt>
+            <code>weight_init=&quot;none&quot;</code>
+          </dt>
+          <dd>
+            A model with missing weights raises an error rather than filling tensors with
+            placeholder values
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <code>backend=&quot;cpu&quot;</code>
+          </dt>
+          <dd>
+            The default for both Python and the C API. Pass{" "}
+            <code>backend=&quot;auto&quot;</code> to run the same probe as the CLI, which selects
+            a native GPU when one is usable. <code>uaii doctor</code> reports which backends fall
+            back to the host
+          </dd>
+        </div>
+        <div>
+          <dt>No memory preset</dt>
+          <dd>
+            Weight streaming and the sliding KV cache are CLI and dashboard presets.{" "}
+            <code>Session.from_path</code> does not apply <code>--preset laptop</code>
+          </dd>
+        </div>
+      </dl>
       <pre>{`session = uaii.Session.from_path("model.gguf", backend="auto")`}</pre>
     </DocLayout>
   );
