@@ -7,7 +7,7 @@ uaii_add_module(loaders
     src/pytorch.cpp
     src/mlx.cpp
     src/registry.cpp
-  DEPS uaii::core uaii::ir
+  DEPS uaii::core uaii::ir uaii::quant
 )
 
 # libstdc++fs for directory_iterator on older GCC

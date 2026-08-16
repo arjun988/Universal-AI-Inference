@@ -108,6 +108,21 @@ struct GgufFile {
     const std::unordered_map<std::string, GgufValue>& kv,
     const std::vector<std::pair<GgufTensorInfo, std::vector<float>>>& tensors);
 
+struct GgufCapability {
+  std::string family;
+  std::string architecture;
+  bool mla = false;
+  bool moe = false;
+  std::vector<std::string> blocked;
+  std::vector<std::string> notes;
+  [[nodiscard]] bool ok() const { return blocked.empty(); }
+};
+
+/// Probe a GGUF file without generating (architecture, MLA, MoE).
+[[nodiscard]] UAII_API Error gguf_inspect_file(const std::string& path, GgufCapability* out);
+
+[[nodiscard]] UAII_API std::string gguf_format_capability(const GgufCapability& cap);
+
 class UAII_API GgufLoader : public IModelLoader {
  public:
   [[nodiscard]] LoaderInfo info() const override;

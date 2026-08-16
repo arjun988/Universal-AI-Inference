@@ -2,7 +2,7 @@
 
 First-class **directory** load for **decoder-only** LLMs: `config.json` + tokenizer files + `*.safetensors` (single file or Hub shards).
 
-Related: [gguf_support.md](gguf_support.md) · [upgrade.md](../upgrade.md)
+Related: [gguf_support.md](gguf_support.md) · [huggingface_decoder_completeness.md](huggingface_decoder_completeness.md) (how remaining Hub gaps close)
 
 ## Laptop / CPU memory dial (kimi-style)
 
@@ -35,14 +35,9 @@ A model directory is accepted when it contains `config.json` (see `HfLoader::acc
 
 ## Architectures
 
-Any Hub card whose `architectures[0]` is a **decoder-only** class:
+**Product target** is the six mainstream families in [huggingface_decoder_completeness.md](huggingface_decoder_completeness.md) §1.1: Llama-like, Qwen, Mistral/Mixtral, Kimi (GGUF MLA first), OpenAI open-weight (GPT-2, gpt-oss), Gemma (Gemini-class open weights). Not ChatGPT/Gemini APIs. Not every Hub CausalLM.
 
-- suffix `ForCausalLM` or `LMHeadModel` (Llama, Mistral, Mixtral, Qwen, Gemma, Phi, GPT-2, GPT-NeoX, Falcon, Olmo, Granite, …)
-- **Denied:** vision / audio / encoder-decoder / T5 / BERT / Whisper / Mamba / RWKV / LLaVA-style towers
-
-Unknown tensor **layouts** still fail closed with a clear error (not a silent Identity graph).
-
-Layout is **detected from weight names**, not a hard allowlist of class strings:
+Layout is still **detected from weight names** inside a family, not a hard allowlist of class strings:
 
 | Family | Tensor hints |
 |---|---|
@@ -50,6 +45,8 @@ Layout is **detected from weight names**, not a hard allowlist of class strings:
 | Fused QKV | `qkv_proj` / `W_pack` / `attention.query_key_value` (sliced) |
 | GPT-2 | `transformer.h.*.attn.c_attn` (Conv1D) + GELU MLP + LayerNorm (no RoPE) |
 | Mixtral / Qwen2-MoE | `block_sparse_moe` or `mlp.experts.*` — per-expert weights, streamed via expert LRU |
+
+**Denied:** vision / audio / encoder-decoder / T5 / BERT / Whisper / Mamba / RWKV / LLaVA-style towers. Kimi/DeepSeek **HF MLA** is denied until completeness P1.8; use GGUF (`uaii generate --model kimi.gguf`). OpenAI **gpt-oss** is detected as `family=gpt_oss` and fail-closed (MXFP4: convert to BF16/GGUF; dense packing is not Llama-wired).
 
 ## Required `config.json` fields
 
@@ -59,18 +56,32 @@ Critical dims fail closed. Aliases: `n_embd`, `n_layer`, `n_head`, `n_inner`, `n
 
 ## What is not decoder HF yet
 
+Weights are read as **F32, F16, or BF16** safetensors (integer I8/U8 promoted to f32). F8 and GPTQ/AWQ/bitsandbytes repos are rejected: convert to dense BF16/F16 or to GGUF.
+
 | Gap | Notes |
 |---|---|
-| HF DeepSeek MLA | Use GGUF MLA path |
+| F8 safetensors | Convert the checkpoint to BF16 |
+| GPTQ / AWQ / bitsandbytes / MXFP4 | Convert to dense BF16/F16 or GGUF |
+| HF DeepSeek / Kimi MLA | Use GGUF MLA path (`uaii generate --model kimi.gguf`) |
+| gpt-oss MoE packing | `uaii inspect` names `family=gpt_oss`; generate is blocked until the family handler |
 | Learned GPT-2 `wpe` | Attention runs; absolute position table is not added |
+| Gemma RMSNorm `(1+w)`, QK-norm, sliding window | Layout may load; math is incomplete |
 | Vision / audio / encoder-decoder / SSM / RWKV | Out of scope (plugin scaffolds) |
-| IQ* via HF | HF path is F16/F32 safetensors; GGUF carries packed quants |
+
+`rope_scaling` (`llama3`, `linear`, `dynamic`, `yarn`) is applied on RoPE. Unknown types fail closed.
+
+`tokenizer.json` is a real BPE pipeline: ByteLevel pre-tokenizer, byte map, `added_tokens`. Unigram JSON is rejected (`use tokenizer.model`).
 
 ## CLI
 
 ```bash
 uaii pull org/model --outdir ./models/hf/org__model
+uaii inspect ./models/hf/org__model
+uaii generate --model ./models/hf/org__model --dry-run
 uaii generate --model ./models/hf/org__model --prompt "Hello" --json
+uaii tokenize encode "hello" --hf ./models/hf/org__model
+# Kimi / DeepSeek MLA: GGUF, not a Hub folder
+uaii generate --model kimi.gguf --prompt "Hello"
 # storage-first is the default (laptop). Override:
 uaii generate --model ./models/hf/org__model --preset desktop --ram-gb 24 -p "Hello"
 ```

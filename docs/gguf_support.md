@@ -18,7 +18,18 @@ Import is driven by **tensor layout + metadata**, not a short name whitelist.
 | Non-`blk.*` layouts (raw GPT-2/Bloom naming, Mamba, RWKV, …) | Not auto-mapped yet — weights graph or convert to `blk.*` GGUF |
 
 Examples that import when they use llama.cpp-style `blk.*` naming:  
-`llama`, `llama3`, `mistral`, `qwen2`, `qwen3`, `phi3`, `gemma`, `gemma2`, `internlm2`, `stablelm`, `command-r`, `deepseek2` / `deepseekv2` / `deepseekv3` (MLA expand path), and any future arch that follows the same tensor scheme.
+`llama`, `llama3`, `mistral`, `qwen2`, `qwen3`, `phi3`, `gemma`, `gemma2`, `internlm2`, `stablelm`, `command-r`, `deepseek2` / `deepseekv2` / `deepseekv3` (MLA expand path), **Kimi K2 GGUF** (same MLA tensors). Hugging Face Kimi/DeepSeek folders are still blocked — convert to GGUF.
+
+## Kimi / DeepSeek via GGUF
+
+Kimi K2 is DeepSeek-V3-class (MLA + MoE), not Llama. The supported v1 path is GGUF:
+
+```bash
+uaii inspect kimi.gguf
+uaii generate --model kimi.gguf --prompt "Hello"
+```
+
+`uaii inspect` on a Kimi **HF** directory prints `family=kimi_mla` and `blocked: HF MLA; use GGUF`. Do not `uaii pull` a Kimi Hub folder expecting generate to work until HF MLA (completeness P1.8).
 
 ## MLA expand-then-attend (DeepSeek V2/V3 GGUF)
 

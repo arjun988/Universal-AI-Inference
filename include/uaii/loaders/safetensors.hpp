@@ -44,6 +44,13 @@ struct SafetensorsFile {
     const std::unordered_map<std::string, std::pair<Shape, std::vector<float>>>& tensors,
     const std::unordered_map<std::string, std::string>& metadata = {});
 
+/// Write tensors stored as f32, converting to F32 / F16 / BF16 on disk (tests / fixtures).
+[[nodiscard]] UAII_API Error safetensors_write(
+    const std::string& path,
+    const std::unordered_map<std::string, std::pair<Shape, std::vector<float>>>& tensors,
+    const std::string& dtype,
+    const std::unordered_map<std::string, std::string>& metadata = {});
+
 class UAII_API SafetensorsLoader : public IModelLoader {
  public:
   [[nodiscard]] LoaderInfo info() const override;

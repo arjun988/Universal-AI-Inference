@@ -25,7 +25,7 @@ void print_usage(const char* argv0) {
       << "Commands:\n"
       << "  doctor     Diagnose environment, modules, and plugins\n"
       << "  validate   Validate a UAII IR graph\n"
-      << "  inspect    Inspect tensors / nodes / metadata\n"
+      << "  inspect    Hugging Face dir / GGUF / IR capability report\n"
       << "  graph      Dump IR graph (text|dot|json|plan)\n"
       << "  convert    GGUF/HF-dir/Safetensors/ONNX/MLX/PyTorch sidecar → UAII IR\n"
       << "  tokenize   Encode/decode (Simple/BPE/SentencePiece/GGUF/HF)\n"

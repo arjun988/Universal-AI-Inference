@@ -24,6 +24,15 @@ class UAII_API BpeTokenizer : public ITokenizer {
   [[nodiscard]] Error load_from_vocab_merges(const std::vector<std::string>& tokens,
                                              const std::vector<std::string>& merge_lines);
 
+  /// Register a special token that must encode/decode as a single id (added_tokens).
+  void register_special(const std::string& token);
+
+  /// Hugging Face ByteLevel `add_prefix_space`.
+  void set_add_prefix_space(bool enabled) noexcept { add_prefix_space_ = enabled; }
+
+  /// GPT-2 / Llama-3 byte-level regex split before BPE (default off for GGUF).
+  void set_byte_level_pretokenize(bool enabled) noexcept { pretokenize_ = enabled; }
+
   [[nodiscard]] std::string name() const override { return "bpe"; }
 
   [[nodiscard]] Error encode(const std::string& text,
@@ -42,6 +51,8 @@ class UAII_API BpeTokenizer : public ITokenizer {
   std::vector<std::string> special_tokens_;
   std::array<char32_t, 256> byte_encoder_{};
   std::unordered_map<char32_t, unsigned char> byte_decoder_;
+  bool add_prefix_space_ = false;
+  bool pretokenize_ = false;
 };
 
 }  // namespace tokenizers

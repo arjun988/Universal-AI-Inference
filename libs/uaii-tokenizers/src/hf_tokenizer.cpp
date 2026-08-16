@@ -119,6 +119,21 @@ std::unique_ptr<ITokenizer> load_hf_tokenizer(const std::string& model_dir, Erro
       }
       return nullptr;
     }
+    std::string model_type;
+    if (const auto* ty = ir::json::get(model->obj, "type"); ty && ty->is_string()) {
+      model_type = ty->str;
+      for (char& c : model_type) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (model_type == "unigram" || model_type == "wordpiece" || model_type == "wordlevel") {
+      if (err) {
+        *err = Error::make(
+            ErrorCode::NotImplemented,
+            "Unigram tokenizer.json is not loaded. Use tokenizer.model (SentencePiece) or a BPE "
+            "tokenizer.json");
+      }
+      return nullptr;
+    }
+
     std::vector<std::string> tokens;
     std::vector<std::string> merge_lines;
     const auto* vocab_v = ir::json::get(model->obj, "vocab");
@@ -163,6 +178,44 @@ std::unique_ptr<ITokenizer> load_hf_tokenizer(const std::string& model_dir, Erro
       if (err) *err = e;
       return nullptr;
     }
+    tok->set_byte_level_pretokenize(true);
+
+    bool add_prefix = false;
+    bool saw_byte_level = false;
+    auto walk_pre = [&](auto&& self, const ir::json::Value* node) -> void {
+      if (!node || !node->is_object()) return;
+      std::string ptype;
+      if (const auto* t = ir::json::get(node->obj, "type"); t && t->is_string()) ptype = t->str;
+      if (ptype == "ByteLevel") {
+        saw_byte_level = true;
+        if (const auto* ap = ir::json::get(node->obj, "add_prefix_space"); ap && ap->is_bool()) {
+          add_prefix = ap->b;
+        }
+      }
+      if (const auto* pretok = ir::json::get(node->obj, "pretokenizers");
+          pretok && pretok->is_array()) {
+        for (const auto& ch : pretok->arr) self(self, &ch);
+      }
+    };
+    if (const auto* pre = ir::json::get(root.obj, "pre_tokenizer")) {
+      walk_pre(walk_pre, pre);
+    }
+    tok->set_add_prefix_space(add_prefix);
+    (void)saw_byte_level;
+
+    if (const auto* added = ir::json::get(root.obj, "added_tokens"); added && added->is_array()) {
+      for (const auto& at : added->arr) {
+        if (!at.is_object()) continue;
+        const auto* content = ir::json::get(at.obj, "content");
+        if (content && content->is_string()) tok->register_special(content->str);
+      }
+    }
+    auto register_special_key = [&](const char* key) {
+      if (const auto* v = ir::json::get(root.obj, key); v && v->is_string() && !v->str.empty()) {
+        tok->register_special(v->str);
+      }
+    };
+    register_special_key("unk_token");
     if (err) *err = Error::success();
     return tok;
   }

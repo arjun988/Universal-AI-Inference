@@ -4,6 +4,8 @@
 #include "uaii/core/log.hpp"
 #include "uaii/interfaces/tokenizer.hpp"
 #include "uaii/ir/graph.hpp"
+#include "uaii/loaders/gguf.hpp"
+#include "uaii/loaders/hf.hpp"
 #include "uaii/loaders/registry.hpp"
 #include "uaii/runtime/sampling.hpp"
 #include "uaii/runtime/session.hpp"
@@ -62,6 +64,7 @@ void print_generate_usage() {
       << "  --stop <text>            Repeatable; encode text → stop token ids\n"
       << "  --system <text>          Optional system prefix\n"
       << "  --json                   Machine-readable JSON on stdout\n"
+      << "  --dry-run                Print capability report (inspect) and exit\n"
       << "  --stream                 Emit token lines while generating\n"
       << "  --no-color               (global) quieter logs recommended with --json\n";
 }
@@ -527,6 +530,7 @@ int cmd_generate(const std::vector<std::string>& args) {
   const runtime::SampleParams sample = sample_from_args(args);
   const bool json_mode = has_flag(args, "--json");
   const bool stream = has_flag(args, "--stream");
+  const bool dry_run = has_flag(args, "--dry-run");
 
   runtime::MemoryPresetConfig mem{};
   if (!parse_memory_args(args, &mem)) {
@@ -541,7 +545,7 @@ int cmd_generate(const std::vector<std::string>& args) {
       return 1;
     }
   }
-  if (prompt.empty()) {
+  if (prompt.empty() && !dry_run) {
     std::cerr << "--prompt or --prompt-file required\n";
     return 1;
   }
@@ -556,6 +560,37 @@ int cmd_generate(const std::vector<std::string>& args) {
   }
   if (model.empty()) {
     std::cerr << "--model or --demo required\n";
+    return 1;
+  }
+
+  if (dry_run) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (fs::is_directory(model, ec) && fs::exists(fs::path(model) / "config.json", ec)) {
+      loaders::HfCapability cap;
+      Error ierr = loaders::hf_inspect_directory(model, &cap);
+      if (!ierr.ok()) {
+        std::cerr << ierr.to_string() << '\n';
+        return 1;
+      }
+      std::cout << loaders::hf_format_capability(cap);
+      return cap.ok() ? 0 : 2;
+    }
+    std::string lower = model;
+    for (char& c : lower) {
+      if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    if (lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".gguf") == 0) {
+      loaders::GgufCapability cap;
+      Error ierr = loaders::gguf_inspect_file(model, &cap);
+      if (!ierr.ok()) {
+        std::cerr << ierr.to_string() << '\n';
+        return 1;
+      }
+      std::cout << loaders::gguf_format_capability(cap);
+      return cap.ok() ? 0 : 2;
+    }
+    std::cerr << "--dry-run expects a Hugging Face directory or GGUF file\n";
     return 1;
   }
 

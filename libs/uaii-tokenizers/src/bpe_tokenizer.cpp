@@ -87,6 +87,108 @@ bool utf8_next(const std::string& s, std::size_t* i, char32_t* cp) {
   return true;
 }
 
+bool is_unicode_letter(char32_t c) {
+  if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) return true;
+  if (c >= 0x00C0 && c <= 0x02AF) return true;
+  if (c >= 0x0370 && c <= 0x03FF) return true;
+  if (c >= 0x0400 && c <= 0x052F) return true;
+  if (c >= 0x0590 && c <= 0x05FF) return true;
+  if (c >= 0x0600 && c <= 0x06FF) return true;
+  if (c >= 0x0900 && c <= 0x097F) return true;
+  if (c >= 0x0E00 && c <= 0x0E7F) return true;
+  if (c >= 0x1E00 && c <= 0x1EFF) return true;
+  if (c >= 0x2C60 && c <= 0x2C7F) return true;
+  if (c >= 0x3040 && c <= 0x30FF) return true;
+  if (c >= 0x3400 && c <= 0x9FFF) return true;
+  if (c >= 0xAC00 && c <= 0xD7AF) return true;
+  if (c >= 0xF900 && c <= 0xFAFF) return true;
+  if (c >= 0xFF21 && c <= 0xFF3A) return true;
+  if (c >= 0xFF41 && c <= 0xFF5A) return true;
+  return false;
+}
+
+bool is_unicode_digit(char32_t c) {
+  return (c >= '0' && c <= '9') || (c >= 0xFF10 && c <= 0xFF19);
+}
+
+bool is_unicode_space(char32_t c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == 0x00A0 ||
+         c == 0x3000;
+}
+
+std::size_t contraction_len(const std::vector<char32_t>& cps, std::size_t i) {
+  if (i >= cps.size() || cps[i] != '\'') return 0;
+  auto eq = [](char32_t a, char b) {
+    if (a >= 'A' && a <= 'Z') a = static_cast<char32_t>(a - 'A' + 'a');
+    return a == static_cast<char32_t>(b);
+  };
+  if (i + 1 < cps.size() &&
+      (eq(cps[i + 1], 's') || eq(cps[i + 1], 't') || eq(cps[i + 1], 'm') || eq(cps[i + 1], 'd'))) {
+    return 2;
+  }
+  if (i + 2 < cps.size() &&
+      ((eq(cps[i + 1], 'r') && eq(cps[i + 2], 'e')) || (eq(cps[i + 1], 'v') && eq(cps[i + 2], 'e')) ||
+       (eq(cps[i + 1], 'l') && eq(cps[i + 2], 'l')))) {
+    return 3;
+  }
+  return 0;
+}
+
+std::string utf8_from_cps(const std::vector<char32_t>& cps, std::size_t begin, std::size_t end) {
+  std::string out;
+  for (std::size_t i = begin; i < end && i < cps.size(); ++i) out += utf8_encode(cps[i]);
+  return out;
+}
+
+std::vector<std::string> gpt2_regex_split(const std::string& text) {
+  std::vector<char32_t> cps;
+  std::size_t i = 0;
+  char32_t cp = 0;
+  while (utf8_next(text, &i, &cp)) cps.push_back(cp);
+  std::vector<std::string> pieces;
+  std::size_t p = 0;
+  while (p < cps.size()) {
+    if (const std::size_t n = contraction_len(cps, p)) {
+      pieces.push_back(utf8_from_cps(cps, p, p + n));
+      p += n;
+      continue;
+    }
+    const bool lead_space = is_unicode_space(cps[p]);
+    std::size_t q = p;
+    if (lead_space && q + 1 < cps.size() && !is_unicode_space(cps[q + 1])) {
+      ++q;  // optional single leading space (the ` ?` in the GPT-2 regex)
+    }
+    if (q < cps.size() && is_unicode_letter(cps[q])) {
+      while (q < cps.size() && is_unicode_letter(cps[q])) ++q;
+      pieces.push_back(utf8_from_cps(cps, p, q));
+      p = q;
+      continue;
+    }
+    if (q < cps.size() && is_unicode_digit(cps[q])) {
+      while (q < cps.size() && is_unicode_digit(cps[q])) ++q;
+      pieces.push_back(utf8_from_cps(cps, p, q));
+      p = q;
+      continue;
+    }
+    if (q < cps.size() && !is_unicode_space(cps[q]) && !is_unicode_letter(cps[q]) &&
+        !is_unicode_digit(cps[q])) {
+      while (q < cps.size() && !is_unicode_space(cps[q]) && !is_unicode_letter(cps[q]) &&
+             !is_unicode_digit(cps[q])) {
+        ++q;
+      }
+      pieces.push_back(utf8_from_cps(cps, p, q));
+      p = q;
+      continue;
+    }
+    // whitespace run
+    q = p;
+    while (q < cps.size() && is_unicode_space(cps[q])) ++q;
+    pieces.push_back(utf8_from_cps(cps, p, q));
+    p = q;
+  }
+  return pieces;
+}
+
 // Minimal JSON object string→int parser for vocab.json {"token": id, ...}
 Error parse_vocab_json(const std::string& text,
                        std::unordered_map<std::string, std::int64_t>* out) {
@@ -134,12 +236,28 @@ BpeTokenizer::BpeTokenizer() {
 }
 
 void BpeTokenizer::ensure_specials() {
-  special_tokens_.clear();
+  // Keep explicitly registered specials; re-scan <|...|> plus common control tokens.
+  std::vector<std::string> extra;
   for (const auto& kv : token_to_id_) {
     const auto& t = kv.first;
-    if (t.size() >= 3 && t.rfind("<|", 0) == 0 && t.find("|>") == t.size() - 2) {
+    if (t.size() >= 3 && t.rfind("<|", 0) == 0 && t.size() >= 5 &&
+        t.compare(t.size() - 2, 2, "|>") == 0) {
+      extra.push_back(t);
+    }
+  }
+  for (const auto& t : extra) {
+    if (std::find(special_tokens_.begin(), special_tokens_.end(), t) == special_tokens_.end()) {
       special_tokens_.push_back(t);
     }
+  }
+  std::sort(special_tokens_.begin(), special_tokens_.end(),
+            [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
+}
+
+void BpeTokenizer::register_special(const std::string& token) {
+  if (token.empty()) return;
+  if (std::find(special_tokens_.begin(), special_tokens_.end(), token) == special_tokens_.end()) {
+    special_tokens_.push_back(token);
   }
   std::sort(special_tokens_.begin(), special_tokens_.end(),
             [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
@@ -177,6 +295,7 @@ Error BpeTokenizer::load(const std::string& vocab_json_path, const std::string& 
     merges_.emplace_back(line.substr(0, sp), line.substr(sp + 1));
   }
   ensure_specials();
+  pretokenize_ = true;
   return Error::success();
 }
 
@@ -247,26 +366,40 @@ Error BpeTokenizer::encode(const std::string& text,
   }
   out_tokens->clear();
 
-  // Split out ChatML / special tokens `<|...|>` so they map to single ids.
+  std::string work = text;
+  if (pretokenize_ && add_prefix_space_ && !work.empty() && work[0] != ' ') {
+    bool starts_special = false;
+    for (const auto& sp : special_tokens_) {
+      if (work.compare(0, sp.size(), sp) == 0) {
+        starts_special = true;
+        break;
+      }
+    }
+    if (!starts_special) work.insert(work.begin(), ' ');
+  }
+
+  // Split out special tokens so they map to single ids.
   std::size_t i = 0;
-  while (i < text.size()) {
+  while (i < work.size()) {
     bool hit = false;
     for (const auto& sp : special_tokens_) {
-      if (text.compare(i, sp.size(), sp) == 0) {
-        out_tokens->push_back(token_to_id_.at(sp));
-        i += sp.size();
-        hit = true;
-        break;
+      if (work.compare(i, sp.size(), sp) == 0) {
+        auto it = token_to_id_.find(sp);
+        if (it != token_to_id_.end()) {
+          out_tokens->push_back(it->second);
+          i += sp.size();
+          hit = true;
+          break;
+        }
       }
     }
     if (hit) continue;
 
-    // Take a run until the next special token (or end).
     std::size_t j = i + 1;
-    while (j < text.size()) {
+    while (j < work.size()) {
       bool at_special = false;
       for (const auto& sp : special_tokens_) {
-        if (text.compare(j, sp.size(), sp) == 0) {
+        if (work.compare(j, sp.size(), sp) == 0 && token_to_id_.count(sp)) {
           at_special = true;
           break;
         }
@@ -274,8 +407,16 @@ Error BpeTokenizer::encode(const std::string& text,
       if (at_special) break;
       ++j;
     }
-    Error err = bpe_encode_piece(text.substr(i, j - i), out_tokens);
-    if (!err.ok()) return err;
+    const std::string chunk = work.substr(i, j - i);
+    if (pretokenize_) {
+      for (const auto& piece : gpt2_regex_split(chunk)) {
+        Error err = bpe_encode_piece(piece, out_tokens);
+        if (!err.ok()) return err;
+      }
+    } else {
+      Error err = bpe_encode_piece(chunk, out_tokens);
+      if (!err.ok()) return err;
+    }
     i = j;
   }
   return Error::success();
@@ -291,8 +432,18 @@ Error BpeTokenizer::decode(const std::vector<std::int64_t>& tokens,
   for (std::int64_t id : tokens) {
     if (id >= 0 && static_cast<std::size_t>(id) < id_to_token_.size()) {
       const std::string& tok = id_to_token_[static_cast<std::size_t>(id)];
-      // Pass special tokens through as-is (already UTF-8 text).
-      if (tok.size() >= 3 && tok.rfind("<|", 0) == 0 && tok.find("|>") == tok.size() - 2) {
+      bool special = false;
+      for (const auto& sp : special_tokens_) {
+        if (tok == sp) {
+          special = true;
+          break;
+        }
+      }
+      if (!special && tok.size() >= 3 && tok.rfind("<|", 0) == 0 &&
+          tok.compare(tok.size() - 2, 2, "|>") == 0) {
+        special = true;
+      }
+      if (special) {
         if (!merged.empty()) {
           // flush pending byte-decoded text
           std::string chunk;

@@ -19,6 +19,13 @@ add_test(NAME uaii_quant_dequant_test COMMAND uaii_quant_dequant_test)
 add_executable(uaii_hf_loader_test unit/hf_loader_test.cpp)
 target_link_libraries(uaii_hf_loader_test PRIVATE uaii::loaders uaii::ir uaii::core)
 uaii_set_warnings(uaii_hf_loader_test)
+add_test(NAME uaii_hf_loader_test COMMAND uaii_hf_loader_test)
+
+add_executable(uaii_p0_rope_tokenizer_test unit/p0_rope_tokenizer_test.cpp)
+target_link_libraries(uaii_p0_rope_tokenizer_test PRIVATE
+  uaii::kernels uaii::tokenizers uaii::runtime uaii::loaders uaii::backends uaii::ir uaii::core)
+uaii_set_warnings(uaii_p0_rope_tokenizer_test)
+add_test(NAME uaii_p0_rope_tokenizer_test COMMAND uaii_p0_rope_tokenizer_test)
 add_executable(uaii_storage_plan_test unit/storage_plan_test.cpp)
 target_link_libraries(uaii_storage_plan_test PRIVATE uaii::planner uaii::ir uaii::core)
 uaii_set_warnings(uaii_storage_plan_test)
@@ -35,6 +42,11 @@ set_tests_properties(uaii_runtime_test PROPERTIES
   ENVIRONMENT "PATH=${_uaii_test_path}")
 
 # Demo / CLI smoke (skipped if binary path missing — CI sets WORKING_DIRECTORY)
+add_test(NAME uaii_cli_inspect_help
+  COMMAND $<TARGET_FILE:uaii> inspect --help)
+set_tests_properties(uaii_cli_inspect_help PROPERTIES
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  ENVIRONMENT "PATH=$<TARGET_FILE_DIR:uaii>;$ENV{PATH}")
 add_test(NAME uaii_cli_demo_toy_mlp
   COMMAND $<TARGET_FILE:uaii> run --demo toy_mlp)
 set_tests_properties(uaii_cli_demo_toy_mlp PROPERTIES

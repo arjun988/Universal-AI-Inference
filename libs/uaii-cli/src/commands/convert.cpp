@@ -3,6 +3,7 @@
 #include "uaii/loaders/registry.hpp"
 #include "uaii/tokenizers/bpe_tokenizer.hpp"
 #include "uaii/tokenizers/gguf_tokenizer.hpp"
+#include "uaii/tokenizers/hf_tokenizer.hpp"
 #include "uaii/tokenizers/sentencepiece_tokenizer.hpp"
 #include "uaii/tokenizers/simple_tokenizer.hpp"
 
@@ -46,7 +47,7 @@ std::string supported_convert_formats() {
 
 bool is_value_flag(const std::string& arg) {
   return arg == "--vocab" || arg == "--bpe" || arg == "--merges" || arg == "--sp" ||
-         arg == "--gguf";
+         arg == "--gguf" || arg == "--hf";
 }
 
 Error make_tokenizer(const std::vector<std::string>& args,
@@ -60,6 +61,18 @@ Error make_tokenizer(const std::vector<std::string>& args,
     Error err;
     auto tok = tokenizers::load_gguf_tokenizer(gguf_path, &err);
     if (!err.ok()) return err;
+    *out = std::move(tok);
+    return Error::success();
+  }
+
+  const std::string hf_dir = get_opt(args, "--hf");
+  if (!hf_dir.empty()) {
+    Error err;
+    auto tok = tokenizers::load_hf_tokenizer(hf_dir, &err);
+    if (!err.ok()) return err;
+    if (!tok) {
+      return Error::make(ErrorCode::NotFound, "no HF tokenizer in " + hf_dir);
+    }
     *out = std::move(tok);
     return Error::success();
   }
@@ -148,6 +161,7 @@ int cmd_tokenize(const std::vector<std::string>& args) {
         << "Tokenizer selection (default: SimpleTokenizer demo vocab):\n"
         << "  --vocab <file>                 line-delimited vocab (SimpleTokenizer)\n"
         << "  --bpe <vocab.json> --merges <merges.txt>   GPT-2 style BPE\n"
+        << "  --hf <dir>                     Hugging Face tokenizer.json / vocab+merges\n"
         << "  --gguf <model.gguf>            tokenizer.ggml.tokens[/merges] from GGUF\n"
 #if defined(UAII_HAVE_SENTENCEPIECE)
         << "  --sp <model.model>             SentencePiece model\n"

@@ -5,9 +5,11 @@
 #include "uaii/ir/graph.hpp"
 
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <sstream>
 #include <unordered_map>
+#include <vector>
 
 namespace uaii {
 namespace loaders {
@@ -24,6 +26,34 @@ std::string json_escape(const std::string& s) {
     }
   }
   return out;
+}
+
+std::uint16_t f32_to_f16_bits(float f) {
+  std::uint32_t x = 0;
+  std::memcpy(&x, &f, sizeof(float));
+  const std::uint32_t sign = (x >> 16) & 0x8000u;
+  const std::int32_t exp = static_cast<std::int32_t>((x >> 23) & 0xFFu) - 127 + 15;
+  const std::uint32_t mant = x & 0x7FFFFFu;
+  if (((x >> 23) & 0xFFu) == 0xFFu) {
+    return static_cast<std::uint16_t>(sign | 0x7C00u | (mant ? 0x200u : 0u));
+  }
+  if (exp <= 0) {
+    if (exp < -10) return static_cast<std::uint16_t>(sign);
+    const std::uint32_t m = (mant | 0x800000u) >> (1 - exp);
+    return static_cast<std::uint16_t>(sign | (m >> 13));
+  }
+  if (exp >= 31) {
+    return static_cast<std::uint16_t>(sign | 0x7C00u);
+  }
+  return static_cast<std::uint16_t>(sign | (static_cast<std::uint32_t>(exp) << 10) | (mant >> 13));
+}
+
+std::uint16_t f32_to_bf16_bits(float f) {
+  std::uint32_t x = 0;
+  std::memcpy(&x, &f, sizeof(float));
+  const std::uint32_t lsb = (x >> 16) & 1u;
+  x += 0x7FFFu + lsb;
+  return static_cast<std::uint16_t>(x >> 16);
 }
 
 // Minimal JSON object parser for safetensors headers (objects/arrays/strings/numbers).
@@ -315,6 +345,42 @@ Error safetensors_load_tensor_f32(const SafetensorsFile& file,
       }
       std::memcpy(&(*out)[i], &fbits, sizeof(float));
     }
+  } else if (info->dtype == "BF16" || info->dtype == "bf16") {
+    if (nbytes != numel * 2) {
+      return Error::make(ErrorCode::InvalidArgument, "BF16 size mismatch");
+    }
+    std::vector<std::uint16_t> tmp(numel);
+    err = r.read_bytes(tmp.data(), static_cast<std::size_t>(nbytes));
+    if (!err.ok()) return err;
+    for (std::size_t i = 0; i < numel; ++i) {
+      const std::uint32_t fbits = static_cast<std::uint32_t>(tmp[i]) << 16;
+      std::memcpy(&(*out)[i], &fbits, sizeof(float));
+    }
+  } else if (info->dtype == "I8" || info->dtype == "i8") {
+    if (nbytes != numel) {
+      return Error::make(ErrorCode::InvalidArgument, "I8 size mismatch");
+    }
+    std::vector<std::int8_t> tmp(numel);
+    err = r.read_bytes(tmp.data(), static_cast<std::size_t>(nbytes));
+    if (!err.ok()) return err;
+    for (std::size_t i = 0; i < numel; ++i) {
+      (*out)[i] = static_cast<float>(tmp[i]);
+    }
+  } else if (info->dtype == "U8" || info->dtype == "u8") {
+    if (nbytes != numel) {
+      return Error::make(ErrorCode::InvalidArgument, "U8 size mismatch");
+    }
+    std::vector<std::uint8_t> tmp(numel);
+    err = r.read_bytes(tmp.data(), static_cast<std::size_t>(nbytes));
+    if (!err.ok()) return err;
+    for (std::size_t i = 0; i < numel; ++i) {
+      (*out)[i] = static_cast<float>(tmp[i]);
+    }
+  } else if (info->dtype == "F8_E4M3" || info->dtype == "F8_E5M2" || info->dtype == "f8_e4m3" ||
+             info->dtype == "f8_e5m2") {
+    return Error::make(ErrorCode::NotImplemented,
+                       "safetensors dtype " + info->dtype +
+                           " is not loaded. Convert this checkpoint to BF16.");
   } else {
     return Error::make(ErrorCode::NotImplemented,
                        "safetensors dtype not supported for f32 load: " + info->dtype);
@@ -326,11 +392,19 @@ Error safetensors_load_tensor_f32(const SafetensorsFile& file,
   return Error::success();
 }
 
-Error safetensors_write_f32(
+Error safetensors_write(
     const std::string& path,
     const std::unordered_map<std::string, std::pair<Shape, std::vector<float>>>& tensors,
+    const std::string& dtype,
     const std::unordered_map<std::string, std::string>& metadata) {
-  // Build JSON header
+  std::string dt = dtype;
+  for (char& c : dt) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  if (dt != "F32" && dt != "F16" && dt != "BF16") {
+    return Error::make(ErrorCode::InvalidArgument,
+                       "safetensors_write dtype must be F32, F16, or BF16 (got " + dtype + ")");
+  }
+  const std::uint64_t elem_bytes = (dt == "F32") ? 4u : 2u;
+
   std::ostringstream json;
   json << "{";
   bool first = true;
@@ -362,7 +436,7 @@ Error safetensors_write_f32(
     p.shape = kv.second.first;
     p.data = kv.second.second;
     p.begin = offset;
-    p.end = offset + static_cast<std::uint64_t>(p.data.size() * sizeof(float));
+    p.end = offset + static_cast<std::uint64_t>(p.data.size()) * elem_bytes;
     offset = p.end;
     planned.push_back(std::move(p));
   }
@@ -371,7 +445,7 @@ Error safetensors_write_f32(
     if (!first) json << ",";
     first = false;
     json << "\"" << json_escape(p.name) << "\":{";
-    json << "\"dtype\":\"F32\",\"shape\":[";
+    json << "\"dtype\":\"" << dt << "\",\"shape\":[";
     for (std::size_t i = 0; i < p.shape.dims.size(); ++i) {
       if (i) json << ",";
       json << p.shape.dims[i];
@@ -385,11 +459,25 @@ Error safetensors_write_f32(
   w.write_pod(static_cast<std::uint64_t>(header.size()));
   w.write_pod(header.data(), header.size());
   for (const auto& p : planned) {
-    if (!p.data.empty()) {
+    if (p.data.empty()) continue;
+    if (dt == "F32") {
       w.write_pod(p.data.data(), p.data.size() * sizeof(float));
+    } else {
+      std::vector<std::uint16_t> packed(p.data.size());
+      for (std::size_t i = 0; i < p.data.size(); ++i) {
+        packed[i] = (dt == "F16") ? f32_to_f16_bits(p.data[i]) : f32_to_bf16_bits(p.data[i]);
+      }
+      w.write_pod(packed.data(), packed.size() * sizeof(std::uint16_t));
     }
   }
   return w.save(path);
+}
+
+Error safetensors_write_f32(
+    const std::string& path,
+    const std::unordered_map<std::string, std::pair<Shape, std::vector<float>>>& tensors,
+    const std::unordered_map<std::string, std::string>& metadata) {
+  return safetensors_write(path, tensors, "F32", metadata);
 }
 
 LoaderInfo SafetensorsLoader::info() const {

@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1783,6 +1784,70 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
   log::info("gguf") << "loaded " << file.tensors.size() << " tensors from " << path
                     << " graph=" << out_graph->name;
   return Error::success();
+}
+
+Error gguf_inspect_file(const std::string& path, GgufCapability* out) {
+  if (out == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "GgufCapability out null");
+  }
+  *out = GgufCapability{};
+  GgufFile file;
+  Error err = gguf_read_header(path, &file);
+  if (!err.ok()) return err;
+
+  auto kv_str = [&](const char* key) -> std::string {
+    auto it = file.kv.find(key);
+    if (it == file.kv.end()) return {};
+    if (std::holds_alternative<std::string>(it->second)) return std::get<std::string>(it->second);
+    return {};
+  };
+  out->architecture = kv_str("general.architecture");
+  bool mla = false;
+  bool moe = false;
+  for (const auto& t : file.tensors) {
+    if (t.name.find("attn_kv_a") != std::string::npos ||
+        t.name.find("attn_k_b") != std::string::npos ||
+        t.name.find("attn_v_b") != std::string::npos) {
+      mla = true;
+    }
+    if (t.name.find("ffn_gate_inp") != std::string::npos ||
+        t.name.find("ffn_gate_exps") != std::string::npos) {
+      moe = true;
+    }
+  }
+  out->mla = mla;
+  out->moe = moe;
+  const std::string a = out->architecture;
+  std::string al = a;
+  for (char& c : al) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (mla || al.find("deepseek") != std::string::npos || al.find("kimi") != std::string::npos) {
+    out->family = "kimi_mla";
+  } else if (!a.empty()) {
+    out->family = al;
+  } else {
+    out->family = "gguf";
+  }
+  if (mla) {
+    out->notes.push_back("MLA expand-then-attend (use GGUF: uaii generate --model kimi.gguf)");
+  }
+  return Error::success();
+}
+
+std::string gguf_format_capability(const GgufCapability& cap) {
+  std::ostringstream os;
+  os << "format: gguf\n";
+  os << "family=" << cap.family << "\n";
+  os << "architecture: " << (cap.architecture.empty() ? "unknown" : cap.architecture) << "\n";
+  os << "mla: " << (cap.mla ? "yes" : "no") << "\n";
+  os << "moe: " << (cap.moe ? "yes" : "no") << "\n";
+  for (const auto& n : cap.notes) os << "note: " << n << "\n";
+  if (cap.ok()) {
+    os << "status: ok\n";
+  } else {
+    os << "status: blocked\n";
+    for (const auto& b : cap.blocked) os << "blocked: " << b << "\n";
+  }
+  return os.str();
 }
 
 }  // namespace loaders

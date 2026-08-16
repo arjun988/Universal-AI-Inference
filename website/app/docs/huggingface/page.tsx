@@ -8,21 +8,29 @@ export default function Page() {
     <DocLayout
       title="Hugging Face"
       active="/docs/huggingface/"
-      lede="Run decoder-only Hub folders directly: automatic layout detection, a configurable memory budget, and CPU execution unless a native GPU is present."
+      lede="Run decoder-only Hub folders when the layout, dtype, and tokenizer are in the supported set. Automatic layout detection, a configurable memory budget, and CPU execution unless a native GPU is present."
     >
       <h2>What loads</h2>
       <p>
-        Any folder containing <code>config.json</code> and <code>*.safetensors</code>, with or
-        without a shard index, for decoder-only classes such as <code>*ForCausalLM</code> and{" "}
-        <code>*LMHeadModel</code>. Tensor names are detected automatically across Llama-style
-        layouts, GPT-2, fused QKV, and Mixtral experts.
+        A folder with <code>config.json</code> and dense <code>*.safetensors</code> (F16, BF16, or
+        F32, single file or shards) for decoder-only classes such as <code>*ForCausalLM</code> and{" "}
+        <code>*LMHeadModel</code>. Tensor names are detected across Llama-style layouts, GPT-2,
+        fused QKV, and Mixtral experts.
+      </p>
+      <p>
+        Quantized Hub repos (GPTQ, AWQ, bitsandbytes, MXFP4) are not loaded: convert them to dense
+        BF16/F16 or to GGUF. Kimi / DeepSeek MLA folders are blocked on Hugging Face; run the GGUF
+        instead (<code>uaii generate --model kimi.gguf</code>). Probe a directory with{" "}
+        <code>uaii inspect</code> before generate. Remaining family math (Gemma RMSNorm, GPT-2{" "}
+        <code>wpe</code>, Qwen3 QK-norm) is listed in{" "}
+        <code>docs/huggingface_decoder_completeness.md</code> in the repository.
       </p>
       <div className="chip-row" style={{ marginBottom: "1rem" }}>
-        <span className="chip">Llama / Qwen / Gemma</span>
-        <span className="chip">GPT-2 / NeoX</span>
-        <span className="chip">Mixtral MoE</span>
-        <span className="chip">laptop preset</span>
-        <span className="chip">backend auto</span>
+        <span className="chip">Llama</span>
+        <span className="chip">Qwen</span>
+        <span className="chip">Mistral</span>
+        <span className="chip">Gemma</span>
+        <span className="chip">Kimi GGUF</span>
       </div>
       <p>
         Generation and chat default to a <strong>storage-first</strong> memory budget sized for a
@@ -84,7 +92,10 @@ export default function Page() {
 
       <h2>CLI</h2>
       <pre>{`uaii pull org/model --outdir ./models/hf/org__model
+uaii inspect ./models/hf/org__model
+uaii generate --model ./models/hf/org__model --dry-run
 uaii generate --model ./models/hf/org__model --prompt "Hello" --json
+uaii generate --model kimi.gguf --prompt "Hello"
 uaii generate --model ./models/hf/org__model --preset none --prompt "Hello"
 uaii generate --model ./models/hf/org__model --kv-window 4096 --prompt "Hello"
 uaii convert ./models/hf/org__model -o model.uaii.json`}</pre>
@@ -106,12 +117,18 @@ uaii convert ./models/hf/org__model -o model.uaii.json`}</pre>
       <h2>Current limitations</h2>
       <ul>
         <li>
-          Vision, audio, encoder-decoder, SSM, and RWKV models are not supported yet. Plugin
-          scaffolds exist for the architectures on the roadmap
+          Weight dtypes: F16, BF16, and F32 safetensors. F8 and GPTQ/AWQ/MXFP4 fail closed with a
+          convert hint
+        </li>
+        <li>
+          GPTQ, AWQ, and bitsandbytes repos are not loaded. Convert to dense F16/BF16 or to GGUF
+        </li>
+        <li>
+          Vision, audio, encoder-decoder, SSM, and RWKV models are not supported. Plugin scaffolds
+          exist for the architectures on the roadmap
         </li>
         <li>
           Hugging Face DeepSeek MLA checkpoints are not mapped. Use the DeepSeek GGUF expand path
-          instead
         </li>
         <li>
           The GPT-2 learned positional embedding table (<code>wpe</code>) is not applied

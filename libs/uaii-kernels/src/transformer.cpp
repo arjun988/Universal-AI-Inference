@@ -142,13 +142,81 @@ Error embedding_f32(const TensorView& tokens,
   return Error::success();
 }
 
+float rope_scaled_inv_freq(std::int64_t pair_index, std::int64_t n_pairs, float theta,
+                           const char* scale_type, float scale_factor, float low_freq_factor,
+                           float high_freq_factor, float old_context_len) {
+  if (n_pairs <= 0 || pair_index < 0) return 0.f;
+  const float dim = static_cast<float>(n_pairs * 2);
+  const float i = static_cast<float>(pair_index);
+  const float base_theta = theta > 0.f ? theta : 10000.f;
+  float inv = 1.f / std::pow(base_theta, (2.f * i) / dim);
+  const std::string kind = scale_type ? scale_type : "";
+  if (kind.empty() || kind == "none" || kind == "default" || kind == "su") {
+    return inv;
+  }
+  const float factor = scale_factor > 0.f ? scale_factor : 1.f;
+  if (kind == "linear") {
+    return inv / factor;
+  }
+  if (kind == "dynamic") {
+    if (dim > 2.f && factor > 1.f) {
+      const float scaled_theta = base_theta * std::pow(factor, dim / (dim - 2.f));
+      inv = 1.f / std::pow(scaled_theta, (2.f * i) / dim);
+    }
+    return inv;
+  }
+  if (kind == "llama3") {
+    const float old_ctx = old_context_len > 0.f ? old_context_len : 8192.f;
+    const float low_f = low_freq_factor > 0.f ? low_freq_factor : 1.f;
+    const float high_f = high_freq_factor > 0.f ? high_freq_factor : 4.f;
+    constexpr float kPi = 3.14159265358979323846f;
+    const float wavelen = 2.f * kPi / inv;
+    const float low_w = old_ctx / low_f;
+    const float high_w = old_ctx / high_f;
+    if (wavelen < high_w) return inv;
+    if (wavelen > low_w) return inv / factor;
+    const float denom = high_f - low_f;
+    const float smooth = denom != 0.f ? (old_ctx / wavelen - low_f) / denom : 0.f;
+    return (1.f - smooth) * (inv / factor) + smooth * inv;
+  }
+  if (kind == "yarn") {
+    // Hugging Face YaRN: interpolation vs extrapolation ramp (beta_fast=32, beta_slow=1).
+    constexpr float kPi = 3.14159265358979323846f;
+    const float old_ctx = old_context_len > 0.f ? old_context_len : 2048.f;
+    const float inv_extrap = inv;
+    const float inv_interp = inv / factor;
+    auto correction_dim = [&](float num_rotations) -> float {
+      if (!(base_theta > 1.f) || !(old_ctx > 0.f) || num_rotations <= 0.f) return 0.f;
+      return (dim * std::log(old_ctx / (num_rotations * 2.f * kPi))) /
+             (2.f * std::log(base_theta));
+    };
+    float low = std::floor(correction_dim(32.f));
+    float high = std::ceil(correction_dim(1.f));
+    if (low < 0.f) low = 0.f;
+    if (high > dim - 1.f) high = dim - 1.f;
+    if (low == high) high += 0.001f;
+    float ramp = (i - low) / (high - low);
+    if (ramp < 0.f) ramp = 0.f;
+    if (ramp > 1.f) ramp = 1.f;
+    // ramp 0 → interpolation (scaled); ramp 1 → extrapolation (original)
+    return inv_interp * (1.f - ramp) + inv_extrap * ramp;
+  }
+  return inv;
+}
+
 Error rope_f32(const TensorView& in,
                const TensorView* positions,
                TensorView* out,
                float theta,
                std::int64_t head_dim,
                int mode,
-               std::int64_t rotary_dim) {
+               std::int64_t rotary_dim,
+               const char* scale_type,
+               float scale_factor,
+               float low_freq_factor,
+               float high_freq_factor,
+               float old_context_len,
+               float attn_factor) {
   if (out == nullptr || in.data == nullptr || out->data == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "rope null");
   }
@@ -180,6 +248,23 @@ Error rope_f32(const TensorView& in,
   const float* x = in.f32();
   float* y = out->f32();
 
+  const std::string scale_kind = scale_type ? scale_type : "";
+  if (!scale_kind.empty() && scale_kind != "none" && scale_kind != "default" &&
+      scale_kind != "su" && scale_kind != "linear" && scale_kind != "llama3" &&
+      scale_kind != "dynamic" && scale_kind != "yarn") {
+    return Error::make(ErrorCode::NotImplemented,
+                       "unsupported rope_scaling.type=" + scale_kind);
+  }
+
+  float yarn_mscale = 1.f;
+  if (scale_kind == "yarn") {
+    const float factor = scale_factor > 0.f ? scale_factor : 1.f;
+    const float af = attn_factor > 0.f ? attn_factor : 1.f;
+    if (factor > 1.f) {
+      yarn_mscale = 0.1f * af * std::log(factor) + 1.f;
+    }
+  }
+
   // Default position: KV cache length (seq=1 decode) or row index.
   const std::int64_t base_pos =
       (active_kv_cache() != nullptr) ? active_kv_cache()->rope_pos() : 0;
@@ -202,12 +287,12 @@ Error rope_f32(const TensorView& in,
       if (neox) {
         // NeoX / GPT-NeoX: pair (i, i + half) — required by Qwen2/Phi/Falcon.
         for (std::int64_t i = 0; i < half; ++i) {
-          const float freq =
-              1.0f / std::pow(theta, (2.0f * static_cast<float>(i)) /
-                                         static_cast<float>(rot));
+          const float freq = rope_scaled_inv_freq(i, half, theta, scale_type, scale_factor,
+                                                  low_freq_factor, high_freq_factor,
+                                                  old_context_len);
           const float angle = pos * freq;
-          const float c = std::cos(angle);
-          const float s = std::sin(angle);
+          const float c = std::cos(angle) * yarn_mscale;
+          const float s = std::sin(angle) * yarn_mscale;
           const float a = rot_in[i];
           const float b = rot_in[i + half];
           rot_out[i] = a * c - b * s;
@@ -217,10 +302,11 @@ Error rope_f32(const TensorView& in,
         // Interleaved pairs (i, i+1) — llama.cpp NORMAL / GPT-J style.
         for (std::int64_t i = 0; i < rot; i += 2) {
           const float freq =
-              1.0f / std::pow(theta, static_cast<float>(i) / static_cast<float>(rot));
+              rope_scaled_inv_freq(i / 2, half, theta, scale_type, scale_factor,
+                                   low_freq_factor, high_freq_factor, old_context_len);
           const float angle = pos * freq;
-          const float c = std::cos(angle);
-          const float s = std::sin(angle);
+          const float c = std::cos(angle) * yarn_mscale;
+          const float s = std::sin(angle) * yarn_mscale;
           const float a = rot_in[i];
           const float b = rot_in[i + 1];
           rot_out[i] = a * c - b * s;

@@ -1,6 +1,7 @@
 #include "uaii/loaders/hf.hpp"
 
 #include "uaii/core/log.hpp"
+#include "uaii/ir/attribute.hpp"
 #include "uaii/ir/graph.hpp"
 #include "uaii/ir/json.hpp"
 #include "uaii/loaders/safetensors.hpp"
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 
 namespace uaii {
 namespace loaders {
@@ -124,6 +126,100 @@ int rope_mode_for_arch(const std::string& arch) {
     return 2;
   }
   return 0;
+}
+
+bool is_gpt_oss_name(const std::string& architecture, const std::string& model_type) {
+  const std::string a = lower_ascii(architecture + " " + model_type);
+  return a.find("gpt_oss") != std::string::npos || a.find("gpt-oss") != std::string::npos ||
+         a.find("gptoss") != std::string::npos;
+}
+
+bool is_known_rope_scaling(const std::string& type) {
+  return type.empty() || type == "none" || type == "default" || type == "su" || type == "linear" ||
+         type == "dynamic" || type == "llama3" || type == "yarn";
+}
+
+Error parse_rope_scaling(const json::Object& root, HfConfig* out) {
+  const json::Value* rs = json::get(root, "rope_scaling");
+  if (rs == nullptr || rs->is_null()) return Error::success();
+  if (rs->is_string()) {
+    out->rope_scaling_type = lower_ascii(rs->str);
+    if (!is_known_rope_scaling(out->rope_scaling_type)) {
+      return Error::make(ErrorCode::NotImplemented,
+                         "unsupported rope_scaling.type=" + rs->str);
+    }
+    return Error::success();
+  }
+  if (!rs->is_object()) {
+    return Error::make(ErrorCode::InvalidArgument, "rope_scaling must be an object or string");
+  }
+  const json::Value* typ = find_key(rs->obj, {"rope_type", "type"});
+  if (typ && typ->is_string()) {
+    out->rope_scaling_type = lower_ascii(typ->str);
+  }
+  if (!is_known_rope_scaling(out->rope_scaling_type)) {
+    const std::string raw = (typ && typ->is_string()) ? typ->str : out->rope_scaling_type;
+    return Error::make(ErrorCode::NotImplemented, "unsupported rope_scaling.type=" + raw);
+  }
+  if (const json::Value* f = json::get(rs->obj, "factor"); f && f->is_number() && f->number > 0.0) {
+    out->rope_scale_factor = static_cast<float>(f->number);
+  }
+  if (const json::Value* lf = json::get(rs->obj, "low_freq_factor");
+      lf && lf->is_number() && lf->number > 0.0) {
+    out->rope_low_freq_factor = static_cast<float>(lf->number);
+  }
+  if (const json::Value* hf = json::get(rs->obj, "high_freq_factor");
+      hf && hf->is_number() && hf->number > 0.0) {
+    out->rope_high_freq_factor = static_cast<float>(hf->number);
+  }
+  if (const json::Value* om = find_key(rs->obj, {"original_max_position_embeddings"})) {
+    if (om->is_number() && om->number > 0.0) {
+      out->rope_original_max_pos = static_cast<float>(om->number);
+    }
+  }
+  if (const json::Value* af = find_key(rs->obj, {"attention_factor", "attn_factor"})) {
+    if (af->is_number() && af->number > 0.0) {
+      out->rope_attn_factor = static_cast<float>(af->number);
+    }
+  }
+  return Error::success();
+}
+
+void parse_quantization_config(const json::Object& root, HfConfig* out) {
+  const json::Value* qc = json::get(root, "quantization_config");
+  if (qc == nullptr) return;
+  if (qc->is_string()) {
+    out->quant_method = lower_ascii(qc->str);
+  } else if (qc->is_object()) {
+    if (const json::Value* m = find_key(qc->obj, {"quant_method", "quant_type", "bits"})) {
+      if (m->is_string()) out->quant_method = lower_ascii(m->str);
+    }
+  }
+  const std::string blob = out->quant_method + " " + lower_ascii(out->architecture) + " " +
+                           lower_ascii(out->model_type);
+  if (out->quant_method.find("mxfp4") != std::string::npos ||
+      blob.find("mxfp4") != std::string::npos) {
+    out->mxfp4 = true;
+  }
+}
+
+std::vector<ir::Attribute> make_rope_attrs(const HfConfig& cfg, std::int64_t head_dim) {
+  std::vector<ir::Attribute> attrs;
+  attrs.push_back(ir::make_float_attr("theta", cfg.rope_theta));
+  attrs.push_back(ir::make_int_attr("head_dim", head_dim));
+  attrs.push_back(ir::make_int_attr("mode", cfg.rope_mode));
+  if (!cfg.rope_scaling_type.empty()) {
+    attrs.push_back(ir::make_string_attr("scale_type", cfg.rope_scaling_type));
+  }
+  attrs.push_back(ir::make_float_attr("scale_factor", cfg.rope_scale_factor));
+  attrs.push_back(ir::make_float_attr("low_freq_factor", cfg.rope_low_freq_factor));
+  attrs.push_back(ir::make_float_attr("high_freq_factor", cfg.rope_high_freq_factor));
+  const float old_ctx = cfg.rope_original_max_pos > 0.f
+                            ? cfg.rope_original_max_pos
+                            : static_cast<float>(cfg.max_position_embeddings);
+  attrs.push_back(ir::make_float_attr("old_context_len", old_ctx > 0.f ? old_ctx : 8192.f));
+  attrs.push_back(ir::make_float_attr("attn_factor", cfg.rope_attn_factor));
+  return attrs;
 }
 
 std::string detect_chat_template_family(const std::string& chat_template,
@@ -509,6 +605,14 @@ Error hf_parse_config_json(const std::string& text, HfConfig* out) {
     if (act->is_string()) out->hidden_act = act->str;
   }
 
+  parse_quantization_config(*root, out);
+
+  err = parse_rope_scaling(*root, out);
+  if (!err.ok()) return err;
+  if (out->rope_original_max_pos <= 0.f) {
+    out->rope_original_max_pos = static_cast<float>(out->max_position_embeddings);
+  }
+
   out->rope_mode = rope_mode_for_arch(out->architecture);
   return Error::success();
 }
@@ -651,9 +755,32 @@ Error HfLoader::load(const std::string& path, ir::Graph* out_graph) {
 
   if (has_tensor("model.layers.0.self_attn.q_a_proj.weight") ||
       has_tensor("model.layers.0.self_attn.kv_a_proj_with_mqa.weight")) {
-    return Error::make(ErrorCode::NotImplemented,
-                       "HF DeepSeek MLA tensors found — use a DeepSeek GGUF (UAII MLA expand "
-                       "path) until compressed MLA HF lands");
+    return Error::make(ErrorCode::NotImplemented, "HF MLA; use GGUF");
+  }
+
+  if (is_gpt_oss_name(cfg.architecture, cfg.model_type)) {
+    if (cfg.mxfp4) {
+      return Error::make(ErrorCode::NotImplemented, "mxfp4 convert to BF16/GGUF");
+    }
+    return Error::make(ErrorCode::NotImplemented, "gpt-oss family handler");
+  }
+
+  for (const auto& kv : weight_map) {
+    const std::string n = lower_ascii(kv.first);
+    if (n.find("qweight") != std::string::npos || n.find("qzeros") != std::string::npos ||
+        n.find(".g_idx") != std::string::npos) {
+      return Error::make(ErrorCode::NotImplemented, "quantized safetensors");
+    }
+  }
+  if (!cfg.quant_method.empty() &&
+      (cfg.quant_method.find("gptq") != std::string::npos ||
+       cfg.quant_method.find("awq") != std::string::npos ||
+       cfg.quant_method.find("bitsandbytes") != std::string::npos ||
+       cfg.quant_method.find("bnb") != std::string::npos)) {
+    return Error::make(ErrorCode::NotImplemented, "quantized safetensors");
+  }
+  if (cfg.mxfp4) {
+    return Error::make(ErrorCode::NotImplemented, "mxfp4 convert to BF16/GGUF");
   }
 
   DecodedLayout L;
@@ -876,11 +1003,9 @@ Error HfLoader::load(const std::string& path, ir::Graph* out_graph) {
       TensorId q_rope = b.add_tensor(pfx + "q_rope", DType::F32, Shape{{1, q_dim}});
       TensorId k_rope = b.add_tensor(pfx + "k_rope", DType::F32, Shape{{1, kv_dim}});
       b.add_node(pfx + "q_rope", "RoPE", "1", {q}, {q_rope},
-                 {ir::make_float_attr("theta", rope_theta), ir::make_int_attr("head_dim", head_dim),
-                  ir::make_int_attr("mode", rope_mode)});
+                 make_rope_attrs(cfg, head_dim));
       b.add_node(pfx + "k_rope", "RoPE", "1", {k}, {k_rope},
-                 {ir::make_float_attr("theta", rope_theta), ir::make_int_attr("head_dim", head_dim),
-                  ir::make_int_attr("mode", rope_mode)});
+                 make_rope_attrs(cfg, head_dim));
       q_in = q_rope;
       k_in = k_rope;
     }
@@ -1038,6 +1163,10 @@ Error HfLoader::load(const std::string& path, ir::Graph* out_graph) {
   b.set_metadata("kv_dim", std::to_string(kv_dim));
   b.set_metadata("rope_theta", std::to_string(rope_theta));
   b.set_metadata("rope_mode", std::to_string(rope_mode));
+  if (!cfg.rope_scaling_type.empty()) {
+    b.set_metadata("rope_scaling", cfg.rope_scaling_type);
+  }
+  b.set_metadata("family", hf_family_name(cfg.architecture, cfg.model_type));
   b.set_metadata("chat_template", chat_tpl);
   b.set_metadata("embedding_length", std::to_string(dim));
   b.set_metadata("rms_eps", std::to_string(rms_eps));
@@ -1047,6 +1176,252 @@ Error HfLoader::load(const std::string& path, ir::Graph* out_graph) {
   *out_graph = b.build();
   log::info("hf") << "loaded " << weight_map.size() << " tensors from " << path
                   << " graph=" << out_graph->name;
+  return Error::success();
+}
+
+std::string hf_family_name(const std::string& architecture, const std::string& model_type) noexcept {
+  const std::string a = lower_ascii(architecture + " " + model_type);
+  if (a.find("gpt_oss") != std::string::npos || a.find("gpt-oss") != std::string::npos ||
+      a.find("gptoss") != std::string::npos) {
+    return "gpt_oss";
+  }
+  if (a.find("gpt2") != std::string::npos || a.find("gpt-2") != std::string::npos) return "gpt2";
+  if (a.find("qwen3") != std::string::npos) return "qwen3";
+  if (a.find("qwen2_moe") != std::string::npos || a.find("qwen2moe") != std::string::npos) {
+    return "qwen2_moe";
+  }
+  if (a.find("qwen") != std::string::npos) return "qwen2";
+  if (a.find("mixtral") != std::string::npos) return "mixtral";
+  if (a.find("mistral") != std::string::npos) return "mistral";
+  if (a.find("gemma3") != std::string::npos) return "gemma3";
+  if (a.find("gemma2") != std::string::npos) return "gemma2";
+  if (a.find("gemma") != std::string::npos) return "gemma";
+  if (a.find("phi") != std::string::npos) return "phi";
+  if (a.find("olmo") != std::string::npos) return "olmo";
+  if (a.find("kimi") != std::string::npos || a.find("deepseek") != std::string::npos) {
+    return "kimi_mla";
+  }
+  if (a.find("llama") != std::string::npos || a.find("smollm") != std::string::npos ||
+      a.find("granite") != std::string::npos) {
+    return "llama";
+  }
+  if (!model_type.empty()) return lower_ascii(model_type);
+  if (!architecture.empty()) return lower_ascii(architecture);
+  return "unknown";
+}
+
+Error hf_index_unique_shards(const std::string& index_json, std::vector<std::string>* shards) {
+  if (shards == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "shards out null");
+  }
+  shards->clear();
+  json::Value root_v;
+  Error err = json::parse(index_json, &root_v);
+  if (!err.ok()) return err;
+  const json::Object* root = nullptr;
+  err = json::require_object(root_v, &root, "weight index");
+  if (!err.ok()) return err;
+  const json::Value* wm = json::get(*root, "weight_map");
+  if (wm == nullptr || !wm->is_object()) {
+    return Error::make(ErrorCode::InvalidArgument, "weight index missing weight_map");
+  }
+  std::unordered_map<std::string, bool> seen;
+  for (const auto& kv : wm->obj) {
+    if (!kv.second.is_string() || kv.second.str.empty()) {
+      return Error::make(ErrorCode::InvalidArgument,
+                         "invalid weight_map entry for tensor: " + kv.first);
+    }
+    if (!seen[kv.second.str]) {
+      seen[kv.second.str] = true;
+      shards->push_back(kv.second.str);
+    }
+  }
+  if (shards->empty()) {
+    return Error::make(ErrorCode::InvalidArgument, "empty weight_map");
+  }
+  return Error::success();
+}
+
+std::string hf_format_capability(const HfCapability& cap) {
+  std::ostringstream os;
+  os << "format: huggingface\n";
+  os << "family=" << cap.family << "\n";
+  os << "architecture: " << cap.architecture << "\n";
+  if (!cap.model_type.empty()) os << "model_type: " << cap.model_type << "\n";
+  os << "weights: " << (cap.weight_dtype.empty() ? "unknown" : cap.weight_dtype) << "\n";
+  os << "tokenizer: " << (cap.tokenizer_kind.empty() ? "none" : cap.tokenizer_kind) << "\n";
+  os << "rope_scaling: " << (cap.rope_scaling_type.empty() ? "none" : cap.rope_scaling_type)
+     << "\n";
+  os << "moe: " << (cap.moe ? "yes" : "no") << "\n";
+  os << "mla: " << (cap.mla ? "yes" : "no") << "\n";
+  if (cap.quantized) os << "quantized: yes\n";
+  if (cap.mxfp4) os << "mxfp4: yes\n";
+  for (const auto& n : cap.notes) os << "note: " << n << "\n";
+  if (cap.ok()) {
+    os << "status: ok\n";
+  } else {
+    os << "status: blocked\n";
+    for (const auto& b : cap.blocked) os << "blocked: " << b << "\n";
+  }
+  return os.str();
+}
+
+Error hf_inspect_directory(const std::string& dir, HfCapability* out) {
+  if (out == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "HfCapability out null");
+  }
+  *out = HfCapability{};
+  std::error_code ec;
+  if (!fs::is_directory(dir, ec)) {
+    return Error::make(ErrorCode::InvalidArgument, "not a directory: " + dir);
+  }
+  const std::string cfg_path = join_path(dir, "config.json");
+  if (!fs::exists(cfg_path, ec)) {
+    return Error::make(ErrorCode::NotFound, "no config.json under: " + dir);
+  }
+
+  Error err;
+  const std::string text = read_text_file(cfg_path, &err);
+  if (!err.ok()) return err;
+  json::Value root_v;
+  if (json::parse(text, &root_v).ok() && root_v.is_object()) {
+    if (const json::Value* arches = json::get(root_v.obj, "architectures");
+        arches && arches->is_array() && !arches->arr.empty() && arches->arr[0].is_string()) {
+      out->architecture = arches->arr[0].str;
+    }
+    if (const json::Value* mt = json::get(root_v.obj, "model_type"); mt && mt->is_string()) {
+      out->model_type = mt->str;
+    }
+  }
+
+  HfConfig cfg;
+  err = hf_parse_config_json(text, &cfg);
+  if (err.ok()) {
+    out->architecture = cfg.architecture;
+    out->model_type = cfg.model_type;
+    out->rope_scaling_type = cfg.rope_scaling_type.empty() ? "none" : cfg.rope_scaling_type;
+    out->quantized = !cfg.quant_method.empty() &&
+                     (cfg.quant_method.find("gptq") != std::string::npos ||
+                      cfg.quant_method.find("awq") != std::string::npos ||
+                      cfg.quant_method.find("bitsandbytes") != std::string::npos ||
+                      cfg.quant_method.find("bnb") != std::string::npos);
+    out->mxfp4 = cfg.mxfp4;
+    out->moe = cfg.num_experts > 0;
+    if (cfg.rope_scaling_type == "su") {
+      out->notes.push_back("rope_scaling=su applied as identity");
+    }
+  } else {
+    out->blocked.push_back(err.message());
+  }
+  out->family = hf_family_name(out->architecture, out->model_type);
+
+  if (fs::exists(fs::path(dir) / "tokenizer.json", ec)) {
+    Error te;
+    const std::string tj = read_text_file(join_path(dir, "tokenizer.json"), &te);
+    std::string kind = "bpe";
+    if (te.ok()) {
+      json::Value tv;
+      if (json::parse(tj, &tv).ok() && tv.is_object()) {
+        if (const json::Value* model = json::get(tv.obj, "model"); model && model->is_object()) {
+          if (const json::Value* ty = json::get(model->obj, "type"); ty && ty->is_string()) {
+            kind = lower_ascii(ty->str);
+          }
+        }
+      }
+    }
+    out->tokenizer_kind = kind;
+    if (kind == "unigram" || kind == "wordpiece" || kind == "wordlevel") {
+      out->blocked.push_back(
+          "Unigram tokenizer.json is not loaded. Use tokenizer.model (SentencePiece) or a BPE "
+          "tokenizer.json");
+    }
+  } else if (fs::exists(fs::path(dir) / "tokenizer.model", ec)) {
+    out->tokenizer_kind = "sentencepiece";
+  } else if (fs::exists(fs::path(dir) / "vocab.json", ec) &&
+             fs::exists(fs::path(dir) / "merges.txt", ec)) {
+    out->tokenizer_kind = "bpe";
+  } else {
+    out->tokenizer_kind = "none";
+  }
+
+  std::unordered_map<std::string, std::string> weight_map;
+  std::vector<std::string> shard_files;
+  err = hf_load_weight_index(dir, &weight_map, &shard_files);
+  if (!err.ok()) {
+    out->blocked.push_back(err.message());
+    return Error::success();
+  }
+
+  auto has_tensor = [&](const std::string& name) { return weight_map.find(name) != weight_map.end(); };
+  if (has_tensor("model.layers.0.self_attn.q_a_proj.weight") ||
+      has_tensor("model.layers.0.self_attn.kv_a_proj_with_mqa.weight")) {
+    out->mla = true;
+    out->family = "kimi_mla";
+    out->blocked.push_back("HF MLA; use GGUF");
+  }
+
+  bool quantized_tensors = false;
+  for (const auto& kv : weight_map) {
+    const std::string n = lower_ascii(kv.first);
+    if (n.find("qweight") != std::string::npos || n.find("qzeros") != std::string::npos) {
+      quantized_tensors = true;
+      break;
+    }
+  }
+  if (quantized_tensors || out->quantized) {
+    out->quantized = true;
+    out->blocked.push_back("quantized safetensors");
+  }
+
+  std::unordered_set<std::string> dtypes;
+  ShardCache cache;
+  for (const auto& rel : shard_files) {
+    const std::string abs = join_path(dir, rel);
+    Error se = cache.ensure(abs);
+    if (!se.ok()) {
+      out->blocked.push_back(se.message());
+      continue;
+    }
+    auto it = cache.files.find(abs);
+    if (it == cache.files.end()) continue;
+    for (const auto& t : it->second.tensors) {
+      const std::string dt = t.dtype;
+      dtypes.insert(dt);
+      const std::string dtl = lower_ascii(dt);
+      if (dtl.find("f8") != std::string::npos) {
+        out->blocked.push_back("safetensors dtype " + dt +
+                               " is not loaded. Convert this checkpoint to BF16.");
+      }
+      if (dtl == "mxfp4" || dtl.find("float4") != std::string::npos) {
+        out->mxfp4 = true;
+      }
+    }
+  }
+  std::string joined;
+  for (const auto& d : dtypes) {
+    if (!joined.empty()) joined += ",";
+    joined += d;
+  }
+  out->weight_dtype = joined;
+
+  if (is_gpt_oss_name(out->architecture, out->model_type)) {
+    out->family = "gpt_oss";
+    if (out->mxfp4) {
+      out->blocked.push_back("mxfp4 convert to BF16/GGUF");
+    } else {
+      out->blocked.push_back("gpt-oss family handler");
+    }
+  } else if (out->mxfp4) {
+    out->blocked.push_back("mxfp4 convert to BF16/GGUF");
+  }
+
+  // Deduplicate blocked lines while preserving order.
+  std::vector<std::string> uniq;
+  std::unordered_set<std::string> seen;
+  for (const auto& b : out->blocked) {
+    if (seen.insert(b).second) uniq.push_back(b);
+  }
+  out->blocked = std::move(uniq);
   return Error::success();
 }
 

@@ -2,6 +2,7 @@
 
 #include "uaii/core/error.hpp"
 #include "uaii/core/log.hpp"
+#include "uaii/loaders/hf.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -55,6 +56,38 @@ bool command_exists(const char* name) {
   const std::string probe = std::string("command -v ") + name + " >/dev/null 2>&1";
 #endif
   return std::system(probe.c_str()) == 0;
+}
+
+int curl_download(const std::string& url, const std::string& dest, bool optional) {
+  std::ostringstream cmd;
+#if defined(_WIN32)
+  cmd << "curl -fsSL -o \"" << dest << "\" \"" << url << "\"";
+#else
+  cmd << "curl -fsSL -o '" << dest << "' '" << url << "'";
+#endif
+  const int rc = run_cmd(cmd.str());
+  if (rc != 0) {
+    std::error_code ec2;
+    fs::remove(dest, ec2);
+    if (!optional) {
+      log::warn("pull") << "missing: " << dest;
+    } else {
+      log::warn("pull") << "optional/missing: " << url;
+    }
+  }
+  return rc;
+}
+
+bool file_nonempty(const fs::path& p) {
+  std::error_code ec;
+  if (!fs::exists(p, ec) || !fs::is_regular_file(p, ec)) return false;
+  return fs::file_size(p, ec) > 0 && !ec;
+}
+
+std::string python_bin() {
+  if (command_exists("python")) return "python";
+  if (command_exists("python3")) return "python3";
+  return {};
 }
 
 }  // namespace
@@ -123,7 +156,20 @@ int cmd_pull(const std::vector<std::string>& args) {
     return 0;
   }
 
-  // Minimal curl fallback: config.json + tokenizer files + single model.safetensors
+  const std::string py = python_bin();
+  if (!py.empty()) {
+    std::ostringstream cmd;
+    cmd << py
+        << " -c \"from huggingface_hub import snapshot_download; snapshot_download(repo_id=r'"
+        << repo << "', revision=r'" << revision << "', local_dir=r'" << outdir << "')\"";
+    const int rc = run_cmd(cmd.str());
+    if (rc == 0 && fs::exists(fs::path(outdir) / "config.json")) {
+      std::cout << "pulled " << repo << " -> " << outdir << "\n";
+      return 0;
+    }
+    log::warn("pull") << "huggingface_hub snapshot unavailable; falling back to curl";
+  }
+
   if (!command_exists("curl")) {
     std::cerr
         << "neither huggingface-cli/hf nor curl is available.\n"
@@ -134,34 +180,52 @@ int cmd_pull(const std::vector<std::string>& args) {
 
   const std::string base =
       "https://huggingface.co/" + repo + "/resolve/" + revision + "/";
-  const char* files[] = {"config.json", "tokenizer.json", "tokenizer_config.json",
-                         "tokenizer.model", "vocab.json", "merges.txt",
-                         "model.safetensors", "model.safetensors.index.json", nullptr};
-  for (int i = 0; files[i]; ++i) {
-    const std::string url = base + files[i];
-    const std::string dest = (fs::path(outdir) / files[i]).string();
-    std::ostringstream cmd;
-#if defined(_WIN32)
-    cmd << "curl -fsSL -o \"" << dest << "\" \"" << url << "\"";
-#else
-    cmd << "curl -fsSL -o '" << dest << "' '" << url << "'";
-#endif
-    const int rc = run_cmd(cmd.str());
-    if (rc != 0) {
-      // optional files may 404
-      std::error_code ec2;
-      fs::remove(dest, ec2);
-      log::warn("pull") << "optional/missing: " << files[i];
+  const char* meta[] = {"config.json", "tokenizer.json", "tokenizer_config.json",
+                        "tokenizer.model", "vocab.json", "merges.txt",
+                        "model.safetensors.index.json", nullptr};
+  for (int i = 0; meta[i]; ++i) {
+    const bool required = std::string(meta[i]) == "config.json";
+    curl_download(base + meta[i], (fs::path(outdir) / meta[i]).string(), !required);
+  }
+
+  if (!file_nonempty(fs::path(outdir) / "config.json")) {
+    std::cerr << "pull incomplete: config.json missing.\n";
+    return 1;
+  }
+
+  const fs::path index_path = fs::path(outdir) / "model.safetensors.index.json";
+  std::vector<std::string> shards;
+  if (file_nonempty(index_path)) {
+    std::ifstream in(index_path, std::ios::binary);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    Error err = loaders::hf_index_unique_shards(ss.str(), &shards);
+    if (!err.ok()) {
+      std::cerr << "pull: " << err.to_string() << "\n";
+      return 1;
+    }
+  } else {
+    shards.push_back("model.safetensors");
+  }
+
+  for (const auto& shard : shards) {
+    const fs::path dest = fs::path(outdir) / shard;
+    if (file_nonempty(dest)) continue;
+    const int rc = curl_download(base + shard, dest.string(), false);
+    if (rc != 0 || !file_nonempty(dest)) {
+      std::cerr << "pull incomplete: missing shard " << shard << "\n";
+      return 1;
     }
   }
 
-  if (!fs::exists(fs::path(outdir) / "config.json")) {
-    std::cerr << "pull incomplete: config.json missing. Install huggingface-cli for full "
-                 "repo download (shards).\n";
-    return 1;
+  for (const auto& shard : shards) {
+    if (!file_nonempty(fs::path(outdir) / shard)) {
+      std::cerr << "pull incomplete: missing shard " << shard << "\n";
+      return 1;
+    }
   }
-  std::cout << "pulled (curl partial) " << repo << " -> " << outdir << "\n";
-  std::cout << "Note: sharded models need huggingface-cli for complete download.\n";
+
+  std::cout << "pulled " << repo << " -> " << outdir << "\n";
   return 0;
 }
 

@@ -58,13 +58,30 @@ namespace kernels {
 /// for each row (seq=1 decode) or past_len+row for multi-row tensors.
 /// mode: 0 = interleaved pairs (i, i+1); 2 = NeoX pairs (i, i+head_dim/2)
 /// (llama.cpp convention; Qwen2/Phi/Falcon need mode=2).
+/// scale_type: empty/none/default = no scaling; linear; llama3; dynamic; yarn.
 [[nodiscard]] UAII_API Error rope_f32(const TensorView& in,
                                       const TensorView* positions,
                                       TensorView* out,
                                       float theta = 10000.0f,
                                       std::int64_t head_dim = 0,
                                       int mode = 0,
-                                      std::int64_t rotary_dim = 0);
+                                      std::int64_t rotary_dim = 0,
+                                      const char* scale_type = nullptr,
+                                      float scale_factor = 1.f,
+                                      float low_freq_factor = 1.f,
+                                      float high_freq_factor = 4.f,
+                                      float old_context_len = 8192.f,
+                                      float attn_factor = 1.f);
+
+/// Inverse frequency after Hugging Face rope_scaling (pair index 0 .. n_pairs-1).
+[[nodiscard]] UAII_API float rope_scaled_inv_freq(std::int64_t pair_index,
+                                                  std::int64_t n_pairs,
+                                                  float theta,
+                                                  const char* scale_type,
+                                                  float scale_factor,
+                                                  float low_freq_factor,
+                                                  float high_freq_factor,
+                                                  float old_context_len);
 
 /// Assemble MLA K: per head concat(k_nope, broadcast(k_rope)).
 /// k_nope: [B, H*nope], k_rope: [B, rope], out: [B, H*(nope+rope)].

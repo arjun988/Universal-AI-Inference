@@ -83,6 +83,15 @@ float attr_float(const std::vector<ir::Attribute>& attrs, const char* key, float
   return def;
 }
 
+std::string attr_string(const std::vector<ir::Attribute>& attrs, const char* key) {
+  for (const auto& a : attrs) {
+    if (a.key == key && a.type == ir::AttributeType::String) {
+      return std::get<std::string>(a.value);
+    }
+  }
+  return {};
+}
+
 Error require_f32(const kernels::TensorView& t, const char* name) {
   if (t.dtype != DType::F32 || t.data == nullptr) {
     return Error::make(ErrorCode::InvalidArgument,
@@ -487,6 +496,11 @@ Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
                     const std::vector<ir::Attribute>& attrs) {
   if (inputs.empty() || outputs == nullptr || outputs->size() != 1) {
     return Error::make(ErrorCode::InvalidArgument, "CUDA RoPE arity");
+  }
+  const std::string scale = attr_string(attrs, "scale_type");
+  if (!scale.empty() && scale != "none" && scale != "default" && scale != "su") {
+    // Llama-3 / YaRN / linear / dynamic scaling lives in the CPU kernel.
+    return Error::make(ErrorCode::NotImplemented, "CUDA RoPE scaling uses CPU kernel");
   }
   const auto& in = inputs[0];
   auto& out = (*outputs)[0];

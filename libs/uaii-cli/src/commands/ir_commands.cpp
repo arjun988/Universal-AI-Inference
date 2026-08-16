@@ -2,7 +2,10 @@
 
 #include "uaii/core/log.hpp"
 #include "uaii/ir/ir.hpp"
+#include "uaii/loaders/gguf.hpp"
+#include "uaii/loaders/hf.hpp"
 
+#include <filesystem>
 #include <iostream>
 
 namespace uaii {
@@ -18,7 +21,9 @@ void print_validate_usage() {
 void print_inspect_usage() {
   std::cout
       << "Usage: uaii inspect <path> [--summary]\n"
-      << "  Inspect tensors, nodes, and metadata of a UAII IR graph.\n";
+      << "  Hugging Face directory: architecture, family, dtypes, tokenizer, RoPE, blocked.\n"
+      << "  GGUF file: architecture, MLA/MoE, family.\n"
+      << "  UAII IR graph: tensors, nodes, and metadata.\n";
 }
 
 void print_graph_usage() {
@@ -138,6 +143,34 @@ int cmd_inspect(const std::vector<std::string>& args) {
   if (path.empty() || path[0] == '-') {
     print_inspect_usage();
     return 1;
+  }
+
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  if (fs::is_directory(path, ec) && fs::exists(fs::path(path) / "config.json", ec)) {
+    loaders::HfCapability cap;
+    Error err = loaders::hf_inspect_directory(path, &cap);
+    if (!err.ok()) {
+      std::cerr << err.to_string() << '\n';
+      return 1;
+    }
+    std::cout << loaders::hf_format_capability(cap);
+    return cap.ok() ? 0 : 2;
+  }
+
+  std::string lower = path;
+  for (char& c : lower) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  }
+  if (lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".gguf") == 0) {
+    loaders::GgufCapability cap;
+    Error err = loaders::gguf_inspect_file(path, &cap);
+    if (!err.ok()) {
+      std::cerr << err.to_string() << '\n';
+      return 1;
+    }
+    std::cout << loaders::gguf_format_capability(cap);
+    return cap.ok() ? 0 : 2;
   }
 
   ir::Graph graph;

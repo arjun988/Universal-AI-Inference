@@ -38,6 +38,15 @@ float attr_float(const std::vector<ir::Attribute>& attrs, const char* key, float
   return def;
 }
 
+const char* attr_cstr(const std::vector<ir::Attribute>& attrs, const char* key) {
+  for (const auto& a : attrs) {
+    if (a.key == key && a.type == ir::AttributeType::String) {
+      return std::get<std::string>(a.value).c_str();
+    }
+  }
+  return "";
+}
+
 std::vector<std::int64_t> attr_int_array(const std::vector<ir::Attribute>& attrs,
                                          const char* key) {
   for (const auto& a : attrs) {
@@ -187,7 +196,12 @@ Error dispatch_cpu(const std::string& op_name,
     return rope_f32(inputs[0], pos, &(*outputs)[0], attr_float(attrs, "theta", 10000.f),
                     attr_int(attrs, "head_dim", 0),
                     static_cast<int>(attr_int(attrs, "mode", 0)),
-                    attr_int(attrs, "rotary_dim", 0));
+                    attr_int(attrs, "rotary_dim", 0), attr_cstr(attrs, "scale_type"),
+                    attr_float(attrs, "scale_factor", 1.f),
+                    attr_float(attrs, "low_freq_factor", 1.f),
+                    attr_float(attrs, "high_freq_factor", 4.f),
+                    attr_float(attrs, "old_context_len", 8192.f),
+                    attr_float(attrs, "attn_factor", 1.f));
   }
   if (op_name == "MLAExpandK") {
     if (inputs.size() != 2 || outputs->size() != 1) {
