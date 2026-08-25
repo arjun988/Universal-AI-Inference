@@ -1,0 +1,6 @@
+{
+  "rmsnorm_offset0_first": 1.2,
+  "rmsnorm_offset1_first": 2.4,
+  "qk_norm_head0_first": 4.0,
+  "notes": "CPU RMSNorm goldens: offset 0 is Llama (*w), offset 1 is Gemma *(1+w). QK-norm is per-head RMS over head_dim=4, weight=2, one-hot input."
+}

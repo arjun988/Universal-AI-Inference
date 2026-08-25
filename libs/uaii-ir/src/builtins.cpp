@@ -38,12 +38,15 @@ void OperatorRegistry::register_builtin_schemas() {
 
   // Activations / norms
   (void)register_schema(schema("Relu", 1, 1, 1, 1, {}, "ReLU"));
+  (void)register_schema(schema("Relu2", 1, 1, 1, 1, {}, "ReLU squared"));
   (void)register_schema(schema("Neg", 1, 1, 1, 1, {}, "Negate (plugin or builtin)"));
   (void)register_schema(schema("Gelu", 1, 1, 1, 1, {"approximate"}, "GELU"));
   (void)register_schema(schema("Silu", 1, 1, 1, 1, {}, "SiLU / Swish"));
+  (void)register_schema(schema("Softcap", 1, 1, 1, 1, {"cap"}, "y = cap * tanh(x/cap)"));
   (void)register_schema(schema("Softmax", 1, 1, 1, 1, {"axis"}, "Softmax"));
   (void)register_schema(schema("LayerNorm", 1, 3, 1, 1, {"eps", "axis"}, "Layer normalization"));
-  (void)register_schema(schema("RMSNorm", 1, 2, 1, 1, {"eps"}, "RMS normalization"));
+  (void)register_schema(schema("RMSNorm", 1, 2, 1, 1, {"eps", "offset"},
+                               "RMS normalization (offset=1 → Gemma 1+w)"));
 
   // Tensor ops
   (void)register_schema(schema("Reshape", 1, 2, 1, 1, {"shape"}, "Reshape"));
@@ -56,9 +59,12 @@ void OperatorRegistry::register_builtin_schemas() {
   // Attention / LLM building blocks (Phase 4)
   (void)register_schema(schema("Attention", 3, 5, 1, 3,
                                {"num_heads", "kv_heads", "scale", "causal",
-                                "use_kv_cache", "layer_id", "logit_softcap"},
+                                "use_kv_cache", "layer_id", "logit_softcap",
+                                "sliding_window"},
                                "Multi-head attention (Q,K,V[,past_k,past_v])"));
-  (void)register_schema(schema("RoPE", 1, 2, 1, 1, {"theta", "head_dim", "mode", "rotary_dim"},
+  (void)register_schema(schema("RoPE", 1, 2, 1, 1,
+                               {"theta", "head_dim", "mode", "rotary_dim", "scale_type",
+                                "scale_factor", "short_factor", "long_factor"},
                                "Rotary position embedding"));
   (void)register_schema(schema("MLAExpandK", 2, 2, 1, 1,
                                {"num_heads", "nope_dim", "rope_dim"},
@@ -66,6 +72,8 @@ void OperatorRegistry::register_builtin_schemas() {
   (void)register_schema(schema("Slice", 1, 1, 1, 1, {"start", "end"},
                                "Slice last dimension [start,end)"));
   (void)register_schema(schema("Embedding", 2, 2, 1, 1, {}, "Token embedding lookup"));
+  (void)register_schema(schema("Positions", 1, 1, 1, 1, {},
+                               "Absolute positions from KV cache (GPT-2 wpe)"));
   (void)register_schema(schema("MLP", 3, 3, 1, 1, {"activation"},
                                "Composite MLP (expand in IR for execution)"));
 

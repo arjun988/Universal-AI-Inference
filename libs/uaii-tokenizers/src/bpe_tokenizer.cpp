@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <utility>
 
 namespace uaii {
 namespace tokenizers {
@@ -366,7 +367,21 @@ Error BpeTokenizer::encode(const std::string& text,
   }
   out_tokens->clear();
 
+  if (add_bos_ && bos_id_ >= 0) {
+    out_tokens->push_back(bos_id_);
+  }
+
   std::string work = text;
+  if (!metaspace_.empty()) {
+    std::string mapped;
+    mapped.reserve(work.size() + metaspace_.size());
+    if (!work.empty()) mapped += metaspace_;
+    for (char c : work) {
+      if (c == ' ') mapped += metaspace_;
+      else mapped.push_back(c);
+    }
+    work = std::move(mapped);
+  }
   if (pretokenize_ && add_prefix_space_ && !work.empty() && work[0] != ' ') {
     bool starts_special = false;
     for (const auto& sp : special_tokens_) {

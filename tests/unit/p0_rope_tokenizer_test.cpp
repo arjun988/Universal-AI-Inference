@@ -6,6 +6,7 @@
 #include "uaii/loaders/safetensors.hpp"
 #include "uaii/runtime/session.hpp"
 #include "uaii/tokenizers/bpe_tokenizer.hpp"
+#include "uaii/tokenizers/chat_template.hpp"
 #include "uaii/tokenizers/hf_tokenizer.hpp"
 
 #include <cmath>
@@ -105,6 +106,83 @@ void test_rope_kernel_applies_scaling() {
   // Position 0 → identity rotation regardless of frequency.
   expect_close(out[0], in[0], 1e-5f, "pos0 identity x0");
   expect_close(out[1], in[1], 1e-5f, "pos0 identity x1");
+}
+
+void test_rmsnorm_offset_and_qk() {
+  float x[4] = {3.f, 4.f, 0.f, 0.f};
+  float w[4] = {1.f, 1.f, 1.f, 1.f};
+  float out0[4] = {};
+  float out1[4] = {};
+  const std::int64_t sh2[] = {1, 4};
+  uaii::kernels::TensorView vin;
+  vin.dtype = uaii::DType::F32;
+  vin.shape = sh2;
+  vin.rank = 2;
+  vin.data = x;
+  vin.nbytes = sizeof(x);
+  uaii::kernels::TensorView vw = vin;
+  const std::int64_t shw[] = {4};
+  vw.shape = shw;
+  vw.rank = 1;
+  vw.data = w;
+  vw.nbytes = sizeof(w);
+  uaii::kernels::TensorView v0 = vin;
+  v0.data = out0;
+  uaii::kernels::TensorView v1 = vin;
+  v1.data = out1;
+  expect(uaii::kernels::rmsnorm_f32(vin, &vw, &v0, 1e-6f, 0.f).ok(), "rms offset 0");
+  expect(uaii::kernels::rmsnorm_f32(vin, &vw, &v1, 1e-6f, 1.f).ok(), "rms offset 1");
+  // ms = (9+16)/4 = 6.25, inv = 1/sqrt(6.25)=0.4; offset0: 3*0.4*1=1.2; offset1: 3*0.4*2=2.4
+  expect_close(out0[0], 1.2f, 1e-5f, "llama-style *w");
+  expect_close(out1[0], 2.4f, 1e-5f, "gemma-style *(1+w)");
+
+  float qx[8] = {1, 0, 0, 0, 0, 1, 0, 0};
+  float qw[4] = {2, 2, 2, 2};
+  float qout[8] = {};
+  const std::int64_t qsh[] = {1, 8};
+  const std::int64_t qwsh[] = {4};
+  uaii::kernels::TensorView qin = vin;
+  qin.shape = qsh;
+  qin.data = qx;
+  qin.nbytes = sizeof(qx);
+  uaii::kernels::TensorView qwv = vw;
+  qwv.shape = qwsh;
+  qwv.rank = 1;
+  qwv.data = qw;
+  qwv.nbytes = sizeof(qw);
+  uaii::kernels::TensorView qvo = qin;
+  qvo.data = qout;
+  expect(uaii::kernels::rmsnorm_f32(qin, &qwv, &qvo, 1e-6f, 0.f).ok(), "per-head qk-norm");
+  // Head 0 is [1,0,0,0]: RMS = sqrt(1/4)=0.5, inv=2, *w=2 → 4.
+  expect_close(qout[0], 4.f, 1e-4f, "head0 first after qk-norm");
+}
+
+void test_sliding_window_mask() {
+  // Two query positions, matching KV seq. Window=1 masks token 1 from key 0.
+  float q[4] = {1.f, 0.f, 1.f, 0.f};
+  float k[4] = {1.f, 0.f, 0.f, 1.f};
+  float v[4] = {1.f, 0.f, 0.f, 1.f};
+  float out[4] = {};
+  const std::int64_t sh[] = {1, 2, 2};
+  uaii::kernels::TensorView vq, vk, vv, vo;
+  vq.dtype = vk.dtype = vv.dtype = vo.dtype = uaii::DType::F32;
+  vq.shape = vk.shape = vv.shape = vo.shape = sh;
+  vq.rank = vk.rank = vv.rank = vo.rank = 3;
+  vq.data = q;
+  vq.nbytes = sizeof(q);
+  vk.data = k;
+  vk.nbytes = sizeof(k);
+  vv.data = v;
+  vv.nbytes = sizeof(v);
+  vo.data = out;
+  vo.nbytes = sizeof(out);
+  expect(uaii::kernels::attention_f32(vq, vk, vv, &vo, 1, 1.f, true, 0.f, 1).ok(),
+         "attn sliding=1");
+  // Token 0 attends only to key 0 → V[0] = (1, 0). Token 1 attends only to key 1 → V[1] = (0, 1).
+  expect_close(out[0], 1.f, 1e-4f, "slide token0 dim0");
+  expect_close(out[1], 0.f, 1e-4f, "slide token0 dim1");
+  expect_close(out[2], 0.f, 1e-4f, "slide token1 dim0");
+  expect_close(out[3], 1.f, 1e-4f, "slide token1 dim1");
 }
 
 std::string utf8_encode(char32_t cp) {
@@ -430,15 +508,41 @@ void test_kimi_gguf_mla_generate() {
   fs::remove(path, ec);
 }
 
+void test_chat_multiturn_family() {
+  using uaii::tokenizers::ChatMessage;
+  using uaii::tokenizers::format_chat_messages;
+  const std::vector<ChatMessage> turns = {
+      {"system", "sys"},
+      {"user", "u1"},
+      {"assistant", "a1"},
+      {"user", "u2"},
+  };
+  const std::string mis = format_chat_messages("mistral", turns);
+  expect(mis.find("[INST] sys\n\nu1 [/INST]") != std::string::npos, "mistral first inst");
+  expect(mis.find("a1</s>") != std::string::npos, "mistral assistant history");
+  expect(mis.find("[INST] u2 [/INST]") != std::string::npos, "mistral second user");
+  const std::string gem = format_chat_messages("gemma", turns);
+  expect(gem.find("<start_of_turn>model\na1<end_of_turn>") != std::string::npos,
+         "gemma keeps assistant history");
+  expect(gem.find("sys\n\nu1") != std::string::npos, "gemma folds system into first user");
+  const std::string l3 = format_chat_messages("llama3", turns);
+  expect(l3.find("<|start_header_id|>assistant<|end_header_id|>\n\na1<|eot_id|>") !=
+             std::string::npos,
+         "llama3 assistant turn");
+}
+
 }  // namespace
 
 int main() {
   test_llama3_rope_freqs();
   test_rope_kernel_applies_scaling();
+  test_rmsnorm_offset_and_qk();
+  test_sliding_window_mask();
   test_byte_level_bpe_roundtrip();
   test_hf_tokenizer_json_pipeline();
   test_bf16_generate_one_step();
   test_kimi_gguf_mla_generate();
+  test_chat_multiturn_family();
 
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";

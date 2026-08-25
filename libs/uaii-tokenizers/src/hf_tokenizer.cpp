@@ -182,6 +182,7 @@ std::unique_ptr<ITokenizer> load_hf_tokenizer(const std::string& model_dir, Erro
 
     bool add_prefix = false;
     bool saw_byte_level = false;
+    std::string metaspace;
     auto walk_pre = [&](auto&& self, const ir::json::Value* node) -> void {
       if (!node || !node->is_object()) return;
       std::string ptype;
@@ -192,6 +193,10 @@ std::unique_ptr<ITokenizer> load_hf_tokenizer(const std::string& model_dir, Erro
           add_prefix = ap->b;
         }
       }
+      if (ptype == "Metaspace") {
+        const auto* rep = ir::json::get(node->obj, "replacement");
+        metaspace = (rep && rep->is_string() && !rep->str.empty()) ? rep->str : "\xE2\x96\x81";
+      }
       if (const auto* pretok = ir::json::get(node->obj, "pretokenizers");
           pretok && pretok->is_array()) {
         for (const auto& ch : pretok->arr) self(self, &ch);
@@ -199,6 +204,10 @@ std::unique_ptr<ITokenizer> load_hf_tokenizer(const std::string& model_dir, Erro
     };
     if (const auto* pre = ir::json::get(root.obj, "pre_tokenizer")) {
       walk_pre(walk_pre, pre);
+    }
+    if (!metaspace.empty()) {
+      tok->set_byte_level_pretokenize(false);
+      tok->set_metaspace(metaspace);
     }
     tok->set_add_prefix_space(add_prefix);
     (void)saw_byte_level;
@@ -216,6 +225,30 @@ std::unique_ptr<ITokenizer> load_hf_tokenizer(const std::string& model_dir, Erro
       }
     };
     register_special_key("unk_token");
+
+    Error cfg_err;
+    const std::string cfg_text = read_file(join_dir(model_dir, "tokenizer_config.json"), &cfg_err);
+    if (cfg_err.ok()) {
+      ir::json::Value cfg;
+      if (ir::json::parse(cfg_text, &cfg).ok() && cfg.is_object()) {
+        bool add_bos = false;
+        if (const auto* ab = ir::json::get(cfg.obj, "add_bos_token"); ab && ab->is_bool()) {
+          add_bos = ab->b;
+        }
+        std::string bos;
+        if (const auto* bt = ir::json::get(cfg.obj, "bos_token"); bt && bt->is_string()) {
+          bos = bt->str;
+        }
+        if (add_bos && !bos.empty()) {
+          tok->register_special(bos);
+          std::vector<std::int64_t> ids;
+          if (tok->encode(bos, &ids).ok() && !ids.empty()) {
+            tok->set_add_bos(true, ids.front());
+          }
+        }
+      }
+    }
+
     if (err) *err = Error::success();
     return tok;
   }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <variant>
 
 namespace uaii {
 namespace tokenizers {
@@ -21,6 +22,24 @@ std::string kv_string(const loaders::GgufFile& file, const char* key) {
 
 bool contains(const std::string& hay, const char* needle) {
   return hay.find(needle) != std::string::npos;
+}
+
+std::string family_of(const std::string& chat_template) {
+  const std::string t = lower_ascii(chat_template);
+  if (t == "llama3" || t == "llama-3" || t == "llama4") return "llama3";
+  if (t == "gemma" || t == "gemma2" || t == "gemma3") return "gemma";
+  if (t == "mistral" || t == "mixtral" || t == "llama2") return "mistral";
+  if (t == "chatml" || t == "qwen" || t == "qwen2" || t == "qwen3") return "chatml";
+  if (contains(chat_template, "<|start_header_id|>")) return "llama3";
+  if (contains(chat_template, "<start_of_turn>")) return "gemma";
+  if (contains(chat_template, "[INST]")) return "mistral";
+  if (contains(chat_template, "<|im_start|>")) return "chatml";
+  return t.empty() ? "chatml" : t;
+}
+
+bool looks_preformatted(const std::string& text) {
+  return contains(text, "<|im_start|>") || contains(text, "<|start_header_id|>") ||
+         contains(text, "<start_of_turn>") || contains(text, "[INST]");
 }
 
 }  // namespace
@@ -51,67 +70,139 @@ std::string detect_chat_template(const loaders::GgufFile& file, const std::strin
   return "chatml";
 }
 
-std::string format_chat_prompt(const std::string& chat_template,
-                               const std::string& system,
-                               const std::string& user) {
-  if (user.find("<|im_start|>") != std::string::npos ||
-      user.find("<|start_header_id|>") != std::string::npos ||
-      user.find("<start_of_turn>") != std::string::npos ||
-      user.find("[INST]") != std::string::npos) {
-    return user;
+std::string format_chat_messages(const std::string& chat_template,
+                                 const std::vector<ChatMessage>& messages) {
+  if (messages.size() == 1 && looks_preformatted(messages[0].content)) {
+    return messages[0].content;
   }
 
-  const std::string t = lower_ascii(chat_template);
-  if (t == "llama3") {
+  const std::string fam = family_of(chat_template);
+  std::string system;
+  std::vector<ChatMessage> turns;
+  turns.reserve(messages.size());
+  for (const auto& m : messages) {
+    const std::string role = lower_ascii(m.role);
+    if (role == "system") {
+      if (system.empty()) system = m.content;
+      else system += "\n" + m.content;
+      continue;
+    }
+    ChatMessage t;
+    t.role = (role == "assistant" || role == "model") ? "assistant" : "user";
+    t.content = m.content;
+    turns.push_back(std::move(t));
+  }
+
+  if (fam == "llama3") {
     std::string out = "<|begin_of_text|>";
     if (!system.empty()) {
       out += "<|start_header_id|>system<|end_header_id|>\n\n";
       out += system;
       out += "<|eot_id|>";
     }
-    out += "<|start_header_id|>user<|end_header_id|>\n\n";
-    out += user;
-    out += "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
+    for (const auto& m : turns) {
+      const char* tag = m.role == "assistant" ? "assistant" : "user";
+      out += "<|start_header_id|>";
+      out += tag;
+      out += "<|end_header_id|>\n\n";
+      out += m.content;
+      out += "<|eot_id|>";
+    }
+    out += "<|start_header_id|>assistant<|end_header_id|>\n\n";
     return out;
   }
-  if (t == "gemma") {
+
+  if (fam == "gemma") {
+    // Gemma: no dedicated system turn; fold system into the first user message.
+    // Keep assistant history (continue-on-assistant is a dashboard bug).
     std::string out;
-    if (!system.empty()) {
+    bool first_user = true;
+    for (const auto& m : turns) {
+      if (m.role == "assistant") {
+        out += "<start_of_turn>model\n";
+        out += m.content;
+        out += "<end_of_turn>\n";
+        continue;
+      }
+      out += "<start_of_turn>user\n";
+      if (first_user && !system.empty()) {
+        out += system;
+        out += "\n\n";
+      }
+      out += m.content;
+      out += "<end_of_turn>\n";
+      first_user = false;
+    }
+    if (turns.empty() && !system.empty()) {
       out += "<start_of_turn>user\n";
       out += system;
-      out += "\n\n";
-      out += user;
-      out += "<end_of_turn>\n";
-    } else {
-      out += "<start_of_turn>user\n";
-      out += user;
       out += "<end_of_turn>\n";
     }
     out += "<start_of_turn>model\n";
     return out;
   }
-  if (t == "mistral") {
-    std::string body = user;
-    if (!system.empty()) body = system + "\n\n" + user;
-    return std::string("<s>[INST] ") + body + " [/INST]";
+
+  if (fam == "mistral") {
+    std::string out = "<s>";
+    std::string pending = system.empty() ? std::string() : system + "\n\n";
+    bool opened = false;
+    for (const auto& m : turns) {
+      if (m.role == "user") {
+        pending += m.content;
+        out += "[INST] ";
+        out += pending;
+        out += " [/INST]";
+        pending.clear();
+        opened = true;
+      } else {
+        if (!opened) {
+          out += "[INST] ";
+          if (!pending.empty()) out += pending;
+          out += " [/INST]";
+          pending.clear();
+          opened = true;
+        }
+        out += " ";
+        out += m.content;
+        out += "</s>";
+        opened = false;
+      }
+    }
+    return out;
   }
 
-  // ChatML default (Qwen, SmolLM, Phi-3, …)
   std::string out;
   if (!system.empty()) {
     out += "<|im_start|>system\n";
     out += system;
     out += "<|im_end|>\n";
   }
-  out += "<|im_start|>user\n";
-  out += user;
-  out += "<|im_end|>\n";
+  for (const auto& m : turns) {
+    const char* tag = m.role == "assistant" ? "assistant" : "user";
+    out += "<|im_start|>";
+    out += tag;
+    out += "\n";
+    out += m.content;
+    out += "<|im_end|>\n";
+  }
   out += "<|im_start|>assistant\n";
   return out;
 }
 
+std::string format_chat_prompt(const std::string& chat_template,
+                               const std::string& system,
+                               const std::string& user) {
+  if (looks_preformatted(user)) {
+    return user;
+  }
+  std::vector<ChatMessage> msgs;
+  if (!system.empty()) msgs.push_back({"system", system});
+  msgs.push_back({"user", user});
+  return format_chat_messages(chat_template, msgs);
+}
+
 std::vector<std::string> default_chat_stops(const std::string& chat_template) {
-  const std::string t = lower_ascii(chat_template);
+  const std::string t = family_of(chat_template);
   if (t == "llama3") return {"<|eot_id|>", "<|end_of_text|>"};
   if (t == "gemma") return {"<end_of_turn>"};
   if (t == "mistral") return {"</s>"};

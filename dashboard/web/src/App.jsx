@@ -318,12 +318,33 @@ export default function App() {
   const refreshModels = useCallback(async () => {
     const data = await api("/api/models");
     const list = data.models || [];
-    setModels(list);
+    const enriched = await Promise.all(
+      list.map(async (m) => {
+        if (m.kind !== "hf" && m.kind !== "gguf") return m;
+        try {
+          const ins = await api(`/api/models/${encodeURIComponent(m.name)}/inspect`);
+          return {
+            ...m,
+            family: ins.family || m.family || "",
+            blocked: ins.blocked || [],
+            inspectOk: !!ins.ok,
+            inspectReport: ins.report || "",
+            chatReady: !!ins.ok,
+            dtype: ins.dtype || "",
+          };
+        } catch {
+          return { ...m, inspectOk: null };
+        }
+      }),
+    );
+    setModels(enriched);
     setModelDir(data.modelDir || "");
-    const chatable = list.filter((m) => m.kind === "gguf" || m.kind === "hf");
+    const chatable = enriched.filter(
+      (m) => (m.kind === "gguf" || m.kind === "hf") && m.chatReady !== false,
+    );
     setSelectedModel((cur) => {
       if (cur && chatable.some((m) => m.name === cur)) return cur;
-      if (cur && list.some((m) => m.name === cur)) return cur;
+      if (cur && enriched.some((m) => m.name === cur)) return cur;
       return chatable[0]?.name || "";
     });
   }, []);
@@ -881,8 +902,11 @@ export default function App() {
                         <>
                           {!selectedModel ? <option value="">Select a model…</option> : null}
                           {chatModels.map((m) => (
-                            <option key={m.name} value={m.name}>
-                              {m.kind === "hf" ? `[HF] ${m.name}` : m.name}
+                            <option key={m.name} value={m.name} disabled={m.chatReady === false}>
+                              {m.kind === "hf" ? `[HF] ` : ""}
+                              {m.name}
+                              {m.family ? ` · ${m.family}` : ""}
+                              {m.chatReady === false ? " (blocked)" : ""}
                             </option>
                           ))}
                         </>
@@ -1403,8 +1427,9 @@ export default function App() {
                     </button>
                   </div>
                   <p className="panel-desc" style={{ margin: 0 }}>
-                    Pull needs <code>huggingface-cli</code> (or curl). Rebuild{" "}
-                    <code>uaii</code> first so HF load works in Chat.
+                    Pull uses <code>uaii pull</code> (huggingface-cli, Python snapshot, or
+                    sharded curl). Point <code>UAII_BIN</code> at a current build.{" "}
+                    <code>uaii inspect</code> runs after import so blocked families are labelled.
                   </p>
                 </div>
               </div>
@@ -1414,6 +1439,8 @@ export default function App() {
                     <tr>
                       <th>Name</th>
                       <th>Kind</th>
+                      <th>Family</th>
+                      <th>Dtype</th>
                       <th>Size</th>
                       <th>Modified</th>
                       <th>Actions</th>
@@ -1422,7 +1449,7 @@ export default function App() {
                   <tbody>
                     {models.length === 0 ? (
                       <tr>
-                        <td colSpan={5}>
+                        <td colSpan={7}>
                           <div className="chat-empty" style={{ padding: "1.5rem" }}>
                             <h3>No models yet</h3>
                             <p>
@@ -1440,6 +1467,25 @@ export default function App() {
                           <td>
                             <span className="pill">{m.kind}</span>
                           </td>
+                          <td>
+                            {m.family ? <span className="pill">{m.family}</span> : "—"}
+                            {m.family === "kimi_mla" ? (
+                              <span className="pill" style={{ marginLeft: "0.35rem" }}>
+                                Kimi GGUF
+                              </span>
+                            ) : null}
+                            {m.family === "gpt_oss" ? (
+                              <span className="pill" style={{ marginLeft: "0.35rem" }}>
+                                gpt-oss
+                              </span>
+                            ) : null}
+                            {m.blocked && m.blocked.length > 0 ? (
+                              <div className="panel-desc" style={{ margin: "0.25rem 0 0" }}>
+                                blocked: {m.blocked[0]}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td>{m.dtype || "—"}</td>
                           <td>{m.mib} MiB</td>
                           <td>{new Date(m.mtime).toLocaleString()}</td>
                           <td>
@@ -1448,6 +1494,12 @@ export default function App() {
                                 <button
                                   className="btn primary sm"
                                   type="button"
+                                  disabled={m.chatReady === false}
+                                  title={
+                                    m.blocked && m.blocked[0]
+                                      ? m.blocked[0]
+                                      : "Open in Chat"
+                                  }
                                   onClick={() => {
                                     setSelectedModel(m.name);
                                     setChatMode("gguf");

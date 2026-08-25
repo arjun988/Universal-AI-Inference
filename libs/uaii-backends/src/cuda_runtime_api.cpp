@@ -2,12 +2,14 @@
 
 #include "cuda_kernels.hpp"
 
+#include "uaii/kernels/kernels.hpp"
 #include "uaii/runtime/kv_cache.hpp"
 
 #include <cublasLt.h>
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -87,6 +89,18 @@ std::string attr_string(const std::vector<ir::Attribute>& attrs, const char* key
   for (const auto& a : attrs) {
     if (a.key == key && a.type == ir::AttributeType::String) {
       return std::get<std::string>(a.value);
+    }
+  }
+  return {};
+}
+
+std::vector<float> attr_float_array(const std::vector<ir::Attribute>& attrs, const char* key) {
+  for (const auto& a : attrs) {
+    if (a.key == key && a.type == ir::AttributeType::FloatArray) {
+      const auto& src = std::get<std::vector<double>>(a.value);
+      std::vector<float> out(src.size());
+      for (std::size_t i = 0; i < src.size(); ++i) out[i] = static_cast<float>(src[i]);
+      return out;
     }
   }
   return {};
@@ -351,6 +365,12 @@ Error dispatch_rmsnorm(const std::vector<kernels::TensorView>& inputs,
     w = inputs[1].f32();
   }
   const float eps = attr_float(attrs, "eps", 1e-5f);
+  const float offset = attr_float(attrs, "offset", 0.f);
+  if (offset != 0.f || (inputs.size() > 1 &&
+                        static_cast<std::int64_t>(inputs[1].numel()) != cols)) {
+    return Error::make(ErrorCode::NotImplemented,
+                       "CUDA RMSNorm offset/QK-norm uses CPU kernel");
+  }
   const int st = cuda_kernels::launch_rmsnorm_f32(inputs[0].f32(), w, (*outputs)[0].f32(),
                                                   rows, cols, eps, g_stream);
   return cuda_status(static_cast<cudaError_t>(st), "RMSNorm");
@@ -498,10 +518,6 @@ Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
     return Error::make(ErrorCode::InvalidArgument, "CUDA RoPE arity");
   }
   const std::string scale = attr_string(attrs, "scale_type");
-  if (!scale.empty() && scale != "none" && scale != "default" && scale != "su") {
-    // Llama-3 / YaRN / linear / dynamic scaling lives in the CPU kernel.
-    return Error::make(ErrorCode::NotImplemented, "CUDA RoPE scaling uses CPU kernel");
-  }
   const auto& in = inputs[0];
   auto& out = (*outputs)[0];
   Error err = require_f32(in, "rope_in");
@@ -571,8 +587,63 @@ Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
     }
   }
 
+  if (!scale.empty() && scale != "none" && scale != "default" && scale != "linear" &&
+      scale != "llama3" && scale != "dynamic" && scale != "yarn" && scale != "longrope" &&
+      scale != "su") {
+    d_in.release();
+    d_out.release();
+    d_pos.release();
+    return Error::make(ErrorCode::NotImplemented, "unsupported rope_scaling.type=" + scale);
+  }
+
+  const std::int64_t half = rot / 2;
+  std::vector<float> inv(static_cast<std::size_t>(std::max<std::int64_t>(half, 0)));
+  const float seq_len = base_pos + static_cast<float>(rows);
+  const float scale_factor = attr_float(attrs, "scale_factor", 1.f);
+  const float low_f = attr_float(attrs, "low_freq_factor", 1.f);
+  const float high_f = attr_float(attrs, "high_freq_factor", 4.f);
+  const float old_ctx = attr_float(attrs, "old_context_len", 8192.f);
+  const auto short_f = attr_float_array(attrs, "short_factor");
+  const auto long_f = attr_float_array(attrs, "long_factor");
+  const int nfac = static_cast<int>(std::max(short_f.size(), long_f.size()));
+  const char* stype = scale.empty() ? nullptr : scale.c_str();
+  for (std::int64_t i = 0; i < half; ++i) {
+    inv[static_cast<std::size_t>(i)] = kernels::rope_scaled_inv_freq(
+        i, half, theta, stype, scale_factor, low_f, high_f, old_ctx, seq_len,
+        short_f.empty() ? nullptr : short_f.data(),
+        long_f.empty() ? nullptr : long_f.data(), nfac);
+  }
+  float mscale = 1.f;
+  if (scale == "yarn") {
+    const float factor = scale_factor > 0.f ? scale_factor : 1.f;
+    const float af = attr_float(attrs, "attn_factor", 1.f);
+    if (factor > 1.f) mscale = 0.1f * af * std::log(factor) + 1.f;
+  }
+
+  DeviceBuf d_inv;
+  const float* inv_dev = nullptr;
+  if (!inv.empty()) {
+    err = device_buf_alloc(&d_inv, inv.size() * sizeof(float));
+    if (!err.ok()) {
+      d_in.release();
+      d_out.release();
+      d_pos.release();
+      return err;
+    }
+    err = cuda_status(cudaMemcpy(d_inv.p, inv.data(), d_inv.bytes, cudaMemcpyHostToDevice),
+                      "RoPE inv_freq H2D");
+    if (!err.ok()) {
+      d_in.release();
+      d_out.release();
+      d_pos.release();
+      d_inv.release();
+      return err;
+    }
+    inv_dev = d_inv.p;
+  }
+
   const int st = cuda_kernels::launch_rope_f32(x, y, rows, dim, rope_chunk, rot, mode, theta,
-                                               base_pos, pos_dev, g_stream);
+                                               base_pos, pos_dev, inv_dev, mscale, g_stream);
   err = cuda_status(static_cast<cudaError_t>(st), "RoPE");
   if (err.ok()) {
     err = cuda_status(cudaStreamSynchronize(g_stream), "RoPE sync");
@@ -583,6 +654,7 @@ Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
   d_in.release();
   d_out.release();
   d_pos.release();
+  d_inv.release();
   return err;
 }
 
@@ -662,6 +734,10 @@ Error dispatch_attention(const std::vector<kernels::TensorView>& inputs,
   const bool use_kv = attr_bool(attrs, "use_kv_cache", false);
   const std::int64_t layer_id = attr_int(attrs, "layer_id", -1);
   const float logit_softcap = attr_float(attrs, "logit_softcap", 0.f);
+  if (attr_int(attrs, "sliding_window", 0) > 0) {
+    return Error::make(ErrorCode::NotImplemented,
+                       "CUDA Attention sliding_window uses CPU kernel");
+  }
 
   AttnShape qs, ks, vs, os;
   Error err = parse_attn_shape(inputs[0], &qs, "attn_q");

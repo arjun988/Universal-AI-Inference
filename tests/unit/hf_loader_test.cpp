@@ -251,6 +251,7 @@ void test_hf_gpt2_layout() {
   constexpr std::int64_t vocab = 64;
   std::unordered_map<std::string, std::pair<uaii::Shape, std::vector<float>>> tensors;
   put_tensor(&tensors, "transformer.wte.weight", {vocab, hidden}, 1.f);
+  put_tensor(&tensors, "transformer.wpe.weight", {64, hidden}, 1.2f);
   put_tensor(&tensors, "transformer.ln_f.weight", {hidden}, 2.f);
   put_tensor(&tensors, "transformer.ln_f.bias", {hidden}, 2.5f);
   put_tensor(&tensors, "transformer.h.0.ln_1.weight", {hidden}, 3.f);
@@ -273,15 +274,18 @@ void test_hf_gpt2_layout() {
   if (!lerr.ok()) {
     std::cerr << "  gpt2 load: " << lerr.to_string() << '\n';
   } else {
-    bool slice = false, gelu = false, ln = false;
+    bool slice = false, gelu = false, ln = false, wpe = false, pos = false;
     for (const auto& n : graph.nodes) {
       if (n.op_name == "Slice") slice = true;
       if (n.op_name == "Gelu") gelu = true;
       if (n.op_name == "LayerNorm") ln = true;
+      if (n.name == "wpe") wpe = true;
+      if (n.op_name == "Positions") pos = true;
     }
     expect(slice, "GPT-2 fused QKV slices");
     expect(gelu, "GPT-2 GELU mlp");
     expect(ln, "GPT-2 LayerNorm");
+    expect(wpe && pos, "GPT-2 wpe + Positions");
   }
   fs::remove_all(dir, ec);
 }
@@ -334,6 +338,67 @@ void test_reject_unknown_rope_scaling() {
          "names rope_scaling.type");
 }
 
+void test_reject_unknown_hidden_act() {
+  const char* json = R"({
+    "architectures": ["LlamaForCausalLM"],
+    "hidden_size": 32,
+    "num_hidden_layers": 1,
+    "num_attention_heads": 4,
+    "intermediate_size": 64,
+    "vocab_size": 128,
+    "max_position_embeddings": 128,
+    "hidden_act": "foo"
+  })";
+  uaii::loaders::HfConfig cfg;
+  const uaii::Error err = uaii::loaders::hf_parse_config_json(json, &cfg);
+  expect(!err.ok(), "reject unknown hidden_act");
+  expect(err.message().find("unsupported hidden_act=foo") != std::string::npos, "names hidden_act");
+}
+
+void test_parse_longrope_with_factors() {
+  const char* json = R"({
+    "architectures": ["Phi3ForCausalLM"],
+    "model_type": "phi3",
+    "hidden_size": 32,
+    "num_hidden_layers": 1,
+    "num_attention_heads": 4,
+    "intermediate_size": 64,
+    "vocab_size": 128,
+    "max_position_embeddings": 131072,
+    "partial_rotary_factor": 0.5,
+    "rope_scaling": {
+      "type": "longrope",
+      "short_factor": [1.0, 1.1, 1.2, 1.3],
+      "long_factor": [2.0, 2.1, 2.2, 2.3],
+      "original_max_position_embeddings": 4096
+    }
+  })";
+  uaii::loaders::HfConfig cfg;
+  const uaii::Error err = uaii::loaders::hf_parse_config_json(json, &cfg);
+  expect(err.ok(), "longrope with factors parses");
+  expect(cfg.rope_scaling_type == "longrope", "type longrope");
+  expect(cfg.rope_short_factor.size() == 4, "short_factor len");
+  expect(cfg.rotary_dim == 4, "partial rotary_dim = head_dim/2");
+}
+
+void test_parse_alibi_rejected() {
+  const char* json = R"({
+    "architectures": ["BloomForCausalLM"],
+    "model_type": "bloom",
+    "hidden_size": 32,
+    "num_hidden_layers": 1,
+    "num_attention_heads": 4,
+    "intermediate_size": 64,
+    "vocab_size": 128,
+    "max_position_embeddings": 128,
+    "position_embedding_type": "alibi"
+  })";
+  uaii::loaders::HfConfig cfg;
+  const uaii::Error err = uaii::loaders::hf_parse_config_json(json, &cfg);
+  expect(!err.ok(), "alibi fail-closed");
+  expect(err.message().find("alibi") != std::string::npos, "names alibi");
+}
+
 void test_parse_gpt_oss() {
   const char* json = R"({
     "architectures": ["GptOssForCausalLM"],
@@ -367,6 +432,30 @@ void test_index_unique_shards() {
   const uaii::Error err = uaii::loaders::hf_index_unique_shards(json, &shards);
   expect(err.ok(), "hf_index_unique_shards ok");
   expect(shards.size() == 2, "two unique shards");
+}
+
+void test_verify_two_shard_pull() {
+  const fs::path dir = fs::temp_directory_path() / "uaii_two_shard_pull";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir, ec);
+  const std::vector<std::string> shards = {"model-00001-of-00002.safetensors",
+                                           "model-00002-of-00002.safetensors"};
+  {
+    std::ofstream a(dir / shards[0], std::ios::binary);
+    a << "not-empty";
+  }
+  uaii::Error missing = uaii::loaders::hf_verify_shards_present(dir.string(), shards);
+  expect(!missing.ok(), "incomplete two-shard pull fails");
+  expect(missing.message().find("model-00002-of-00002.safetensors") != std::string::npos,
+         "names missing shard");
+  {
+    std::ofstream b(dir / shards[1], std::ios::binary);
+    b << "not-empty";
+  }
+  expect(uaii::loaders::hf_verify_shards_present(dir.string(), shards).ok(),
+         "complete two-shard pull ok");
+  fs::remove_all(dir, ec);
 }
 
 void write_f8_fixture(const fs::path& path) {
@@ -667,6 +756,201 @@ void test_gguf_mla_inspect() {
   fs::remove(path, ec);
 }
 
+void put_llama_like(
+    std::unordered_map<std::string, std::pair<uaii::Shape, std::vector<float>>>* tensors,
+    bool q_norm, bool gemma2) {
+  put_tensor(tensors, "model.embed_tokens.weight", {32, 32}, 1.f);
+  put_tensor(tensors, "model.norm.weight", {32}, 2.f);
+  put_tensor(tensors, "model.layers.0.input_layernorm.weight", {32}, 3.f);
+  put_tensor(tensors, "model.layers.0.self_attn.q_proj.weight", {32, 32}, 4.f);
+  put_tensor(tensors, "model.layers.0.self_attn.k_proj.weight", {16, 32}, 5.f);
+  put_tensor(tensors, "model.layers.0.self_attn.v_proj.weight", {16, 32}, 6.f);
+  put_tensor(tensors, "model.layers.0.self_attn.o_proj.weight", {32, 32}, 7.f);
+  if (q_norm) {
+    put_tensor(tensors, "model.layers.0.self_attn.q_norm.weight", {8}, 4.5f);
+    put_tensor(tensors, "model.layers.0.self_attn.k_norm.weight", {8}, 5.5f);
+  }
+  if (gemma2) {
+    put_tensor(tensors, "model.layers.0.post_attention_layernorm.weight", {32}, 8.f);
+    put_tensor(tensors, "model.layers.0.pre_feedforward_layernorm.weight", {32}, 8.5f);
+    put_tensor(tensors, "model.layers.0.post_feedforward_layernorm.weight", {32}, 8.7f);
+  } else {
+    put_tensor(tensors, "model.layers.0.post_attention_layernorm.weight", {32}, 8.f);
+  }
+  put_tensor(tensors, "model.layers.0.mlp.gate_proj.weight", {64, 32}, 9.f);
+  put_tensor(tensors, "model.layers.0.mlp.up_proj.weight", {64, 32}, 10.f);
+  put_tensor(tensors, "model.layers.0.mlp.down_proj.weight", {32, 64}, 11.f);
+}
+
+void test_qwen3_qk_norm_and_gemma() {
+  std::error_code ec;
+  {
+    const fs::path dir = fs::temp_directory_path() / "uaii_qwen3_qknorm";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    {
+      std::ofstream cfg(dir / "config.json");
+      cfg << R"({
+  "architectures": ["Qwen3ForCausalLM"],
+  "model_type": "qwen3",
+  "hidden_size": 32,
+  "num_hidden_layers": 1,
+  "num_attention_heads": 4,
+  "num_key_value_heads": 2,
+  "intermediate_size": 64,
+  "vocab_size": 32,
+  "max_position_embeddings": 128,
+  "rms_norm_eps": 1e-6,
+  "hidden_act": "silu",
+  "tie_word_embeddings": true
+})";
+    }
+    std::unordered_map<std::string, std::pair<uaii::Shape, std::vector<float>>> tensors;
+    put_llama_like(&tensors, true, false);
+    expect(uaii::loaders::safetensors_write_f32((dir / "model.safetensors").string(), tensors, {})
+               .ok(),
+           "qwen3 weights");
+    uaii::ir::Graph graph;
+    const uaii::Error lerr = uaii::loaders::HfLoader{}.load(dir.string(), &graph);
+    expect(lerr.ok(), "load qwen3 with qk-norm");
+    if (!lerr.ok()) std::cerr << "  " << lerr.to_string() << '\n';
+    bool qn = false, kn = false;
+    for (const auto& n : graph.nodes) {
+      if (n.op_name == "RMSNorm" && n.name.find("q_norm") != std::string::npos) qn = true;
+      if (n.op_name == "RMSNorm" && n.name.find("k_norm") != std::string::npos) kn = true;
+    }
+    expect(qn && kn, "QK-norm nodes present");
+    uaii::loaders::HfCapability cap;
+    expect(uaii::loaders::hf_inspect_directory(dir.string(), &cap).ok(), "inspect qwen3");
+    expect(cap.ok(), "qwen3 inspect ok");
+    fs::remove_all(dir, ec);
+  }
+  {
+    const fs::path dir = fs::temp_directory_path() / "uaii_qwen3_missing";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    {
+      std::ofstream cfg(dir / "config.json");
+      cfg << R"({
+  "architectures": ["Qwen3ForCausalLM"],
+  "model_type": "qwen3",
+  "hidden_size": 32,
+  "num_hidden_layers": 1,
+  "num_attention_heads": 4,
+  "num_key_value_heads": 2,
+  "intermediate_size": 64,
+  "vocab_size": 32,
+  "max_position_embeddings": 128,
+  "tie_word_embeddings": true
+})";
+    }
+    std::unordered_map<std::string, std::pair<uaii::Shape, std::vector<float>>> tensors;
+    put_llama_like(&tensors, false, false);
+    expect(uaii::loaders::safetensors_write_f32((dir / "model.safetensors").string(), tensors, {})
+               .ok(),
+           "qwen3 missing qnorm weights");
+    uaii::ir::Graph graph;
+    const uaii::Error lerr = uaii::loaders::HfLoader{}.load(dir.string(), &graph);
+    expect(!lerr.ok(), "qwen3 without q_norm fails");
+    uaii::loaders::HfCapability cap;
+    expect(uaii::loaders::hf_inspect_directory(dir.string(), &cap).ok(), "inspect qwen3 missing");
+    expect(!cap.ok(), "qwen3 missing blocked");
+    fs::remove_all(dir, ec);
+  }
+  {
+    const fs::path dir = fs::temp_directory_path() / "uaii_gemma_offset";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    {
+      std::ofstream cfg(dir / "config.json");
+      cfg << R"({
+  "architectures": ["GemmaForCausalLM"],
+  "model_type": "gemma",
+  "hidden_size": 32,
+  "num_hidden_layers": 1,
+  "num_attention_heads": 4,
+  "num_key_value_heads": 1,
+  "intermediate_size": 64,
+  "vocab_size": 32,
+  "max_position_embeddings": 128,
+  "hidden_act": "gelu_pytorch_tanh",
+  "tie_word_embeddings": true
+})";
+    }
+    std::unordered_map<std::string, std::pair<uaii::Shape, std::vector<float>>> tensors;
+    put_llama_like(&tensors, false, false);
+    expect(uaii::loaders::safetensors_write_f32((dir / "model.safetensors").string(), tensors, {})
+               .ok(),
+           "gemma weights");
+    uaii::ir::Graph graph;
+    const uaii::Error lerr = uaii::loaders::HfLoader{}.load(dir.string(), &graph);
+    expect(lerr.ok(), "load gemma");
+    if (!lerr.ok()) std::cerr << "  " << lerr.to_string() << '\n';
+    bool offset = false, gelu = false;
+    for (const auto& n : graph.nodes) {
+      if (n.op_name == "RMSNorm") {
+        for (const auto& a : n.attributes) {
+          if (a.key == "offset") offset = true;
+        }
+      }
+      if (n.op_name == "Gelu") gelu = true;
+    }
+    expect(offset, "Gemma RMSNorm offset attr");
+    expect(gelu, "Gemma GeGLU uses Gelu");
+    fs::remove_all(dir, ec);
+  }
+  {
+    const fs::path dir = fs::temp_directory_path() / "uaii_gemma2_extra";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    {
+      std::ofstream cfg(dir / "config.json");
+      cfg << R"({
+  "architectures": ["Gemma2ForCausalLM"],
+  "model_type": "gemma2",
+  "hidden_size": 32,
+  "num_hidden_layers": 1,
+  "num_attention_heads": 4,
+  "num_key_value_heads": 2,
+  "intermediate_size": 64,
+  "vocab_size": 32,
+  "max_position_embeddings": 128,
+  "sliding_window": 8,
+  "attn_logit_softcapping": 50.0,
+  "final_logit_softcapping": 30.0,
+  "hidden_act": "gelu_pytorch_tanh",
+  "tie_word_embeddings": true
+})";
+    }
+    std::unordered_map<std::string, std::pair<uaii::Shape, std::vector<float>>> tensors;
+    put_llama_like(&tensors, false, true);
+    expect(uaii::loaders::safetensors_write_f32((dir / "model.safetensors").string(), tensors, {})
+               .ok(),
+           "gemma2 weights");
+    uaii::ir::Graph graph;
+    const uaii::Error lerr = uaii::loaders::HfLoader{}.load(dir.string(), &graph);
+    expect(lerr.ok(), "load gemma2");
+    if (!lerr.ok()) std::cerr << "  " << lerr.to_string() << '\n';
+    bool post_attn = false, post_mlp = false, slide = false, cap = false, softcap = false;
+    for (const auto& n : graph.nodes) {
+      if (n.name.find("post_attn") != std::string::npos) post_attn = true;
+      if (n.name.find("post_mlp") != std::string::npos) post_mlp = true;
+      if (n.op_name == "Attention") {
+        for (const auto& a : n.attributes) {
+          if (a.key == "sliding_window") slide = true;
+          if (a.key == "logit_softcap") cap = true;
+        }
+      }
+      if (n.op_name == "Softcap") softcap = true;
+    }
+    expect(post_attn && post_mlp, "Gemma2 extra residual norms");
+    expect(slide, "Gemma2 sliding_window on attn");
+    expect(cap, "Gemma2 attn logit softcap");
+    expect(softcap, "Gemma2 final logit softcap");
+    fs::remove_all(dir, ec);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -679,12 +963,17 @@ int main() {
   test_hf_gpt2_layout();
   test_parse_llama3_rope_scaling();
   test_reject_unknown_rope_scaling();
+  test_reject_unknown_hidden_act();
+  test_parse_longrope_with_factors();
+  test_parse_alibi_rejected();
   test_parse_gpt_oss();
   test_index_unique_shards();
+  test_verify_two_shard_pull();
   test_safetensors_dtypes();
   test_bf16_llama_load_and_inspect();
   test_inspect_gptq_mla_gptoss();
   test_gguf_mla_inspect();
+  test_qwen3_qk_norm_and_gemma();
 
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";

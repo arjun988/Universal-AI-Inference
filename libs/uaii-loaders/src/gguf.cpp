@@ -846,6 +846,18 @@ float kv_float_arch(const GgufFile& file, const std::string& arch, const char* s
   return def;
 }
 
+std::string kv_string_arch(const GgufFile& file, const std::string& arch, const char* suffix,
+                           const char* def = "") {
+  if (!arch.empty()) {
+    const std::string key = arch + "." + suffix;
+    auto it = file.kv.find(key);
+    if (it != file.kv.end()) return kv_string(file, key.c_str(), def);
+  }
+  const std::string llama_key = std::string("llama.") + suffix;
+  if (file.kv.find(llama_key) != file.kv.end()) return kv_string(file, llama_key.c_str(), def);
+  return def;
+}
+
 bool looks_like_moe(const GgufFile& file, const std::string& arch) {
   if (kv_i64_arch(file, arch, "expert_count", 0) > 0) return true;
   static const char* kMoEHints[] = {
@@ -1018,6 +1030,21 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
     const std::int64_t q_dim = n_heads * head_dim;
     const std::int64_t kv_dim = n_kv_heads * head_dim;
     const float rope_theta = kv_float_arch(file, arch, "rope.freq_base", 10000.f);
+    std::string rope_scale_type =
+        lower_ascii(kv_string_arch(file, arch, "rope.scaling.type", ""));
+    if (rope_scale_type.empty()) {
+      rope_scale_type = lower_ascii(kv_string_arch(file, arch, "rope.scaling.rope_type", ""));
+    }
+    const float rope_scale_factor = kv_float_arch(file, arch, "rope.scaling.factor", 1.f);
+    const float rope_low_f = kv_float_arch(file, arch, "rope.scaling.low_freq_factor", 1.f);
+    const float rope_high_f = kv_float_arch(file, arch, "rope.scaling.high_freq_factor", 4.f);
+    const float rope_old_ctx = kv_float_arch(
+        file, arch, "rope.scaling.original_context_length",
+        kv_float_arch(file, arch, "context_length", 8192.f));
+    const float rope_attn_factor = kv_float_arch(file, arch, "rope.scaling.attn_factor", 1.f);
+    const std::int64_t gguf_sliding =
+        kv_i64_arch(file, arch, "attention.sliding_window",
+                    kv_i64_arch(file, arch, "sliding_window", 0));
     // llama.cpp rope type: 0=NORMAL (interleaved), 2=NEOX (half pairing).
     // Qwen2/Phi/Falcon and many non-Llama GGUFs need NeoX.
     const int rope_mode =
@@ -1168,6 +1195,8 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       TensorId w_gate_shexp = 0;
       TensorId w_up_shexp = 0;
       TensorId w_down_shexp = 0;
+      TensorId w_q_norm = 0;
+      TensorId w_k_norm = 0;
       TensorId w_qkv = 0;
       TensorId b_qkv = 0;
       TensorId attn_norm_b = 0;
@@ -1183,6 +1212,10 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
       err = add_weight_ref(pfx + "attn_k.weight", &wk);
       if (!err.ok()) return err;
       err = add_weight_ref(pfx + "attn_v.weight", &wv);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_q_norm.weight", &w_q_norm);
+      if (!err.ok()) return err;
+      err = add_weight_ref(pfx + "attn_k_norm.weight", &w_k_norm);
       if (!err.ok()) return err;
       // DeepSeek MLA (expand-then-attend): optional Q-LoRA + KV absorb/expand.
       TensorId w_q_a = 0;
@@ -1478,6 +1511,31 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         }
       }
 
+      if (w_q_norm) {
+        TensorId qn = b.add_tensor(pfx + "q_n", DType::F32, Shape{{1, layer_q_dim}});
+        b.add_node(pfx + "q_norm", "RMSNorm", "1", {q, w_q_norm}, {qn},
+                   {ir::make_float_attr("eps", rms_eps)});
+        q = qn;
+      }
+      if (w_k_norm) {
+        TensorId kn = b.add_tensor(pfx + "k_n", DType::F32, Shape{{1, layer_kv_dim}});
+        b.add_node(pfx + "k_norm", "RMSNorm", "1", {k, w_k_norm}, {kn},
+                   {ir::make_float_attr("eps", rms_eps)});
+        k = kn;
+      }
+
+      auto add_gguf_rope_scale = [&](std::vector<ir::Attribute>* attrs) {
+        if (rope_scale_type.empty() || rope_scale_type == "none" || rope_scale_type == "default") {
+          return;
+        }
+        attrs->push_back(ir::make_string_attr("scale_type", rope_scale_type));
+        attrs->push_back(ir::make_float_attr("scale_factor", rope_scale_factor));
+        attrs->push_back(ir::make_float_attr("low_freq_factor", rope_low_f));
+        attrs->push_back(ir::make_float_attr("high_freq_factor", rope_high_f));
+        attrs->push_back(ir::make_float_attr("old_context_len", rope_old_ctx > 0.f ? rope_old_ctx : 8192.f));
+        attrs->push_back(ir::make_float_attr("attn_factor", rope_attn_factor));
+      };
+
       TensorId q_rope = b.add_tensor(pfx + "q_rope", DType::F32, Shape{{1, layer_q_dim}});
       TensorId k_rope = b.add_tensor(pfx + "k_rope", DType::F32, Shape{{1, layer_kv_dim}});
       {
@@ -1488,6 +1546,7 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         if (is_mla && qk_rope_head_dim > 0 && layer_rope_hd > qk_rope_head_dim) {
           q_rope_attrs.push_back(ir::make_int_attr("rotary_dim", qk_rope_head_dim));
         }
+        add_gguf_rope_scale(&q_rope_attrs);
         b.add_node(pfx + "q_rope", "RoPE", "1", {q}, {q_rope}, q_rope_attrs);
       }
       if (mla_k_assembled) {
@@ -1501,6 +1560,7 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
         if (is_mla && qk_rope_head_dim > 0 && layer_rope_hd > qk_rope_head_dim) {
           k_rope_attrs.push_back(ir::make_int_attr("rotary_dim", qk_rope_head_dim));
         }
+        add_gguf_rope_scale(&k_rope_attrs);
         b.add_node(pfx + "k_rope", "RoPE", "1", {k}, {k_rope}, k_rope_attrs);
       }
 
@@ -1514,6 +1574,9 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
             ir::make_int_attr("layer_id", li)};
         if (attn_softcap > 0.f) {
           attn_attrs.push_back(ir::make_float_attr("logit_softcap", attn_softcap));
+        }
+        if (gguf_sliding > 0) {
+          attn_attrs.push_back(ir::make_int_attr("sliding_window", gguf_sliding));
         }
         b.add_node(pfx + "attn", "Attention", "1", {q_rope, k_rope, v}, {attn}, attn_attrs);
       }
@@ -1651,7 +1714,9 @@ Error GgufLoader::load(const std::string& path, ir::Graph* out_graph) {
                    {ir::make_bool_attr("transpose_b", true)});
         TensorId gate_act =
             b.add_tensor(pfx + "gate_act", DType::F32, Shape{{1, inter_dim}});
-        b.add_node(pfx + "silu", "Silu", "1", {gate}, {gate_act});
+        b.add_node(pfx + "silu", (arch == "gemma" || arch == "gemma2" || arch == "gemma3") ? "Gelu"
+                                                                                           : "Silu",
+                   "1", {gate}, {gate_act});
         TensorId ff_hid =
             b.add_tensor(pfx + "ff_hid", DType::F32, Shape{{1, inter_dim}});
         b.add_node(pfx + "ff_mul", "Mul", "1", {gate_act, up}, {ff_hid});

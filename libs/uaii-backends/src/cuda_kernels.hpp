@@ -23,10 +23,12 @@ namespace cuda_kernels {
 
 /// RoPE: layout [rows, dim]. mode 0 = interleaved pairs; mode 2 = NeoX (i, i+half).
 /// positions may be null (use base_pos + row). rotary_dim 0 ⇒ rotate full rope_chunk.
+/// inv_freq is [rotary_dim/2] scaled inverse frequencies (host-computed). mscale is YaRN.
 [[nodiscard]] int launch_rope_f32(const float* x, float* y, std::int64_t rows,
                                   std::int64_t dim, std::int64_t rope_chunk,
                                   std::int64_t rotary_dim, int mode, float theta,
-                                  float base_pos, const float* positions, void* stream);
+                                  float base_pos, const float* positions,
+                                  const float* inv_freq, float mscale, void* stream);
 
 /// Optional Gemma-2 style softcap: y[i] = cap * tanh(x[i] / cap). In-place OK.
 [[nodiscard]] int launch_logit_softcap_f32(const float* x, float* y, std::size_t n,

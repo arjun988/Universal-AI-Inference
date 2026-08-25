@@ -144,29 +144,44 @@ Error embedding_f32(const TensorView& tokens,
 
 float rope_scaled_inv_freq(std::int64_t pair_index, std::int64_t n_pairs, float theta,
                            const char* scale_type, float scale_factor, float low_freq_factor,
-                           float high_freq_factor, float old_context_len) {
+                           float high_freq_factor, float old_context_len, float seq_len,
+                           const float* short_factor, const float* long_factor, int n_factors) {
   if (n_pairs <= 0 || pair_index < 0) return 0.f;
   const float dim = static_cast<float>(n_pairs * 2);
   const float i = static_cast<float>(pair_index);
   const float base_theta = theta > 0.f ? theta : 10000.f;
   float inv = 1.f / std::pow(base_theta, (2.f * i) / dim);
   const std::string kind = scale_type ? scale_type : "";
-  if (kind.empty() || kind == "none" || kind == "default" || kind == "su") {
+  if (kind.empty() || kind == "none" || kind == "default") {
     return inv;
   }
   const float factor = scale_factor > 0.f ? scale_factor : 1.f;
+  const float old_ctx = old_context_len > 0.f ? old_context_len : 8192.f;
+  const float seq = seq_len > 0.f ? seq_len : old_ctx;
   if (kind == "linear") {
     return inv / factor;
   }
   if (kind == "dynamic") {
-    if (dim > 2.f && factor > 1.f) {
-      const float scaled_theta = base_theta * std::pow(factor, dim / (dim - 2.f));
-      inv = 1.f / std::pow(scaled_theta, (2.f * i) / dim);
+    // Hugging Face DynamicNTKScalingRotaryEmbedding: scale base when seq > orig ctx.
+    if (dim > 2.f && seq > old_ctx) {
+      const float ntk = factor * (seq / old_ctx) - (factor - 1.f);
+      if (ntk > 0.f) {
+        const float scaled_theta = base_theta * std::pow(ntk, dim / (dim - 2.f));
+        inv = 1.f / std::pow(scaled_theta, (2.f * i) / dim);
+      }
+    }
+    return inv;
+  }
+  if (kind == "longrope" || kind == "su") {
+    const float* fac = (seq > old_ctx) ? long_factor : short_factor;
+    if (fac == nullptr) fac = short_factor;
+    if (fac != nullptr && pair_index < n_factors) {
+      const float f = fac[pair_index];
+      if (f > 0.f) inv /= f;
     }
     return inv;
   }
   if (kind == "llama3") {
-    const float old_ctx = old_context_len > 0.f ? old_context_len : 8192.f;
     const float low_f = low_freq_factor > 0.f ? low_freq_factor : 1.f;
     const float high_f = high_freq_factor > 0.f ? high_freq_factor : 4.f;
     constexpr float kPi = 3.14159265358979323846f;
@@ -182,12 +197,12 @@ float rope_scaled_inv_freq(std::int64_t pair_index, std::int64_t n_pairs, float 
   if (kind == "yarn") {
     // Hugging Face YaRN: interpolation vs extrapolation ramp (beta_fast=32, beta_slow=1).
     constexpr float kPi = 3.14159265358979323846f;
-    const float old_ctx = old_context_len > 0.f ? old_context_len : 2048.f;
+    const float yarn_ctx = old_context_len > 0.f ? old_context_len : 2048.f;
     const float inv_extrap = inv;
     const float inv_interp = inv / factor;
     auto correction_dim = [&](float num_rotations) -> float {
-      if (!(base_theta > 1.f) || !(old_ctx > 0.f) || num_rotations <= 0.f) return 0.f;
-      return (dim * std::log(old_ctx / (num_rotations * 2.f * kPi))) /
+      if (!(base_theta > 1.f) || !(yarn_ctx > 0.f) || num_rotations <= 0.f) return 0.f;
+      return (dim * std::log(yarn_ctx / (num_rotations * 2.f * kPi))) /
              (2.f * std::log(base_theta));
     };
     float low = std::floor(correction_dim(32.f));
@@ -216,7 +231,10 @@ Error rope_f32(const TensorView& in,
                float low_freq_factor,
                float high_freq_factor,
                float old_context_len,
-               float attn_factor) {
+               float attn_factor,
+               const float* short_factor,
+               const float* long_factor,
+               int n_factors) {
   if (out == nullptr || in.data == nullptr || out->data == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "rope null");
   }
@@ -250,8 +268,8 @@ Error rope_f32(const TensorView& in,
 
   const std::string scale_kind = scale_type ? scale_type : "";
   if (!scale_kind.empty() && scale_kind != "none" && scale_kind != "default" &&
-      scale_kind != "su" && scale_kind != "linear" && scale_kind != "llama3" &&
-      scale_kind != "dynamic" && scale_kind != "yarn") {
+      scale_kind != "linear" && scale_kind != "llama3" && scale_kind != "dynamic" &&
+      scale_kind != "yarn" && scale_kind != "longrope" && scale_kind != "su") {
     return Error::make(ErrorCode::NotImplemented,
                        "unsupported rope_scaling.type=" + scale_kind);
   }
@@ -287,9 +305,9 @@ Error rope_f32(const TensorView& in,
       if (neox) {
         // NeoX / GPT-NeoX: pair (i, i + half) — required by Qwen2/Phi/Falcon.
         for (std::int64_t i = 0; i < half; ++i) {
-          const float freq = rope_scaled_inv_freq(i, half, theta, scale_type, scale_factor,
-                                                  low_freq_factor, high_freq_factor,
-                                                  old_context_len);
+          const float freq = rope_scaled_inv_freq(
+              i, half, theta, scale_type, scale_factor, low_freq_factor, high_freq_factor,
+              old_context_len, pos + 1.f, short_factor, long_factor, n_factors);
           const float angle = pos * freq;
           const float c = std::cos(angle) * yarn_mscale;
           const float s = std::sin(angle) * yarn_mscale;
@@ -301,9 +319,10 @@ Error rope_f32(const TensorView& in,
       } else {
         // Interleaved pairs (i, i+1) — llama.cpp NORMAL / GPT-J style.
         for (std::int64_t i = 0; i < rot; i += 2) {
-          const float freq =
-              rope_scaled_inv_freq(i / 2, half, theta, scale_type, scale_factor,
-                                   low_freq_factor, high_freq_factor, old_context_len);
+          const float freq = rope_scaled_inv_freq(
+              i / 2, half, theta, scale_type, scale_factor, low_freq_factor,
+              high_freq_factor, old_context_len, pos + 1.f, short_factor, long_factor,
+              n_factors);
           const float angle = pos * freq;
           const float c = std::cos(angle) * yarn_mscale;
           const float s = std::sin(angle) * yarn_mscale;
@@ -373,7 +392,8 @@ Error attention_kv_f32(const TensorView& q,
                        const TensorView* past_v,
                        TensorView* present_k,
                        TensorView* present_v,
-                       float logit_softcap) {
+                       float logit_softcap,
+                       std::int64_t sliding_window) {
   if (out == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "attention out null");
   }
@@ -495,6 +515,10 @@ Error attention_kv_f32(const TensorView& q,
             scores[static_cast<std::size_t>(i * kv_seq + j)] = -1e9f;
             continue;
           }
+          if (sliding_window > 0 && j + sliding_window <= abs_i) {
+            scores[static_cast<std::size_t>(i * kv_seq + j)] = -1e9f;
+            continue;
+          }
           float dot = 0;
           for (std::int64_t d = 0; d < head_dim; ++d) {
             const std::size_t qi =
@@ -608,9 +632,29 @@ Error attention_f32(const TensorView& q,
                     int num_heads,
                     float scale,
                     bool causal,
-                    float logit_softcap) {
+                    float logit_softcap,
+                    std::int64_t sliding_window) {
   return attention_kv_f32(q, k, v, out, num_heads, scale, causal, nullptr, nullptr,
-                          nullptr, nullptr, logit_softcap);
+                          nullptr, nullptr, logit_softcap, sliding_window);
+}
+
+Error positions_f32(const TensorView& tokens, TensorView* out) {
+  if (out == nullptr || tokens.data == nullptr || out->data == nullptr) {
+    return Error::make(ErrorCode::InvalidArgument, "positions null");
+  }
+  if (tokens.dtype != DType::F32 || out->dtype != DType::F32) {
+    return Error::make(ErrorCode::InvalidArgument, "positions f32");
+  }
+  if (tokens.numel() != out->numel()) {
+    return Error::make(ErrorCode::InvalidArgument, "positions shape");
+  }
+  const std::int64_t base =
+      (active_kv_cache() != nullptr) ? active_kv_cache()->rope_pos() : 0;
+  float* y = out->f32();
+  for (std::size_t i = 0; i < tokens.numel(); ++i) {
+    y[i] = static_cast<float>(base + static_cast<std::int64_t>(i));
+  }
+  return Error::success();
 }
 
 Error moe_router_f32(const TensorView& x,

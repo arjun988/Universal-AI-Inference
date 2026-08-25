@@ -224,10 +224,11 @@ export default function HomePage() {
             <div className="bento-item">
               <h3>Hugging Face decoder-only</h3>
               <p>
-                Hub folders load directly: strict <code>config.json</code> parsing, sharded
-                weights, RoPE and GQA, tied embeddings. Any <code>*ForCausalLM</code>, GPT-2, or
-                Mixtral layout that maps to the IR is supported. Vision, SSM, and HF MLA are
-                not.
+                Hub folders load when layout, dtype, and family math match: Llama, Qwen2/3,
+                Mistral/Mixtral, Gemma, GPT-2. Probe with <code>uaii inspect</code> —{" "}
+                <code>status: ok</code> means the graph is wired, not merely that tensors
+                exist. Unknown families and quantized Hub repos fail closed. Vision, SSM, HF
+                MLA, and gpt-oss packing are not loaded.
               </p>
               <div className="chip-row">
                 <span className="chip">uaii pull</span>

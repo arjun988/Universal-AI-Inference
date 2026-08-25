@@ -31,16 +31,30 @@ struct HfConfig {
   std::int64_t num_experts = 0;
   std::int64_t num_experts_per_tok = 0;
   std::string hidden_act;  // silu / gelu / ...
+  std::string hidden_act_op;  // Silu / Gelu / Relu / Relu2
   std::string chat_template;  // optional from tokenizer_config.json
-  /// rope_scaling.rope_type / type: empty, linear, llama3, dynamic, yarn.
+  /// rope_scaling.rope_type / type: empty, linear, llama3, dynamic, yarn, longrope.
   std::string rope_scaling_type;
   float rope_scale_factor = 1.f;
   float rope_low_freq_factor = 1.f;
   float rope_high_freq_factor = 4.f;
   float rope_original_max_pos = 0.f;
   float rope_attn_factor = 1.f;
+  std::vector<double> rope_short_factor;
+  std::vector<double> rope_long_factor;
   std::string quant_method;
   bool mxfp4 = false;
+  /// Gemma RMSNorm is x * rsqrt * (1+w). Llama is * w.
+  float rms_offset = 0.f;
+  std::int64_t sliding_window = 0;
+  /// Per-layer window; 0 = full causal. Empty → every layer uses sliding_window.
+  std::vector<std::int64_t> layer_sliding_window;
+  float attn_logit_softcapping = 0.f;
+  float final_logit_softcapping = 0.f;
+  float partial_rotary_factor = 1.f;
+  std::int64_t rotary_dim = 0;
+  bool use_parallel_residual = false;
+  std::string position_embedding_type;
 };
 
 struct HfCapability {
@@ -65,6 +79,10 @@ struct HfCapability {
 /// Unique shard filenames from a Hub weight index JSON (`weight_map` values).
 [[nodiscard]] UAII_API Error hf_index_unique_shards(const std::string& index_json,
                                                     std::vector<std::string>* shards);
+
+/// True when every listed shard exists as a non-empty file under `dir`.
+[[nodiscard]] UAII_API Error hf_verify_shards_present(const std::string& dir,
+                                                      const std::vector<std::string>& shards);
 
 /// Map architecture / model_type to the product family name (llama, qwen2, gpt_oss, …).
 [[nodiscard]] UAII_API std::string hf_family_name(const std::string& architecture,

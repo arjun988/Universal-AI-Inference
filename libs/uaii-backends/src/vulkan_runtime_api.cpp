@@ -423,6 +423,11 @@ Error dispatch_rmsnorm_mapped(const std::vector<kernels::TensorView>& inputs,
     w = inputs[1].f32();
   }
   const float eps = attr_float(attrs, "eps", 1e-5f);
+  const float offset = attr_float(attrs, "offset", 0.f);
+  if (inputs.size() > 1 && inputs[1].data != nullptr &&
+      static_cast<std::int64_t>(inputs[1].numel()) != cols) {
+    return Error::make(ErrorCode::NotImplemented, "Vulkan RMSNorm QK-norm uses CPU kernel");
+  }
   for (std::int64_t r = 0; r < rows; ++r) {
     const float* row = x + r * cols;
     float* out = y + r * cols;
@@ -434,7 +439,7 @@ Error dispatch_rmsnorm_mapped(const std::vector<kernels::TensorView>& inputs,
     const float inv = 1.0f / std::sqrt(acc / static_cast<float>(cols) + eps);
     if (w != nullptr) {
       for (std::int64_t c = 0; c < cols; ++c) {
-        out[c] = row[c] * inv * w[c];
+        out[c] = row[c] * inv * (w[c] + offset);
       }
     } else {
       for (std::int64_t c = 0; c < cols; ++c) {

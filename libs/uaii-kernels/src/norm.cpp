@@ -89,21 +89,32 @@ Error layernorm_f32(const TensorView& in,
 Error rmsnorm_f32(const TensorView& in,
                   const TensorView* weight,
                   TensorView* out,
-                  float eps) {
+                  float eps,
+                  float offset) {
   Error err = check_last_axis_norm(in, out);
   if (!err.ok()) {
     return err;
   }
 
-  const std::size_t axis = static_cast<std::size_t>(in.dim(in.rank - 1));
+  const std::size_t last = static_cast<std::size_t>(in.dim(in.rank - 1));
   std::size_t rows = 1;
   for (std::size_t i = 0; i + 1 < in.rank; ++i) {
     rows *= static_cast<std::size_t>(in.dim(i));
   }
 
+  std::size_t axis = last;
   if (weight != nullptr) {
-    if (weight->dtype != DType::F32 || weight->numel() != axis) {
+    if (weight->dtype != DType::F32 || weight->numel() == 0) {
       return Error::make(ErrorCode::InvalidArgument, "RMSNorm weight shape");
+    }
+    const std::size_t w_n = weight->numel();
+    if (w_n != last) {
+      if (last % w_n != 0) {
+        return Error::make(ErrorCode::InvalidArgument, "RMSNorm weight shape");
+      }
+      // QK-norm: weight is [head_dim], activation last axis is n_heads * head_dim.
+      rows *= last / w_n;
+      axis = w_n;
     }
   }
 
@@ -121,9 +132,8 @@ Error rmsnorm_f32(const TensorView& in,
     ms /= static_cast<float>(axis);
     const float inv = 1.0f / std::sqrt(ms + eps);
     for (std::size_t i = 0; i < axis; ++i) {
-      float v = row[i] * inv;
-      if (w) v *= w[i];
-      out_row[i] = v;
+      const float scale = w ? (w[i] + offset) : 1.0f;
+      out_row[i] = row[i] * inv * scale;
     }
   }
   return Error::success();

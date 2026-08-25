@@ -3,6 +3,9 @@
 #include "uaii/plugins/operator_host.hpp"
 #include "uaii/runtime/kv_cache.hpp"
 
+#include <algorithm>
+#include <vector>
+
 namespace uaii {
 namespace kernels {
 namespace {
@@ -57,6 +60,15 @@ std::vector<std::int64_t> attr_int_array(const std::vector<ir::Attribute>& attrs
   return {};
 }
 
+std::vector<double> attr_float_array(const std::vector<ir::Attribute>& attrs, const char* key) {
+  for (const auto& a : attrs) {
+    if (a.key == key && a.type == ir::AttributeType::FloatArray) {
+      return std::get<std::vector<double>>(a.value);
+    }
+  }
+  return {};
+}
+
 }  // namespace
 
 bool supports_cpu_op(const std::string& op_name, const std::string& /*op_version*/) noexcept {
@@ -65,9 +77,11 @@ bool supports_cpu_op(const std::string& op_name, const std::string& /*op_version
   }
   return op_name == "MatMul" || op_name == "MatMulRelu" || op_name == "Softmax" ||
          op_name == "LayerNorm" || op_name == "RMSNorm" || op_name == "Relu" ||
-         op_name == "Gelu" || op_name == "Silu" || op_name == "Add" || op_name == "Mul" ||
+         op_name == "Gelu" || op_name == "Silu" || op_name == "Relu2" || op_name == "Softcap" ||
+         op_name == "Add" || op_name == "Mul" ||
          op_name == "Neg" || op_name == "Identity" || op_name == "Embedding" ||
-         op_name == "RoPE" || op_name == "MLAExpandK" || op_name == "Attention" ||
+         op_name == "Positions" || op_name == "RoPE" || op_name == "MLAExpandK" ||
+         op_name == "Attention" ||
          op_name == "MoERouter" ||
          op_name == "MoEExperts" || op_name == "MoEExpertsSwiGLU" ||
          op_name == "Reshape" || op_name == "Transpose" || op_name == "Slice" ||
@@ -129,7 +143,8 @@ Error dispatch_cpu(const std::string& op_name,
       return Error::make(ErrorCode::InvalidArgument, "RMSNorm arity");
     }
     const TensorView* w = inputs.size() > 1 ? &inputs[1] : nullptr;
-    return rmsnorm_f32(inputs[0], w, &(*outputs)[0], attr_float(attrs, "eps", 1e-5f));
+    return rmsnorm_f32(inputs[0], w, &(*outputs)[0], attr_float(attrs, "eps", 1e-5f),
+                       attr_float(attrs, "offset", 0.f));
   }
   if (op_name == "Relu") {
     if (inputs.size() != 1 || outputs->size() != 1) {
@@ -164,6 +179,18 @@ Error dispatch_cpu(const std::string& op_name,
     }
     return silu_f32(inputs[0], &(*outputs)[0]);
   }
+  if (op_name == "Relu2") {
+    if (inputs.size() != 1 || outputs->size() != 1) {
+      return Error::make(ErrorCode::InvalidArgument, "Relu2 arity");
+    }
+    return relu2_f32(inputs[0], &(*outputs)[0]);
+  }
+  if (op_name == "Softcap") {
+    if (inputs.size() != 1 || outputs->size() != 1) {
+      return Error::make(ErrorCode::InvalidArgument, "Softcap arity");
+    }
+    return softcap_f32(inputs[0], &(*outputs)[0], attr_float(attrs, "cap", 0.f));
+  }
   if (op_name == "Add") {
     if (inputs.size() != 2 || outputs->size() != 1) {
       return Error::make(ErrorCode::InvalidArgument, "Add arity");
@@ -188,11 +215,23 @@ Error dispatch_cpu(const std::string& op_name,
     }
     return embedding_f32(inputs[0], inputs[1], &(*outputs)[0]);
   }
+  if (op_name == "Positions") {
+    if (inputs.size() != 1 || outputs->size() != 1) {
+      return Error::make(ErrorCode::InvalidArgument, "Positions arity");
+    }
+    return positions_f32(inputs[0], &(*outputs)[0]);
+  }
   if (op_name == "RoPE") {
     if (inputs.empty() || outputs->size() != 1) {
       return Error::make(ErrorCode::InvalidArgument, "RoPE arity");
     }
     const TensorView* pos = inputs.size() > 1 ? &inputs[1] : nullptr;
+    const auto short_f = attr_float_array(attrs, "short_factor");
+    const auto long_f = attr_float_array(attrs, "long_factor");
+    std::vector<float> short_f32(short_f.size()), long_f32(long_f.size());
+    for (std::size_t i = 0; i < short_f.size(); ++i) short_f32[i] = static_cast<float>(short_f[i]);
+    for (std::size_t i = 0; i < long_f.size(); ++i) long_f32[i] = static_cast<float>(long_f[i]);
+    const int nfac = static_cast<int>(std::max(short_f32.size(), long_f32.size()));
     return rope_f32(inputs[0], pos, &(*outputs)[0], attr_float(attrs, "theta", 10000.f),
                     attr_int(attrs, "head_dim", 0),
                     static_cast<int>(attr_int(attrs, "mode", 0)),
@@ -201,7 +240,9 @@ Error dispatch_cpu(const std::string& op_name,
                     attr_float(attrs, "low_freq_factor", 1.f),
                     attr_float(attrs, "high_freq_factor", 4.f),
                     attr_float(attrs, "old_context_len", 8192.f),
-                    attr_float(attrs, "attn_factor", 1.f));
+                    attr_float(attrs, "attn_factor", 1.f),
+                    short_f32.empty() ? nullptr : short_f32.data(),
+                    long_f32.empty() ? nullptr : long_f32.data(), nfac);
   }
   if (op_name == "MLAExpandK") {
     if (inputs.size() != 2 || outputs->size() != 1) {
@@ -223,6 +264,7 @@ Error dispatch_cpu(const std::string& op_name,
     const std::int64_t layer_id = attr_int(attrs, "layer_id", -1);
 
     const float logit_softcap = attr_float(attrs, "logit_softcap", 0.f);
+    const std::int64_t sliding_window = attr_int(attrs, "sliding_window", 0);
 
     // Explicit past_k/past_v inputs (size 5) and optional present outputs (size 3).
     if (inputs.size() >= 5) {
@@ -230,7 +272,7 @@ Error dispatch_cpu(const std::string& op_name,
       TensorView* present_v = outputs->size() >= 3 ? &(*outputs)[2] : nullptr;
       return attention_kv_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0],
                               num_heads, scale, causal, &inputs[3], &inputs[4],
-                              present_k, present_v, logit_softcap);
+                              present_k, present_v, logit_softcap, sliding_window);
     }
 
     runtime::KvCache* cache = active_kv_cache();
@@ -241,13 +283,13 @@ Error dispatch_cpu(const std::string& op_name,
       const TensorView* pv = past_v.data != nullptr ? &past_v : nullptr;
       Error err = attention_kv_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0],
                                    num_heads, scale, causal, pk, pv, nullptr, nullptr,
-                                   logit_softcap);
+                                   logit_softcap, sliding_window);
       if (!err.ok()) return err;
       return cache->append_layer(layer_id, inputs[1], inputs[2]);
     }
 
     return attention_f32(inputs[0], inputs[1], inputs[2], &(*outputs)[0], num_heads,
-                         scale, causal, logit_softcap);
+                         scale, causal, logit_softcap, sliding_window);
   }
   if (op_name == "MoERouter") {
     if (inputs.size() != 2 || outputs->size() < 2) {

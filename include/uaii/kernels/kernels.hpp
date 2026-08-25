@@ -27,14 +27,22 @@ namespace kernels {
                                            TensorView* out,
                                            float eps = 1e-5f);
 
+/// offset=1 → Gemma `(1+w)` scale. If weight numel divides the last axis,
+/// RMSNorm is applied independently on each chunk (QK-norm per head).
 [[nodiscard]] UAII_API Error rmsnorm_f32(const TensorView& in,
                                          const TensorView* weight,
                                          TensorView* out,
-                                         float eps = 1e-5f);
+                                         float eps = 1e-5f,
+                                         float offset = 0.f);
 
 [[nodiscard]] UAII_API Error relu_f32(const TensorView& in, TensorView* out);
+[[nodiscard]] UAII_API Error relu2_f32(const TensorView& in, TensorView* out);
 [[nodiscard]] UAII_API Error gelu_f32(const TensorView& in, TensorView* out);
 [[nodiscard]] UAII_API Error silu_f32(const TensorView& in, TensorView* out);
+/// y = cap * tanh(x / cap). cap <= 0 is identity.
+[[nodiscard]] UAII_API Error softcap_f32(const TensorView& in, TensorView* out, float cap);
+/// Fill `out` with absolute positions (KV rope_pos + row). `tokens` is shape-only.
+[[nodiscard]] UAII_API Error positions_f32(const TensorView& tokens, TensorView* out);
 
 [[nodiscard]] UAII_API Error add_f32(const TensorView& a,
                                      const TensorView& b,
@@ -71,9 +79,13 @@ namespace kernels {
                                       float low_freq_factor = 1.f,
                                       float high_freq_factor = 4.f,
                                       float old_context_len = 8192.f,
-                                      float attn_factor = 1.f);
+                                      float attn_factor = 1.f,
+                                      const float* short_factor = nullptr,
+                                      const float* long_factor = nullptr,
+                                      int n_factors = 0);
 
 /// Inverse frequency after Hugging Face rope_scaling (pair index 0 .. n_pairs-1).
+/// seq_len is used by dynamic NTK and longrope/su (0 → old_context_len).
 [[nodiscard]] UAII_API float rope_scaled_inv_freq(std::int64_t pair_index,
                                                   std::int64_t n_pairs,
                                                   float theta,
@@ -81,7 +93,11 @@ namespace kernels {
                                                   float scale_factor,
                                                   float low_freq_factor,
                                                   float high_freq_factor,
-                                                  float old_context_len);
+                                                  float old_context_len,
+                                                  float seq_len = 0.f,
+                                                  const float* short_factor = nullptr,
+                                                  const float* long_factor = nullptr,
+                                                  int n_factors = 0);
 
 /// Assemble MLA K: per head concat(k_nope, broadcast(k_rope)).
 /// k_nope: [B, H*nope], k_rope: [B, rope], out: [B, H*(nope+rope)].
@@ -100,9 +116,11 @@ namespace kernels {
                                            int num_heads,
                                            float scale,
                                            bool causal,
-                                           float logit_softcap = 0.f);
+                                           float logit_softcap = 0.f,
+                                           std::int64_t sliding_window = 0);
 
 /// MHA with optional past K/V. logit_softcap > 0 applies Gemma-2-style tanh capping.
+/// sliding_window > 0 masks keys older than abs_i - sliding_window + 1.
 [[nodiscard]] UAII_API Error attention_kv_f32(const TensorView& q,
                                               const TensorView& k,
                                               const TensorView& v,
@@ -114,7 +132,8 @@ namespace kernels {
                                               const TensorView* past_v,
                                               TensorView* present_k,
                                               TensorView* present_v,
-                                              float logit_softcap = 0.f);
+                                              float logit_softcap = 0.f,
+                                              std::int64_t sliding_window = 0);
 
 /// MoE router: logits = x @ gate_w^T ; probs = softmax; returns top-1 expert index in out_index (f32)
 [[nodiscard]] UAII_API Error moe_router_f32(const TensorView& x,

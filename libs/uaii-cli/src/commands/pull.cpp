@@ -218,9 +218,10 @@ int cmd_pull(const std::vector<std::string>& args) {
     }
   }
 
-  for (const auto& shard : shards) {
-    if (!file_nonempty(fs::path(outdir) / shard)) {
-      std::cerr << "pull incomplete: missing shard " << shard << "\n";
+  {
+    Error verr = loaders::hf_verify_shards_present(outdir, shards);
+    if (!verr.ok()) {
+      std::cerr << verr.message() << "\n";
       return 1;
     }
   }

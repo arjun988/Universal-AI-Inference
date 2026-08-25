@@ -62,6 +62,24 @@ struct Attribute {
   return a;
 }
 
+[[nodiscard]] inline Attribute make_int_array_attr(std::string key,
+                                                   std::vector<std::int64_t> value) {
+  Attribute a;
+  a.key = std::move(key);
+  a.type = AttributeType::IntArray;
+  a.value = std::move(value);
+  return a;
+}
+
+[[nodiscard]] inline Attribute make_float_array_attr(std::string key,
+                                                     std::vector<double> value) {
+  Attribute a;
+  a.key = std::move(key);
+  a.type = AttributeType::FloatArray;
+  a.value = std::move(value);
+  return a;
+}
+
 [[nodiscard]] inline const char* to_string(AttributeType type) noexcept {
   switch (type) {
     case AttributeType::String: return "string";

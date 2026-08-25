@@ -8,7 +8,9 @@ Related: [huggingface_support.md](huggingface_support.md) · [gguf_support.md](g
 
 This is an implementation contract, not a marketing page. Every item cites the current code path and the change that closes it.
 
-**P0 (this document §P0.1–P0.7) is implemented:** BF16 ingest, Llama-3/YaRN/linear/dynamic RoPE scaling, byte-level `tokenizer.json`, sharded `uaii pull`, `uaii inspect` / `generate --dry-run`, Kimi via GGUF MLA, gpt-oss fail-closed (MXFP4 / packing). P1+ remains open.
+**P0 (this document §P0.1–P0.7) is implemented:** BF16 ingest, Llama-3/YaRN/linear/dynamic RoPE scaling, byte-level `tokenizer.json`, sharded `uaii pull`, `uaii inspect` / `generate --dry-run`, Kimi via GGUF MLA, gpt-oss fail-closed (MXFP4 / packing).
+
+**P1 family math that used to load wrong is now wired:** Gemma RMSNorm `(1+w)`, Qwen3 QK-norm, GPT-2 `wpe`, sliding window, Gemma2 extra norms + logit cap, Phi partial rotary + longrope factors, unknown `hidden_act` fail-closed, Qwen2-MoE shared expert. `uaii inspect` `status: ok` is no longer a silent-wrong lie for those families. HF MLA and gpt-oss packing stay fail-closed.
 
 ---
 
@@ -31,12 +33,12 @@ Map brand → what actually exists on disk. API-only models are not Hub checkpoi
 
 | Brand (user language) | What we ship | HF `model_type` / class (examples) | GGUF arch | Today | Must close to call it supported |
 |---|---|---|---|---|---|
-| **Llama-like** | Llama 2/3/3.1/3.2, CodeLlama, TinyLlama, SmolLM, Olmo, Granite (dense) | `llama`, `olmo`, `olmo2`, `granite` · `LlamaForCausalLM` | `llama`, `llama3` | Layout + **BF16 ingest** + Llama-3 `rope_scaling`. Tokenizer byte-level BPE | P1 Gemma-class math still open; Olmo/Granite golden TBD |
-| **Qwen** | Qwen2, Qwen2.5, Qwen3 dense; Qwen2-MoE / Qwen3-MoE | `qwen2`, `qwen2_moe`, `qwen3`, `qwen3_moe` · `Qwen2ForCausalLM`, `Qwen3ForCausalLM` | `qwen2`, `qwen3`, `qwen2moe` | Dense layout + QKV bias + BF16 + RoPE scaling. **Qwen3 QK-norm missing.** MoE shared expert missing | P1.2, P2.3 |
-| **Mistral** | Mistral 7B / Nemo / Small (dense), Mixtral 8x7B / 8x22B | `mistral`, `mixtral` · `MistralForCausalLM`, `MixtralForCausalLM` | `mistral`, `mixtral` | Dense + Mixtral experts + BF16. Sliding window not applied | P1.4 |
-| **Kimi** | Moonshot **Kimi K2** (and K2-style) open weights | usually `deepseek_v3` / Kimi class · **MLA + MoE**, not Llama | `deepseek2` / `deepseekv3` when converted | **HF MLA rejected.** GGUF MLA expand path exists | **P0.6** (GGUF golden) then **P1.8** HF MLA bind. Shared expert P2.3 |
-| **OpenAI** | **Open-weight only:** GPT-2; **gpt-oss-20B / 120B**. Not ChatGPT / GPT-4 / o-series APIs (no weights) | `gpt2` · `GPT2LMHeadModel`; `gpt_oss` · `GptOssForCausalLM` | `gpt2` (often non-`blk`); gpt-oss when llama.cpp names it | GPT-2 layout yes, **`wpe` not applied**. gpt-oss is a **new family** (MoE, YaRN, sinks, often MXFP4) | P1.3 (GPT-2); **P0.7** gpt-oss handler or documented GGUF path |
-| **Gemini-class** | Google **Gemma / Gemma 2 / Gemma 3** (the open models). **Gemini** Pro/Flash APIs have no Hub checkpoint | `gemma`, `gemma2`, `gemma3` · `GemmaForCausalLM`, `Gemma2ForCausalLM` | `gemma`, `gemma2`, `gemma3` | Layout may match Llama-like tensors. **RMSNorm is `(1+w)` — wrong today.** Gemma2 extra norms, sliding window, logit cap missing | P0.1, P0.3, P1.1, P1.2, P1.4 |
+| **Llama-like** | Llama 2/3/3.1/3.2, CodeLlama, TinyLlama, SmolLM, Olmo, Granite (dense) | `llama`, `olmo`, `olmo2`, `granite` · `LlamaForCausalLM` | `llama`, `llama3` | Layout + BF16 ingest + Llama-3/YaRN/linear/dynamic RoPE + byte-level BPE | Hub greedy golden vs `transformers` (nightly) |
+| **Qwen** | Qwen2, Qwen2.5, Qwen3 dense; Qwen2-MoE / Qwen3-MoE | `qwen2`, `qwen2_moe`, `qwen3`, `qwen3_moe` · `Qwen2ForCausalLM`, `Qwen3ForCausalLM` | `qwen2`, `qwen3`, `qwen2moe` | Dense + QKV bias + BF16 + RoPE scaling + **Qwen3 QK-norm** + **shared expert** | Hub greedy golden |
+| **Mistral** | Mistral 7B / Nemo / Small (dense), Mixtral 8x7B / 8x22B | `mistral`, `mixtral` · `MistralForCausalLM`, `MixtralForCausalLM` | `mistral`, `mixtral` | Dense + Mixtral experts + BF16 + **sliding window** | Hub greedy golden |
+| **Kimi** | Moonshot **Kimi K2** (and K2-style) open weights | usually `deepseek_v3` / Kimi class · **MLA + MoE**, not Llama | `deepseek2` / `deepseekv3` when converted | **HF MLA rejected.** GGUF MLA expand path + tiny generate | llama.cpp greedy; absorbed MLA KV; **P1.8** HF MLA |
+| **OpenAI** | **Open-weight only:** GPT-2; **gpt-oss-20B / 120B**. Not ChatGPT / GPT-4 / o-series APIs (no weights) | `gpt2` · `GPT2LMHeadModel`; `gpt_oss` · `GptOssForCausalLM` | `gpt2` (often non-`blk`); gpt-oss when llama.cpp names it | GPT-2 layout + **`wpe`**. gpt-oss **fail-closed** (MXFP4 / packing), not silent Llama | **P0.7** gpt-oss family handler |
+| **Gemini-class** | Google **Gemma / Gemma 2 / Gemma 3** (the open models). **Gemini** Pro/Flash APIs have no Hub checkpoint | `gemma`, `gemma2`, `gemma3` · `GemmaForCausalLM`, `Gemma2ForCausalLM` | `gemma`, `gemma2`, `gemma3` | **RMSNorm `(1+w)`**, Gemma2 extra residual norms, sliding window, logit cap. GGUF Gemma must **not** add +1 again (llama.cpp already baked it in) | Hub greedy golden; Unigram JSON still needs SentencePiece |
 
 Vision/audio siblings stay denied: LLaVA, Pixtral, Qwen2-VL, Gemma multimodal towers, Kimi-VL.
 
@@ -44,11 +46,12 @@ Vision/audio siblings stay denied: LLaVA, Pixtral, Qwen2-VL, Gemma multimodal to
 
 No. After BF16 + tokenizer + Llama-3 RoPE:
 
-- **Llama-like dense and Mistral dense / Mixtral** — expected to generate (short context).
-- **Qwen2 / Qwen2.5 dense** — expected to generate; **Qwen3 still needs QK-norm**.
-- **Gemma** — will load and still be **wrong** until P1.1.
+- **Llama-like dense and Mistral dense / Mixtral** — expected to generate (short context; sliding window applied when advertised).
+- **Qwen2 / Qwen2.5 dense** — expected to generate; **Qwen3 QK-norm is wired**.
+- **Gemma / Gemma2** — RMSNorm `(1+w)`, extra Gemma2 residuals, sliding window, logit cap.
+- **GPT-2** — `wpe` is added.
 - **Kimi** — will **not** load from HF until MLA is wired; use GGUF meanwhile (P0.6).
-- **OpenAI gpt-oss** — will **not** load as GPT-2; needs P0.7.
+- **OpenAI gpt-oss** — will **not** load as GPT-2; needs the family handler (P0.7).
 - **Gemini API** — never. Point users at Gemma.
 
 That is why the family table is the done list, not “any decoder”.
@@ -67,7 +70,7 @@ Four independent gates. A model must pass all four.
 |---|---|---|---|
 | Architecture | `hf_architecture_supported` + `arch_denied` | suffix CausalLM / LMHeadModel, not on deny list, not `is_encoder_decoder` | LLaVA, Whisper, T5, Mamba, BERT |
 | Layout | `pick_layout` | known QKV + MLP / MoE tensor names | DeepSeek MLA, novel packing, GPTQ `qweight` |
-| Weights | `safetensors_load_tensor_f32` | tensor dtype is **F32 or F16 only** | almost every 2024–2026 checkpoint (BF16) |
+| Weights | `safetensors_load_tensor_f32` | tensor dtype is **F32, F16, or BF16** (I8/U8 promoted) | F8, GPTQ `qweight`, MXFP4 |
 | Tokenizer | `load_hf_tokenizer` | `vocab.json`+`merges.txt`, `tokenizer.model` (if SentencePiece built), or a BPE `tokenizer.json` | byte-level GPT-2 BPE without `byte_fallback`, Unigram JSON, added tokens |
 
 The website and `huggingface_support.md` previously described gate 1 as “any decoder folder”. That overclaim is what this document exists to retire.
@@ -155,6 +158,8 @@ These are the issues users hit first. Closing P0 makes Llama 3, Qwen 2.5, Mistra
 ---
 
 ### P1 — family math that loads today but is wrong or incomplete
+
+**Status (code):** P1.1–P1.7 and P2.3 shared expert are wired. `uaii inspect` `status: ok` requires the tensors those graphs need. Remaining: Hub/`transformers` greedy goldens (§5.2), HF MLA (P1.8, stay fail-closed), Jinja `chat_template` execution (family equivalent is used).
 
 Closing P1 makes **Gemma (Gemini-class)**, **GPT-2**, **Qwen3**, and **Kimi HF** match reference logits, not merely parse.
 
@@ -401,17 +406,20 @@ Nightly may skip gated repos. Merge CI must never depend on Hub or licenses.
 
 §1.1 is green, not “the Hub is done”.
 
-- [ ] Llama-like: P0.1–P0.3; golden greedy matches Hugging Face
-- [ ] Qwen2/2.5: same; Qwen3: P1.2
-- [ ] Mistral dense + Mixtral: P0.1, P0.3, P1.4
-- [ ] Gemma / Gemma2: P1.1, P1.2, P1.4 (this is the Gemini-class Hub path)
-- [ ] Kimi: P0.6 GGUF documented and tested; P1.8 if we claim HF folders
-- [ ] OpenAI: GPT-2 `wpe` (P1.3); gpt-oss P0.7 (`ok` or convert hint, never silent Llama)
-- [ ] `uaii inspect` prints `family=` from the table and `blocked:` outside it
-- [ ] Website Hugging Face page lists these six brands, dtypes F16/BF16, and the Gemini/ChatGPT API exclusion
-- [ ] GPTQ/AWQ/MXFP4/SSM either converted or rejected with §6 messages
-- [ ] No path copies BF16/F16 bits into f32 without conversion
-- [ ] No path applies RoPE without honouring `rope_scaling` when present
+- [x] Llama-like: P0.1–P0.3 ingest/RoPE/BPE (unit); Hub greedy vs Hugging Face still nightly
+- [x] Qwen2/2.5 layout; Qwen3 QK-norm (P1.2) + shared expert (P2.3)
+- [x] Mistral dense + Mixtral: sliding window (P1.4)
+- [x] Gemma / Gemma2: RMSNorm `(1+w)`, extra norms, sliding, logit cap (P1.1/P1.4)
+- [x] Kimi: P0.6 GGUF tiny generate + `blocked: HF MLA; use GGUF`; P1.8 HF folders still denied
+- [x] OpenAI: GPT-2 `wpe` (P1.3); gpt-oss P0.7 fail-closed (`ok` never means silent Llama)
+- [x] `uaii inspect` prints `family=` from the table and `blocked:` outside it
+- [x] Website Hugging Face page lists these six brands, dtypes F16/BF16, and the Gemini/ChatGPT API exclusion
+- [x] GPTQ/AWQ/MXFP4/SSM either converted or rejected with §6 messages
+- [x] No path copies BF16/F16 bits into f32 without conversion
+- [x] No path applies RoPE without honouring `rope_scaling` when present
+- [ ] Hub/`transformers` greedy goldens (§5.2) and optional nightly Hub matrix (§5.3)
+- [ ] Execute shipped Jinja `chat_template` (today: family equivalent of Llama-3 / Gemma / Mistral / ChatML)
+- [ ] gpt-oss dense family handler; HF MLA bind (P1.8)
 
 When those boxes are ticked, a new **Llama-like or Qwen2-like** Hub model is a config problem, not a new runtime. Kimi-class and gpt-oss stay explicit families.
 
@@ -425,15 +433,18 @@ Every message must include **what failed** and **what to do**. Implement these s
 |---|---|
 | Encoder-decoder / deny list | `unsupported Hugging Face architecture (decoder-only CausalLM required): {arch}` |
 | Unknown layout | `HF decoder layout not recognized under {dir}. First tensors: … Expected e.g. model.layers.0.self_attn.q_proj.weight. See docs/huggingface_decoder_completeness.md` |
-| BF16 before P0.1 | `safetensors dtype not supported for f32 load: BF16 (convert to F16/F32 or wait for BF16 ingest)` |
-| F8 / unknown dtype | `safetensors dtype not supported: {dtype}. Export BF16/F16 safetensors.` |
-| `quantization_config` | `HF quantized checkpoints are not loaded. Convert to BF16 safetensors or GGUF.` |
-| MLA HF (before P1.8) | `HF DeepSeek/Kimi MLA is not mapped. Use a GGUF (uaii generate --model model.gguf).` |
-| gpt-oss MXFP4 | `gpt-oss MXFP4 is not loaded. Convert to BF16 safetensors or GGUF.` |
-| Tokenizer missing | `no HF tokenizer in {dir} (need tokenizer.json, vocab.json+merges.txt, or tokenizer.model)` |
+| F8 / unknown dtype | `safetensors dtype {dtype} is not loaded. Convert this checkpoint to BF16.` |
+| `quantization_config` | `quantized safetensors` (inspect `blocked:`) |
+| MLA HF (before P1.8) | `HF MLA; use GGUF` |
+| gpt-oss MXFP4 | `mxfp4 convert to BF16/GGUF` |
+| gpt-oss dense packing | `gpt-oss family handler` |
+| Unknown `hidden_act` | `unsupported hidden_act={name}` |
+| Tokenizer missing | `no HF tokenizer found in {dir} (need tokenizer.json, vocab.json+merges.txt, or tokenizer.model)` |
 | SentencePiece off | `tokenizer.model found but UAII was built without SentencePiece. Rebuild with -DUAII_WITH_SENTENCEPIECE=ON` |
+| Unigram JSON | `Unigram tokenizer.json is not loaded. Use tokenizer.model (SentencePiece) or a BPE tokenizer.json` |
 | Rope scaling unknown | `unsupported rope_scaling.type={type}` |
-| Curl pull incomplete | `pull incomplete: missing shard {name} listed in model.safetensors.index.json` |
+| ALiBi | `unsupported position_embedding_type=alibi` |
+| Curl pull incomplete | `pull incomplete: missing shard {name}` |
 | Single tensor > RAM | `weight {name} is {bytes} which exceeds the memory preset. Use --preset desktop\|server or a quantized GGUF.` |
 
 ---

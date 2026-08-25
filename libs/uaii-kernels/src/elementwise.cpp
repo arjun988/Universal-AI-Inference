@@ -53,6 +53,33 @@ Error relu_f32(const TensorView& in, TensorView* out) {
   return Error::success();
 }
 
+Error relu2_f32(const TensorView& in, TensorView* out) {
+  Error err = relu_f32(in, out);
+  if (!err.ok()) return err;
+  float* y = out->f32();
+  const std::size_t n = out->numel();
+  for (std::size_t i = 0; i < n; ++i) {
+    y[i] = y[i] * y[i];
+  }
+  return Error::success();
+}
+
+Error softcap_f32(const TensorView& in, TensorView* out, float cap) {
+  Error err = check_unary_f32(in, out);
+  if (!err.ok()) return err;
+  const float* x = in.f32();
+  float* y = out->f32();
+  const std::size_t n = in.numel();
+  if (!(cap > 0.f)) {
+    for (std::size_t i = 0; i < n; ++i) y[i] = x[i];
+    return Error::success();
+  }
+  for (std::size_t i = 0; i < n; ++i) {
+    y[i] = cap * std::tanh(x[i] / cap);
+  }
+  return Error::success();
+}
+
 Error gelu_f32(const TensorView& in, TensorView* out) {
   Error err = check_unary_f32(in, out);
   if (!err.ok()) return err;

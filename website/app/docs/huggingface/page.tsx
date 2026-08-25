@@ -15,21 +15,23 @@ export default function Page() {
         A folder with <code>config.json</code> and dense <code>*.safetensors</code> (F16, BF16, or
         F32, single file or shards) for decoder-only classes such as <code>*ForCausalLM</code> and{" "}
         <code>*LMHeadModel</code>. Tensor names are detected across Llama-style layouts, GPT-2,
-        fused QKV, and Mixtral experts.
+        fused QKV, Mixtral experts, Qwen3 QK-norm, and Gemma residual norms. Probe a directory with{" "}
+        <code>uaii inspect</code> before generate — <code>status: ok</code> means the family math
+        is wired (Gemma <code>(1+w)</code> RMSNorm, GPT-2 <code>wpe</code>, Qwen3 QK-norm, sliding
+        window), not merely that tensors were named. Chat uses a documented family equivalent of
+        the shipped Jinja <code>chat_template</code>, not a Jinja interpreter.
       </p>
       <p>
-        Quantized Hub repos (GPTQ, AWQ, bitsandbytes, MXFP4) are not loaded: convert them to dense
-        BF16/F16 or to GGUF. Kimi / DeepSeek MLA folders are blocked on Hugging Face; run the GGUF
-        instead (<code>uaii generate --model kimi.gguf</code>). Probe a directory with{" "}
-        <code>uaii inspect</code> before generate. Remaining family math (Gemma RMSNorm, GPT-2{" "}
-        <code>wpe</code>, Qwen3 QK-norm) is listed in{" "}
-        <code>docs/huggingface_decoder_completeness.md</code> in the repository.
+        Quantized Hub repos (GPTQ, AWQ, bitsandbytes, HQQ, compressed-tensors, MXFP4) are not
+        loaded: convert them to dense BF16/F16 or to GGUF. Kimi / DeepSeek MLA folders are blocked
+        on Hugging Face; run the GGUF instead (<code>uaii generate --model kimi.gguf</code>).
+        gpt-oss is detected and fail-closed until a family handler exists.
       </p>
       <div className="chip-row" style={{ marginBottom: "1rem" }}>
         <span className="chip">Llama</span>
         <span className="chip">Qwen</span>
         <span className="chip">Mistral</span>
-        <span className="chip">Gemma</span>
+        <span className="chip">Gemma (1+w RMS)</span>
         <span className="chip">Kimi GGUF</span>
       </div>
       <p>
@@ -128,10 +130,11 @@ uaii convert ./models/hf/org__model -o model.uaii.json`}</pre>
           exist for the architectures on the roadmap
         </li>
         <li>
-          Hugging Face DeepSeek MLA checkpoints are not mapped. Use the DeepSeek GGUF expand path
+          Hugging Face DeepSeek / Kimi MLA checkpoints are not mapped. Use the GGUF expand path
         </li>
         <li>
-          The GPT-2 learned positional embedding table (<code>wpe</code>) is not applied
+          gpt-oss dense packing is fail-closed (<code>family=gpt_oss</code>). Convert MXFP4 to BF16
+          or GGUF; there is no Llama fallback
         </li>
       </ul>
     </DocLayout>

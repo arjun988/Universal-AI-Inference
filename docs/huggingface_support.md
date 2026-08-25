@@ -56,19 +56,20 @@ Critical dims fail closed. Aliases: `n_embd`, `n_layer`, `n_head`, `n_inner`, `n
 
 ## What is not decoder HF yet
 
-Weights are read as **F32, F16, or BF16** safetensors (integer I8/U8 promoted to f32). F8 and GPTQ/AWQ/bitsandbytes repos are rejected: convert to dense BF16/F16 or to GGUF.
+Weights are read as **F32, F16, or BF16** safetensors (integer I8/U8 promoted to f32). F8 and GPTQ/AWQ/bitsandbytes/HQQ repos are rejected: convert to dense BF16/F16 or to GGUF.
 
 | Gap | Notes |
 |---|---|
 | F8 safetensors | Convert the checkpoint to BF16 |
-| GPTQ / AWQ / bitsandbytes / MXFP4 | Convert to dense BF16/F16 or GGUF |
+| GPTQ / AWQ / bitsandbytes / HQQ / MXFP4 | Convert to dense BF16/F16 or GGUF |
 | HF DeepSeek / Kimi MLA | Use GGUF MLA path (`uaii generate --model kimi.gguf`) |
 | gpt-oss MoE packing | `uaii inspect` names `family=gpt_oss`; generate is blocked until the family handler |
-| Learned GPT-2 `wpe` | Attention runs; absolute position table is not added |
-| Gemma RMSNorm `(1+w)`, QK-norm, sliding window | Layout may load; math is incomplete |
+| ALiBi | Fail-closed (`position_embedding_type=alibi`) |
 | Vision / audio / encoder-decoder / SSM / RWKV | Out of scope (plugin scaffolds) |
 
-`rope_scaling` (`llama3`, `linear`, `dynamic`, `yarn`) is applied on RoPE. Unknown types fail closed.
+Family math that **is** wired: Gemma RMSNorm `(1+w)`, Qwen3 QK-norm, GPT-2 `wpe`, Mistral/Gemma sliding window, Gemma2 extra residual norms + logit cap, Phi partial rotary + longrope factors, Qwen2-MoE shared expert, unknown `hidden_act` fail-closed.
+
+`rope_scaling` (`llama3`, `linear`, `dynamic` NTK, `yarn`, `longrope`/`su` with factor arrays) is applied on RoPE. Unknown types fail closed.
 
 `tokenizer.json` is a real BPE pipeline: ByteLevel pre-tokenizer, byte map, `added_tokens`. Unigram JSON is rejected (`use tokenizer.model`).
 

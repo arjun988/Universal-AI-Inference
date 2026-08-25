@@ -125,6 +125,9 @@ Error dispatch_rmsnorm(const std::vector<kernels::TensorView>& inputs,
     w = inputs[1].f32();
   }
   const float eps = attr_float(attrs, "eps", 1e-5f);
+  if (attr_float(attrs, "offset", 0.f) != 0.f) {
+    return Error::make(ErrorCode::NotImplemented, "ROCm RMSNorm offset uses CPU kernel");
+  }
   const int st = rocm_kernels::launch_rmsnorm_f32(inputs[0].f32(), w, (*outputs)[0].f32(), rows,
                                                   cols, eps, g_stream);
   return hip_status(static_cast<hipError_t>(st), "RMSNorm");

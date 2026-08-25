@@ -364,7 +364,9 @@ function listModels() {
         mib: +(bytes / (1024 * 1024)).toFixed(2),
         mtime: st.mtime.toISOString(),
         kind: "hf",
-        chatReady: true,
+        chatReady: false,
+        family: "",
+        blocked: [],
       });
       continue;
     }
@@ -384,6 +386,8 @@ function listModels() {
       mtime: st.mtime.toISOString(),
       kind,
       chatReady: kind === "gguf",
+      family: "",
+      blocked: [],
     });
   }
   items.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
@@ -605,12 +609,46 @@ app.get("/api/backends", (_req, res) => {
   });
 });
 
+function parseInspectReport(text) {
+  const src = String(text || "");
+  const family = (src.match(/^family=(.*)$/m) || [])[1] || "";
+  const status = (src.match(/^status:\s*(.*)$/m) || [])[1] || "";
+  const dtype = (src.match(/^weights:\s*(.*)$/m) || [])[1] || "";
+  const blocked = [...src.matchAll(/^blocked:\s*(.*)$/gm)].map((m) => m[1]);
+  return {
+    family,
+    status,
+    dtype,
+    blocked,
+    ok: status === "ok" && blocked.length === 0,
+    report: src,
+  };
+}
+
 app.get("/api/models", (_req, res) => {
   try {
     res.json({ modelDir: config.modelDir, models: listModels() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get("/api/models/:name/inspect", async (req, res) => {
+  const full = resolveModelPath(req.params.name);
+  if (!full || !fs.existsSync(full)) return res.status(404).json({ error: "not found" });
+  const L = uaiiLauncher.resolve();
+  const arg = L.toModelPath ? L.toModelPath(full) : full;
+  const result = await runUaii(["inspect", arg], { timeoutMs: 120000 });
+  const parsed = parseInspectReport(result.stdout || result.stderr || "");
+  res.json({
+    ok: result.ok && parsed.ok,
+    family: parsed.family,
+    status: parsed.status || (result.ok ? "unknown" : "error"),
+    dtype: parsed.dtype,
+    blocked: parsed.blocked,
+    report: parsed.report,
+    error: result.ok ? "" : result.stderr || result.error || "inspect failed",
+  });
 });
 
 app.post("/api/models/upload", upload.single("file"), (req, res) => {
@@ -800,23 +838,42 @@ function formatChatPrompt(messages, fallbackPrompt, system, chatTemplate = "chat
 
   if (tpl === "gemma") {
     let out = "";
-    const parts = sys ? [{ role: "user", content: `${sys}\n\n${userText[0]?.content || ""}` }] : userText;
-    for (const m of parts.length ? parts : userText) {
-      if (m.role === "assistant") continue;
-      out += `<start_of_turn>${m.role === "system" ? "user" : m.role}\n`;
-      out += m.content;
-      out += "<end_of_turn>\n";
+    const hist = [];
+    for (const m of userText) {
+      if (m.role === "system") {
+        if (hist.length === 0) hist.push({ role: "user", content: m.content });
+        else hist[0].content = `${m.content}\n\n${hist[0].content}`;
+        continue;
+      }
+      hist.push(m);
+    }
+    if (sys && hist.length && hist[0].role === "user") {
+      hist[0] = { role: "user", content: `${sys}\n\n${hist[0].content}` };
+    } else if (sys && hist.length === 0) {
+      hist.push({ role: "user", content: sys });
+    }
+    for (const m of hist) {
+      const turn = m.role === "assistant" ? "model" : "user";
+      out += `<start_of_turn>${turn}\n${m.content}<end_of_turn>\n`;
     }
     out += "<start_of_turn>model\n";
     return out;
   }
 
   if (tpl === "mistral") {
-    const body =
-      sys && userText.length
-        ? `${sys}\n\n${userText[userText.length - 1].content}`
-        : userText.map((m) => m.content).join("\n\n");
-    return `<s>[INST] ${body} [/INST]`;
+    let out = "<s>";
+    const turns = userText.filter((m) => m.role !== "system");
+    let pendingUser = sys ? `${sys}\n\n` : "";
+    for (const m of turns) {
+      if (m.role === "user") {
+        pendingUser += m.content;
+        out += `[INST] ${pendingUser} [/INST]`;
+        pendingUser = "";
+      } else {
+        out += ` ${m.content}</s>`;
+      }
+    }
+    return out;
   }
 
   // ChatML default

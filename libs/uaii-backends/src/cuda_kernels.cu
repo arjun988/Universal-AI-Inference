@@ -162,7 +162,8 @@ namespace {
 // One block per row; threads cover rotary half-pairs (NeoX) or interleaved pairs.
 __global__ void rope_kernel(const float* x, float* y, std::int64_t rows, std::int64_t dim,
                             std::int64_t rope_chunk, std::int64_t rotary_dim, int mode,
-                            float theta, float base_pos, const float* positions) {
+                            float theta, float base_pos, const float* positions,
+                            const float* inv_freq, float mscale) {
   const std::int64_t r = static_cast<std::int64_t>(blockIdx.x);
   if (r >= rows) {
     return;
@@ -175,6 +176,7 @@ __global__ void rope_kernel(const float* x, float* y, std::int64_t rows, std::in
   const std::int64_t rot_off = rope_chunk - rotary_dim;
   const std::int64_t half = rotary_dim / 2;
   const bool neox = (mode == 2);
+  const float ms = mscale != 0.f ? mscale : 1.f;
 
   for (std::int64_t h = 0; h < n_chunks; ++h) {
     const float* head = row + h * rope_chunk;
@@ -187,10 +189,13 @@ __global__ void rope_kernel(const float* x, float* y, std::int64_t rows, std::in
     if (neox) {
       for (std::int64_t i = threadIdx.x; i < half; i += blockDim.x) {
         const float freq =
-            1.0f / powf(theta, (2.0f * static_cast<float>(i)) / static_cast<float>(rotary_dim));
+            (inv_freq != nullptr)
+                ? inv_freq[i]
+                : (1.0f / powf(theta, (2.0f * static_cast<float>(i)) /
+                                           static_cast<float>(rotary_dim)));
         const float angle = pos * freq;
-        const float c = cosf(angle);
-        const float s = sinf(angle);
+        const float c = cosf(angle) * ms;
+        const float s = sinf(angle) * ms;
         const float a = rot_in[i];
         const float b = rot_in[i + half];
         rot_out[i] = a * c - b * s;
@@ -198,11 +203,14 @@ __global__ void rope_kernel(const float* x, float* y, std::int64_t rows, std::in
       }
     } else {
       for (std::int64_t i = threadIdx.x * 2; i < rotary_dim; i += blockDim.x * 2) {
+        const std::int64_t pair = i / 2;
         const float freq =
-            1.0f / powf(theta, static_cast<float>(i) / static_cast<float>(rotary_dim));
+            (inv_freq != nullptr)
+                ? inv_freq[pair]
+                : (1.0f / powf(theta, static_cast<float>(i) / static_cast<float>(rotary_dim)));
         const float angle = pos * freq;
-        const float c = cosf(angle);
-        const float s = sinf(angle);
+        const float c = cosf(angle) * ms;
+        const float s = sinf(angle) * ms;
         const float a = rot_in[i];
         const float b = rot_in[i + 1];
         rot_out[i] = a * c - b * s;
@@ -223,13 +231,15 @@ __global__ void logit_softcap_kernel(const float* x, float* y, std::size_t n, fl
 
 int launch_rope_f32(const float* x, float* y, std::int64_t rows, std::int64_t dim,
                     std::int64_t rope_chunk, std::int64_t rotary_dim, int mode, float theta,
-                    float base_pos, const float* positions, void* stream) {
+                    float base_pos, const float* positions, const float* inv_freq, float mscale,
+                    void* stream) {
   if (rows <= 0 || dim <= 0 || rope_chunk <= 0 || rotary_dim <= 0) {
     return 0;
   }
   const int block = 256;
   rope_kernel<<<static_cast<unsigned>(rows), block, 0, as_stream(stream)>>>(
-      x, y, rows, dim, rope_chunk, rotary_dim, mode, theta, base_pos, positions);
+      x, y, rows, dim, rope_chunk, rotary_dim, mode, theta, base_pos, positions, inv_freq,
+      mscale);
   return static_cast<int>(cudaGetLastError());
 }
 
