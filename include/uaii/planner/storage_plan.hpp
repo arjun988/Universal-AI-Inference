@@ -45,9 +45,11 @@ struct StoragePlanOptions {
   std::uint64_t ram_budget_bytes = 0;  // 0 = no streaming pressure
   bool prefer_mmap = true;
   bool enable_streaming = true;
-  /// Keep weights whose name contains "l{i}." or "blk.{i}." for i < pin_layers resident.
+  /// Preferred pinned trunk depth. Under a real RAM budget (>= 1 MiB) the planner
+  /// drops layers, then lm_head, then embed until pin + 2×staging fits.
   std::int64_t pin_layers = 0;
   /// Expert LRU budget (bytes). 0 = experts still stream but are not cached across tokens.
+  /// Tight budgets assign leftover RAM after the trunk, never at the trunk's expense.
   std::uint64_t expert_cache_bytes = 0;
 };
 

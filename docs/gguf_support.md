@@ -72,6 +72,7 @@ Use `gguf_type_supported()` before `gguf_type_to_quant()`; unknown types are not
 
 - Prefill + decode via `Session::generate` (greedy or temp / top-k / top-p / repetition penalty)
 - Long sequence uses a **sliding KV window** (`--kv-window`, laptop default 2048) plus 4 sink tokens. `--preset none` still fail-closes at `--max-context`.
+- **Packed streaming:** Q4_K / Q5_K / Q6_K / IQ4_NL (and other GGUF block quants) stay packed in the staging buffers and expert LRU. The planner sizes those buffers from `packed_nbytes`, not widened f32. A dense F32/BF16 tensor larger than about half of `--preset laptop` fail-closes (`Convert to GGUF Q4_K`).
 - Env:
   - `UAII_MAX_LAYERS` — optional cap (`0` = unlimited up to 512 absolute max; unset = model `block_count`)
   - `UAII_GEMM`, `UAII_NUM_THREADS`

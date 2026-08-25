@@ -146,10 +146,11 @@ export default function Page() {
         that case.
       </p>
       <p>
-        The memory budget defaults to <code>--preset laptop</code>: roughly 8 GiB, two pinned
-        layers, an expert LRU cache, and a 2048-token KV window with 4 sinks. GGUF Mixtral and
-        Qwen packed banks are split per expert, and only the routed top-k are paged in.{" "}
-        <code>--preset none</code> disables streaming entirely.
+        The memory budget defaults to <code>--preset laptop</code>: roughly 8 GiB, a trunk
+        that is auto-shrunk until it fits (layers, then <code>lm_head</code>, then embed), packed
+        GGUF staging, an expert LRU filled from leftover RAM, and a 2048-token KV window with 4
+        sinks. GGUF Mixtral and Qwen packed banks are split per expert, and only the routed top-k
+        are paged in. <code>--preset none</code> disables streaming entirely.
       </p>
       <pre>{`# One-shot generation from any GGUF with blk.* tensors
 uaii generate --model path/to/model.gguf \\

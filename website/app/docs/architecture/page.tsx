@@ -101,8 +101,10 @@ export default function Page() {
       </p>
       <ul>
         <li>
-          Embeddings, <code>lm_head</code>, the final norm, and a few trunk layers stay pinned.
-          Everything else streams through <code>file#tensor</code> references
+          Embeddings, <code>lm_head</code>, and early trunk layers stay pinned only while they
+          fit the budget. The planner drops <code>pin_layers</code>, then <code>lm_head</code>,
+          then embed until pin plus two staging buffers fit. GGUF block-quant tensors stay packed
+          in those buffers. Everything else streams through <code>file#tensor</code> references
         </li>
         <li>
           The KV cache keeps a resident window, 2048 tokens by default, plus 4 attention sinks.

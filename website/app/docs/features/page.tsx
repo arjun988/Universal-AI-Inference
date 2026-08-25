@@ -122,7 +122,8 @@ export default function Page() {
         </li>
         <li>
           Memory presets <code>laptop</code>, <code>desktop</code>, and <code>server</code>: pin
-          a trunk of layers, stream the remainder, and page only routed MoE experts
+          a trunk that fits, stream packed GGUF weights, and page only routed MoE experts into
+          leftover RAM
         </li>
         <li>
           Tokenizers for Hugging Face tokenizer JSON, GGUF <code>tokenizer.ggml.*</code> metadata,

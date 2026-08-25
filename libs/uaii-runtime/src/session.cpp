@@ -205,6 +205,24 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
             return Error::make(ErrorCode::NotFound, "stream loader missing tensor");
           }
           const std::string ref = uri.empty() ? t->weight_ref : uri;
+          // Packed GGUF stays packed (kimi floor): never widen Q4/MX-style blocks to f32
+          // in the staging buffer — that is what blows an 8 GB laptop.
+          if (options_.keep_quantized_weights &&
+              quant::is_gguf_block_quant(t->quant_format)) {
+            std::vector<std::uint8_t> packed;
+            quant::QuantFormat fmt = t->quant_format;
+            Error load_err = loaders::load_weight_ref_auto(
+                ref, options_.weights_dir, t->shape, true, &packed, &fmt, nullptr, 0);
+            if (!load_err.ok()) return load_err;
+            if (packed.size() != nbytes) {
+              return Error::make(ErrorCode::InvalidArgument,
+                                 "packed stream size mismatch for " + t->name +
+                                     " got=" + std::to_string(packed.size()) +
+                                     " want=" + std::to_string(nbytes));
+            }
+            std::memcpy(dst, packed.data(), packed.size());
+            return Error::success();
+          }
           return loaders::load_weight_ref_f32(ref, options_.weights_dir, t->shape,
                                               static_cast<float*>(dst), nbytes);
         });
@@ -314,8 +332,8 @@ Error Session::allocate_all_tensors() {
     }
 
     for (const auto& t : graph_.tensors) {
-      // Compute path is f32; F16/BF16/INT* graph dtypes are coerced to f32 buffers
-      // (weights dequantized on load). Reject unknown/unsupported types.
+      // Compute path is f32. F16/BF16 graph dtypes coerce to f32 activations.
+      // Streamed GGUF block-quant weights stay packed (see keep_quantized_weights).
       if (t.dtype != DType::F32 && t.dtype != DType::F16 && t.dtype != DType::BF16 &&
           t.dtype != DType::I8 && t.dtype != DType::I32 && t.dtype != DType::U8) {
         return Error::make(ErrorCode::NotImplemented,
@@ -337,6 +355,15 @@ Error Session::allocate_all_tensors() {
       view.owned = false;
 
       if (streaming_ && streaming_->is_streamed(t.id)) {
+        if (t.is_weight && options_.keep_quantized_weights &&
+            quant::is_gguf_block_quant(t.quant_format)) {
+          const std::size_t n = ir::shape_numel(t.shape);
+          view.dtype = DType::Unknown;
+          view.quant_format = t.quant_format;
+          view.quant_rows = t.shape.dims.empty() ? 0 : t.shape.dims[0];
+          view.quant_cols = t.shape.dims.size() > 1 ? t.shape.dims[1] : 0;
+          view.nbytes = quant::packed_nbytes(t.quant_format, n);
+        }
         view.data = nullptr;  // filled on stage
         buffers_.emplace(t.id, std::move(view));
         continue;
@@ -366,11 +393,21 @@ Error Session::allocate_all_tensors() {
     memory::TensorBuffer buf;
     if (streaming_ && streaming_->is_streamed(t.id)) {
       buf.id = t.id;
-      buf.dtype = DType::F32;
       buf.shape = t.shape;
-      buf.nbytes = ir::shape_numel(t.shape) * sizeof(float);
       buf.data = nullptr;
       buf.owned = false;
+      if (t.is_weight && options_.keep_quantized_weights &&
+          quant::is_gguf_block_quant(t.quant_format)) {
+        const std::size_t n = ir::shape_numel(t.shape);
+        buf.dtype = DType::Unknown;
+        buf.quant_format = t.quant_format;
+        buf.quant_rows = t.shape.dims.empty() ? 0 : t.shape.dims[0];
+        buf.quant_cols = t.shape.dims.size() > 1 ? t.shape.dims[1] : 0;
+        buf.nbytes = quant::packed_nbytes(t.quant_format, n);
+      } else {
+        buf.dtype = DType::F32;
+        buf.nbytes = ir::shape_numel(t.shape) * sizeof(float);
+      }
       buffers_.emplace(t.id, std::move(buf));
       continue;
     }
@@ -663,6 +700,14 @@ Error Session::upload_streamed_weight(TensorId tid, const void* host, std::size_
   auto it = buffers_.find(tid);
   if (it == buffers_.end()) {
     return Error::make(ErrorCode::Internal, "missing streamed buffer");
+  }
+  const ir::Tensor* t = graph_.find_tensor(tid);
+  if (t != nullptr && t->is_weight && options_.keep_quantized_weights &&
+      quant::is_gguf_block_quant(t->quant_format)) {
+    it->second.quant_format = t->quant_format;
+    it->second.quant_rows = t->shape.dims.empty() ? 0 : t->shape.dims[0];
+    it->second.quant_cols = t->shape.dims.size() > 1 ? t->shape.dims[1] : 0;
+    it->second.dtype = DType::Unknown;
   }
   if (!stream_async_h2d_ || host == nullptr || nbytes == 0) {
     it->second.data = const_cast<void*>(host);

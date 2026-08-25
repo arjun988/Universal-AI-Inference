@@ -36,11 +36,14 @@ export default function Page() {
       </div>
       <p>
         Generation and chat default to a <strong>storage-first</strong> memory budget sized for a
-        laptop: pin the embeddings and first layers, stream the remainder from disk, page MoE
-        experts through an LRU cache limited to the routed top-k, and slide the KV cache across a
-        2048-token window with 4 attention sinks. Large checkpoints stay on disk and remain
-        runnable at reduced throughput. See <code>docs/huggingface_support.md</code> in the
-        repository for the implementation details.
+        laptop: pin a trunk that still fits (norm, then as many of embed / <code>lm_head</code> /
+        early layers as the 8 GiB floor allows), stream the remainder from disk as{" "}
+        <strong>packed</strong> GGUF bytes, page MoE experts through an LRU filled only with
+        leftover RAM, and slide the KV cache across a 2048-token window with 4 attention sinks.
+        Large checkpoints stay on disk and remain runnable at reduced throughput. A single
+        unquantized tensor larger than about half the budget fail-closes with a convert-to-GGUF
+        message. See <code>docs/huggingface_support.md</code> in the repository for the
+        implementation details.
       </p>
 
       <h2>Model sizes</h2>
@@ -70,9 +73,9 @@ export default function Page() {
                 <strong>500B-class MoE</strong>
               </td>
               <td>
-                Same path: page the routed experts and bound the KV cache. NVMe traffic dominates
-                latency, and experts currently dequantize to f32 one at a time rather than
-                running a packed matmul
+                Same path: page the routed experts as packed GGUF blocks and bound the KV cache.
+                NVMe traffic dominates latency. Convert Mixtral/Qwen-MoE to GGUF Q4_K for the 8 GB
+                floor; BF16 expert banks that exceed half the budget fail closed
               </td>
             </tr>
             <tr>
