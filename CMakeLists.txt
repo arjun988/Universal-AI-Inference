@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(uaii
-  VERSION 0.2.0
+  VERSION 0.3.1
   DESCRIPTION "Universal AI Inference Runtime"
   HOMEPAGE_URL "https://github.com/arjunshukla/Universal-AI-Inference"
   LANGUAGES CXX

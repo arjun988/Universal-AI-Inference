@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 namespace {
 
@@ -21,6 +22,9 @@ void expect(bool cond, const char* msg) {
 
 int main() {
   expect(uaii::version().major == 0, "version major");
+  expect(uaii::version().minor == 3, "version minor");
+  expect(uaii::version().patch == 1, "version patch");
+  expect(std::string(uaii::version_string()) == "0.3.1", "version string matches changelog");
   expect(uaii::Error::success().ok(), "Error::ok");
   expect(!uaii::Error::make(uaii::ErrorCode::Internal, "x").ok(), "Error failure");
 
