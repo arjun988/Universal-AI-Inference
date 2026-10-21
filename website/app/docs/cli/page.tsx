@@ -1,4 +1,5 @@
 import { DocLayout } from "@/components/DocLayout";
+import Link from "next/link";
 
 export const metadata = { title: "CLI" };
 
@@ -146,11 +147,11 @@ export default function Page() {
         that case.
       </p>
       <p>
-        The memory budget defaults to <code>--preset laptop</code>: roughly 8 GiB, a trunk
-        that is auto-shrunk until it fits (layers, then <code>lm_head</code>, then embed), packed
-        GGUF staging, an expert LRU filled from leftover RAM, and a 2048-token KV window with 4
-        sinks. GGUF Mixtral and Qwen packed banks are split per expert, and only the routed top-k
-        are paged in. <code>--preset none</code> disables streaming entirely.
+        The memory budget defaults to <code>--preset laptop</code> (about 8 GiB, KV 2048, two
+        staging buffers). <code>--preset phone</code> is about 2 GiB, KV 512, one buffer, and 4
+        threads, then half of free RAM. Desktop and server keep their targets when free RAM covers
+        them. <code>--preset none</code> turns streaming off. The full table is on the{" "}
+        <Link href="/docs/memory/">memory</Link> page.
       </p>
       <pre>{`# One-shot generation from any GGUF with blk.* tensors
 uaii generate --model path/to/model.gguf \\
@@ -159,8 +160,9 @@ uaii generate --model path/to/model.gguf \\
 # Built-in tiny model, no download required
 uaii generate --demo --prompt "hi" --max-new-tokens 8 --json
 
-# Longer conversations, with the sliding KV window kept at its default
-uaii generate --model path/to/model.gguf --kv-window 2048 --prompt "Hello"
+# Phone budget. Chat help lists laptop|phone.
+uaii generate --model path/to/model.q4_k.gguf --preset phone --prompt "Hello"
+uaii chat --model path/to/model.q4_k.gguf --jsonl --preset phone
 
 # Warm worker for the dashboard or automation
 uaii chat --model path/to/model.gguf --jsonl`}</pre>

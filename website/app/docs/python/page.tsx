@@ -64,10 +64,11 @@ print(session.profile_summary())`}</pre>
           </dd>
         </div>
         <div>
-          <dt>No memory preset</dt>
+          <dt>Memory preset</dt>
           <dd>
-            Weight streaming and the sliding KV cache are CLI and dashboard presets.{" "}
-            <code>Session.from_path</code> does not apply <code>--preset laptop</code>
+            <code>Session.from_path</code> does not call <code>uaii_resolve_memory_preset</code>.
+            Use the CLI, or the C API, for laptop and phone paging. The ctypes struct includes the
+            0.4.0 fields so a later binding can set them
           </dd>
         </div>
       </dl>

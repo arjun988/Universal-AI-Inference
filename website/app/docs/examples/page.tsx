@@ -23,7 +23,7 @@ uaii graph examples/ir/toy_mlp.uaii.json --format plan`}</pre>
       <h2>Generate from Hugging Face or GGUF</h2>
       <pre>{`# CLI defaults: streamed weights and automatic device selection
 uaii generate --model ./hf-dir --prompt "hi" --preset laptop --backend auto
-uaii generate --model model.gguf --prompt "hi" --kv-window 2048 --stream
+uaii generate --model model.q4_k.gguf --prompt "hi" --preset phone --stream
 
 # Pin the host and disable streaming
 uaii generate --model model.gguf --prompt "hi" --backend cpu --preset none`}</pre>

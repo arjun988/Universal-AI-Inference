@@ -117,13 +117,12 @@ export default function Page() {
           <code>uaii chat --jsonl</code>, the warm session the dashboard drives
         </li>
         <li>
-          Sliding-window KV cache, 2048 tokens with 4 attention sinks on the laptop preset, with
-          peak RSS reporting
+          Sliding-window KV cache. Laptop keeps 2048 tokens and 4 sinks. Phone keeps 512, or fewer
+          when the cap is tight
         </li>
         <li>
-          Memory presets <code>laptop</code>, <code>desktop</code>, and <code>server</code>: pin
-          a trunk that fits, stream packed GGUF weights, and page only routed MoE experts into
-          leftover RAM
+          Presets <code>laptop</code>, <code>desktop</code>, <code>server</code>, and{" "}
+          <code>phone</code>. See the <Link href="/docs/memory/">memory dial</Link>
         </li>
         <li>
           Tokenizers for Hugging Face tokenizer JSON, GGUF <code>tokenizer.ggml.*</code> metadata,

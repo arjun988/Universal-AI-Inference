@@ -156,9 +156,11 @@ export default function Page() {
 
       <h2>Session options</h2>
       <p>
-        The CLI <code>generate</code> and <code>chat</code> commands apply the laptop preset and{" "}
-        <code>--backend auto</code>. The C API 0.3.0 struct exposes a smaller surface: it defaults
-        to <code>backend = &quot;cpu&quot;</code> and has no <code>kv_window</code> field yet.
+        CLI <code>generate</code> and <code>chat</code> apply the laptop preset and{" "}
+        <code>--backend auto</code>. C API 0.4.0 exposes the same dial. Call{" "}
+        <code>uaii_resolve_memory_preset</code>, then{" "}
+        <code>uaii_session_options_apply_preset</code>. A struct built against 0.3.0 still works:
+        new fields are appended.
       </p>
       <dl className="deflist">
         <div>
@@ -196,15 +198,18 @@ export default function Page() {
             <code>kv_window</code>, <code>kv_sink</code>
           </dt>
           <dd>
-            C++ and CLI only. The resident KV window, 2048 tokens with 4 sinks on the laptop
-            preset
+            Resident KV window. Laptop default 2048 with 4 sinks. Phone default 512. On the C API
+            since 0.4.0
           </dd>
         </div>
         <div>
           <dt>
             <code>pin_layers</code>, <code>expert_cache_bytes</code>
           </dt>
-          <dd>C++ and CLI only. The pinned trunk and the MoE expert LRU budget</dd>
+          <dd>
+            Pinned trunk and MoE expert LRU. On the C API since 0.4.0, with{" "}
+            <code>max_threads</code> and <code>single_staging</code>
+          </dd>
         </div>
         <div>
           <dt>

@@ -1,4 +1,5 @@
 import { DocLayout } from "@/components/DocLayout";
+import Link from "next/link";
 
 export const metadata = { title: "C API" };
 
@@ -7,82 +8,83 @@ export default function Page() {
     <DocLayout
       title="C API"
       active="/docs/c-api/"
-      lede="A stable ABI for language bindings and embedding. The header is include/uaii/c_api/uaii.h, and the current version is 0.3.0, ahead of 1.0."
+      lede="Stable ABI in include/uaii/c_api/uaii.h. Current version is 0.4.0. Package version is 0.3.1."
     >
-      <h2>Versioning</h2>
-      <dl className="deflist">
-        <div>
-          <dt>MAJOR</dt>
-          <dd>Removed symbols, layout changes, or altered semantics</dd>
-        </div>
-        <div>
-          <dt>MINOR</dt>
-          <dd>
-            Backward-compatible additions, where fields are appended and{" "}
-            <code>struct_size</code> is honoured
-          </dd>
-        </div>
-        <div>
-          <dt>PATCH</dt>
-          <dd>Fixes that preserve documented behaviour</dd>
-        </div>
-      </dl>
+      <h2>Rules</h2>
+      <div className="table-wrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th>Bump</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Major</td>
+              <td>Removed symbols, layout changes, or new semantics</td>
+            </tr>
+            <tr>
+              <td>Minor</td>
+              <td>
+                New functions or fields appended to a struct. <code>struct_size</code> keeps old
+                callers working
+              </td>
+            </tr>
+            <tr>
+              <td>Patch</td>
+              <td>Fixes that keep documented behaviour</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p>
-        Gate your bindings on <code>uaii_get_c_api_version()</code>. The plugin ABI,{" "}
-        <code>UAII_PLUGIN_ABI_VERSION</code>, is versioned independently.
+        Gate bindings on <code>uaii_get_c_api_version()</code>. The plugin ABI is separate.
       </p>
 
-      <h2>Session options</h2>
+      <h2>0.4.0 fields</h2>
       <p>
-        Always call <code>uaii_session_options_init</code>, then set{" "}
-        <code>struct_size = sizeof(uaii_session_options)</code>. The fields that matter most in
-        0.3.0:
+        Call <code>uaii_session_options_init</code>, then keep{" "}
+        <code>struct_size = sizeof(uaii_session_options)</code>. Fields added after{" "}
+        <code>max_context</code>:
       </p>
       <ul>
         <li>
-          <code>backend</code>, which defaults to <code>&quot;cpu&quot;</code>; pass{" "}
-          <code>&quot;auto&quot;</code> to run the same GPU probe as the CLI. Also{" "}
-          <code>weights_dir</code> and <code>weight_init</code>, which defaults to NONE
+          <code>kv_window</code>, <code>kv_sink</code> (default 4)
         </li>
         <li>
-          <code>enable_fusion</code>, <code>enable_memory_reuse</code>,{" "}
-          <code>enable_streaming</code>, <code>enable_profiler</code>
+          <code>pin_layers</code>, <code>expert_cache_bytes</code>
         </li>
         <li>
-          <code>compute_dtype</code>, <code>keep_quantized_weights</code>, and{" "}
-          <code>max_context</code>, the generation bound, where 0 reads the limit from graph
-          metadata
+          <code>max_threads</code> (0 = hardware concurrency), <code>single_staging</code>
         </li>
       </ul>
-      <div className="callout">
-        <span className="callout-label">Not on this ABI yet</span>
-        <p>
-          The sliding KV window (<code>kv_window</code>) and the laptop memory preset live on the
-          CLI and C++ <code>SessionOptions</code>. A C session therefore runs without the
-          2048-token window until a later <code>struct_size</code> revision adds the field.
-        </p>
-      </div>
+      <p>
+        <code>uaii_resolve_memory_preset</code> and <code>uaii_session_options_apply_preset</code>{" "}
+        fill those fields. Phone caps at half of free RAM. Laptop, desktop, and server keep their
+        targets when free RAM covers them. See <Link href="/docs/memory/">Memory</Link>.
+      </p>
 
-      <h2>Core calls</h2>
-      <pre>{`uaii_session_options opts;
+      <h2>Session</h2>
+      <pre>{`uaii_memory_preset_info info;
+memset(&info, 0, sizeof info);
+info.struct_size = sizeof info;
+uaii_resolve_memory_preset("phone", 0, &info);
+
+uaii_session_options opts;
 uaii_session_options_init(&opts);
-opts.struct_size = sizeof(opts);
-opts.enable_profiler = 1;
-opts.profile_trace_path = "trace.json";
+uaii_session_options_apply_preset(&opts, &info);
+opts.backend = "auto";
 
 uaii_session* s = NULL;
-uaii_session_create("model.uaii.json", &opts, &s);
-
-float x[] = {1, 2, 3, 4};
-uaii_session_set_f32(s, "x", x, 4);
-uaii_session_run(s);
-
-/* Optional: uaii_session_generate(...) for token generation */
+uaii_session_create("model.q4_k.gguf", &opts, &s);
+uaii_session_set_background(s, 1);   /* paused: app backgrounded */
+uaii_session_request_cancel(s);      /* cancelled; cleared at generate start */
+uaii_session_memory_warning(s);      /* drop KV, keep longrope scale */
 uaii_session_destroy(s);`}</pre>
-
       <p>
-        The shared library builds from the CMake target <code>uaii_capi</code>. The full stability
-        policy is in <code>docs/c_api_stability.md</code> in the repository.
+        <code>uaii_system_available_bytes</code> and <code>uaii_process_rss_bytes</code> are the
+        counters to log. Weight init stays fail-closed (<code>NONE</code>).
       </p>
     </DocLayout>
   );

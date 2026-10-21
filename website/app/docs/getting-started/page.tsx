@@ -8,14 +8,12 @@ export default function Page() {
     <DocLayout
       title="Quick start"
       active="/docs/getting-started/"
-      lede="Build the C++ runtime, generate from a Hugging Face or GGUF checkpoint, then integrate through the C API or Python SDK."
+      lede="Build the runtime, then generate from a Hugging Face decoder folder or a GGUF checkpoint."
     >
       <p>
-        Start with a Hugging Face CausalLM folder or a GGUF <code>blk.*</code> model. Generation
-        defaults to <code>--preset laptop</code>, which streams weights and slides the KV cache,
-        and <code>--backend auto</code>, which uses a native GPU when one is available and CPU
-        otherwise. The <Link href="/docs/huggingface/">Hugging Face guide</Link> covers the Hub
-        path in detail.
+        Defaults are <code>--preset laptop</code> and <code>--backend auto</code>. Phone builds
+        use <code>--preset phone</code>. The dial is on <Link href="/docs/memory/">Memory</Link>.
+        Hub models are on <Link href="/docs/huggingface/">Models</Link>.
       </p>
 
       <h2>Prerequisites</h2>
@@ -44,8 +42,8 @@ uaii doctor
 uaii pull org/model --outdir ./models/hf/org__model
 uaii generate --model ./models/hf/org__model --prompt "hi" --max-new-tokens 64 --preset laptop
 
-# Or a GGUF blk.* transformer, same memory preset and device selection
-uaii generate --model path/to/model.gguf --prompt "hi" --max-new-tokens 64
+# GGUF, laptop default. Phone preset pages into about 2 GiB.
+uaii generate --model path/to/model.q4_k.gguf --prompt "hi" --preset phone
 
 # Smoke test the IR stack with no model weights
 uaii generate --demo --prompt "hi" --max-new-tokens 4 --json`}</pre>
@@ -90,26 +88,20 @@ python examples/python/load_run_profile.py`}</pre>
       <h2>Tests</h2>
       <pre>{`ctest --test-dir build -C Release --output-on-failure`}</pre>
 
-      <h2>Next steps</h2>
+      <h2>Next</h2>
       <ul>
         <li>
-          <Link href="/docs/huggingface/">Hugging Face</Link> — the Hub path, supported model
-          sizes, and memory paging
+          <Link href="/docs/memory/">Memory</Link> — laptop, desktop, server, and phone
         </li>
         <li>
-          <Link href="/docs/features/">Features</Link> — formats, quantization, and runtime
-          capabilities
+          <Link href="/docs/mobile/">Mobile</Link> — Android NDK and iOS CMake
         </li>
         <li>
-          <Link href="/docs/dashboard/">Operator UI</Link> — local and self-hosted console
+          <Link href="/docs/c-api/">C API</Link> — ABI 0.4.0
         </li>
         <li>
-          <Link href="/docs/cli/">CLI</Link> — <code>pull</code>, <code>generate</code>, and{" "}
+          <Link href="/docs/cli/">CLI</Link> — <code>pull</code>, <code>generate</code>,{" "}
           <code>chat</code>
-        </li>
-        <li>
-          <Link href="/docs/contribute/">Contribute</Link> — open an issue and send your first
-          pull request
         </li>
       </ul>
     </DocLayout>

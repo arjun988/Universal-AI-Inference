@@ -166,14 +166,27 @@ pre {
 }
 
 .nav-links {
-  display: none;
+  display: flex;
   align-items: center;
   gap: 0.15rem;
 }
 
-@media (min-width: 900px) {
+@media (max-width: 720px) {
+  .nav {
+    height: auto;
+    min-height: 3.75rem;
+    flex-wrap: wrap;
+    padding-block: 0.5rem;
+    row-gap: 0.35rem;
+  }
+
   .nav-links {
-    display: flex;
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .nav-actions .btn-primary {
+    display: none;
   }
 }
 
@@ -291,10 +304,9 @@ pre {
   }
 }
 
-/* —— Landing hero (full viewport) —— */
+/* —— Landing hero —— */
 .home-hero {
   position: relative;
-  min-height: calc(100dvh - 3.75rem);
   display: grid;
   align-items: stretch;
   border-bottom: 1px solid var(--border);
@@ -305,35 +317,8 @@ pre {
   content: "";
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(180deg, var(--glow), transparent 40%),
-    linear-gradient(90deg, var(--bg) 0%, transparent 55%),
-    repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 47px,
-      var(--grid) 47px,
-      var(--grid) 48px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      transparent,
-      transparent 47px,
-      var(--grid) 47px,
-      var(--grid) 48px
-    );
-  mask-image: radial-gradient(ellipse 80% 70% at 70% 40%, #000 20%, transparent 75%);
+  background: linear-gradient(180deg, var(--glow), transparent 55%);
   pointer-events: none;
-  animation: grid-fade 12s ease-in-out infinite alternate;
-}
-
-@keyframes grid-fade {
-  from {
-    opacity: 0.45;
-  }
-  to {
-    opacity: 0.9;
-  }
 }
 
 .home-hero-rail {
@@ -342,12 +327,11 @@ pre {
   width: 100%;
   max-width: 1280px;
   margin-inline: auto;
-  padding: clamp(2rem, 5vh, 4rem) clamp(1.25rem, 4vw, 2.5rem);
+  padding: clamp(2.5rem, 6vh, 4.5rem) clamp(1.25rem, 4vw, 2.5rem);
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
   gap: clamp(2rem, 5vw, 4rem);
   align-items: center;
-  min-height: calc(100dvh - 3.75rem);
 }
 
 @media (max-width: 960px) {
@@ -391,26 +375,15 @@ pre {
   background: var(--ink);
   display: inline-block;
   font-style: normal;
-  animation: pulse 2.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 1;
-  }
 }
 
 .hero-brand {
   margin: 0 0 1rem;
   font-family: var(--font-display);
-  font-weight: 800;
-  font-size: clamp(3.5rem, 9vw, 5.75rem);
-  letter-spacing: -0.055em;
-  line-height: 0.92;
+  font-weight: 700;
+  font-size: clamp(2.4rem, 5vw, 3.4rem);
+  letter-spacing: -0.045em;
+  line-height: 1.05;
   color: var(--ink);
 }
 
@@ -429,7 +402,7 @@ pre {
   margin: 0 0 1.75rem;
   font-size: 1.05rem;
   color: var(--ink-secondary);
-  max-width: 38ch;
+  max-width: 46ch;
   line-height: 1.6;
 }
 
@@ -906,12 +879,21 @@ pre {
   }
 }
 
+.doc-kicker {
+  margin: 0 0 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-tertiary);
+}
+
 .content {
-  padding: 2.25rem 0 4rem;
-  max-width: 48rem;
-  margin-inline: auto;
+  padding: 2.25rem 0 4.5rem;
+  max-width: 42rem;
+  margin-inline: 0;
   width: 100%;
-  padding-inline: clamp(1.25rem, 3vw, 2.5rem);
+  padding-inline: clamp(1.25rem, 3vw, 2.75rem);
 }
 
 .content h1 {

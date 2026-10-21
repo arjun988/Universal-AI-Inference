@@ -6,11 +6,9 @@ import { GITHUB_REPO_URL } from "@/lib/site";
 import { ThemeToggle } from "./ThemeToggle";
 
 const links = [
-  { href: "/docs/features/", label: "Product" },
-  { href: "/docs/dashboard/", label: "Dashboard" },
-  { href: "/docs/benchmarks/", label: "Benchmarks" },
   { href: "/docs/getting-started/", label: "Docs" },
-  { href: "/docs/contribute/", label: "Contribute" },
+  { href: "/docs/memory/", label: "Memory" },
+  { href: "/docs/mobile/", label: "Mobile" },
 ];
 
 export function SiteNav() {
@@ -28,8 +26,15 @@ export function SiteNav() {
 
           <nav className="nav-links" aria-label="Primary">
             {links.map((l) => {
-              const active =
-                !isHome && (pathname === l.href || pathname?.startsWith(l.href));
+              const onDocs =
+                !!pathname?.startsWith("/docs/") &&
+                !pathname.startsWith("/docs/memory") &&
+                !pathname.startsWith("/docs/mobile");
+              const active = !isHome && (
+                l.href === "/docs/getting-started/"
+                  ? onDocs
+                  : pathname === l.href || !!pathname?.startsWith(l.href)
+              );
               return (
                 <Link
                   key={l.href}

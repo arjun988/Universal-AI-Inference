@@ -35,15 +35,10 @@ export default function Page() {
         <span className="chip">Kimi GGUF</span>
       </div>
       <p>
-        Generation and chat default to a <strong>storage-first</strong> memory budget sized for a
-        laptop: pin a trunk that still fits (norm, then as many of embed / <code>lm_head</code> /
-        early layers as the 8 GiB floor allows), stream the remainder from disk as{" "}
-        <strong>packed</strong> GGUF bytes, page MoE experts through an LRU filled only with
-        leftover RAM, and slide the KV cache across a 2048-token window with 4 attention sinks.
-        Large checkpoints stay on disk and remain runnable at reduced throughput. A single
-        unquantized tensor larger than about half the budget fail-closes with a convert-to-GGUF
-        message. See <code>docs/huggingface_support.md</code> in the repository for the
-        implementation details.
+        Generation defaults to the laptop preset: pin a trunk that fits, page packed GGUF weights,
+        and keep a 2048-token KV window. A single unquantized tensor larger than about half the
+        budget fail-closes. Convert Hugging Face BF16 7B and larger to GGUF Q4_K. Phone is a
+        separate preset. See <Link href="/docs/memory/">Memory</Link>.
       </p>
 
       <h2>Model sizes</h2>
@@ -52,7 +47,7 @@ export default function Page() {
           <thead>
             <tr>
               <th>Scale</th>
-              <th>Behaviour on roughly 8 GB of RAM</th>
+              <th>What the dial does</th>
             </tr>
           </thead>
           <tbody>
@@ -60,29 +55,31 @@ export default function Page() {
               <td>
                 <strong>0.5B to 8B</strong>
               </td>
-              <td>Fits in memory comfortably, with a cold load on the first generate</td>
+              <td>Often fits the laptop budget. First generate is a cold load</td>
             </tr>
             <tr>
               <td>
-                <strong>30B and above, dense</strong>
-              </td>
-              <td>Runs by paging weights. Bound by disk and CPU rather than capacity</td>
-            </tr>
-            <tr>
-              <td>
-                <strong>500B-class MoE</strong>
+                <strong>Larger dense GGUF</strong>
               </td>
               <td>
-                Same path: page the routed experts as packed GGUF blocks and bound the KV cache.
-                NVMe traffic dominates latency. Convert Mixtral/Qwen-MoE to GGUF Q4_K for the 8 GB
-                floor; BF16 expert banks that exceed half the budget fail closed
+                Pages packed weights. Throughput follows disk and CPU. No device tok/s is published
+                for this path
               </td>
             </tr>
             <tr>
               <td>
-                <strong>Trillion-parameter</strong>
+                <strong>MoE GGUF</strong>
               </td>
-              <td>Not benchmarked, so no resident-memory figure is published</td>
+              <td>
+                Pages the routed experts. Convert Mixtral and Qwen-MoE to Q4_K. BF16 expert banks
+                that exceed the budget fail closed
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <strong>Hugging Face BF16, 7B and up</strong>
+              </td>
+              <td>Fail-closed. Convert to GGUF Q4_K</td>
             </tr>
           </tbody>
         </table>
@@ -91,8 +88,8 @@ export default function Page() {
         Paging works at tensor granularity, so a dense checkpoint with a single FFN tensor larger
         than available RAM can still fail to load. Mixture-of-experts checkpoints are the
         reliable path on constrained machines. Adjust the budget with{" "}
-        <code>--preset desktop|server|none</code>, <code>--ram-gb</code>, and{" "}
-        <code>--kv-window</code>.
+        <code>--preset laptop|desktop|server|phone|none</code>, <code>--ram-gb</code>, and{" "}
+        <code>--kv-window</code>. Phone success is peak RSS, not tokens per second.
       </p>
 
       <h2>CLI</h2>

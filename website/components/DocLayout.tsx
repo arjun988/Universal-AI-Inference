@@ -5,27 +5,34 @@ const groups = [
     label: "Start",
     items: [
       { href: "/docs/getting-started/", label: "Quick start" },
-      { href: "/docs/huggingface/", label: "Hugging Face" },
-      { href: "/docs/features/", label: "Features" },
-      { href: "/docs/dashboard/", label: "Operator UI" },
-      { href: "/docs/benchmarks/", label: "Benchmarks" },
-      { href: "/docs/examples/", label: "Examples" },
-      { href: "/docs/configuration/", label: "Configuration" },
+      { href: "/docs/memory/", label: "Memory" },
+      { href: "/docs/huggingface/", label: "Models" },
+      { href: "/docs/mobile/", label: "Mobile" },
     ],
   },
   {
-    label: "Integrate",
+    label: "Use",
     items: [
       { href: "/docs/cli/", label: "CLI" },
-      { href: "/docs/python/", label: "Python SDK" },
+      { href: "/docs/dashboard/", label: "Dashboard" },
+      { href: "/docs/examples/", label: "Examples" },
+    ],
+  },
+  {
+    label: "Embed",
+    items: [
       { href: "/docs/c-api/", label: "C API" },
+      { href: "/docs/python/", label: "Python" },
     ],
   },
   {
     label: "Reference",
     items: [
       { href: "/docs/backends/", label: "Backends" },
+      { href: "/docs/configuration/", label: "Build" },
+      { href: "/docs/benchmarks/", label: "Benchmarks" },
       { href: "/docs/architecture/", label: "Architecture" },
+      { href: "/docs/features/", label: "Formats" },
       { href: "/docs/plugins/", label: "Plugins" },
     ],
   },
@@ -70,6 +77,7 @@ export function DocLayout({
             ))}
           </aside>
           <article className="content">
+            <p className="doc-kicker">Docs</p>
             <h1>{title}</h1>
             {lede ? <p className="lede">{lede}</p> : null}
             {children}
