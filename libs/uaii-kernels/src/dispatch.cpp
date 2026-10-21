@@ -242,7 +242,8 @@ Error dispatch_cpu(const std::string& op_name,
                     attr_float(attrs, "old_context_len", 8192.f),
                     attr_float(attrs, "attn_factor", 1.f),
                     short_f32.empty() ? nullptr : short_f32.data(),
-                    long_f32.empty() ? nullptr : long_f32.data(), nfac);
+                    long_f32.empty() ? nullptr : long_f32.data(), nfac,
+                    static_cast<int>(attr_int(attrs, "rotary_align", 1)));
   }
   if (op_name == "MLAExpandK") {
     if (inputs.size() != 2 || outputs->size() != 1) {

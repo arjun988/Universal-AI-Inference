@@ -60,13 +60,16 @@ namespace kernels {
 
 /// Apply RoPE: out = rotate(in). Optional positions [rows].
 /// When head_dim > 0, RoPE is applied per head chunk (required for MHA/GQA).
-/// When rotary_dim > 0 and rotary_dim < head_dim, only the trailing rotary_dim
-/// elements of each head are rotated (DeepSeek MLA).
+/// When rotary_dim > 0 and rotary_dim < head_dim, only rotary_dim elements of
+/// each head are rotated. rotary_align 0 rotates the leading span (Phi / HF
+/// partial_rotary_factor). rotary_align 1 rotates the trailing span (DeepSeek MLA).
 /// When positions is null and a KV cache is active, uses cache past_len as position
 /// for each row (seq=1 decode) or past_len+row for multi-row tensors.
 /// mode: 0 = interleaved pairs (i, i+1); 2 = NeoX pairs (i, i+head_dim/2)
 /// (llama.cpp convention; Qwen2/Phi/Falcon need mode=2).
 /// scale_type: empty/none/default = no scaling; linear; llama3; dynamic; yarn.
+/// rotary_align: 0 = Hugging Face partial rotary (leading rotary_dim); 1 = MLA
+/// (trailing rotary_dim). Ignored when rotary_dim covers the whole head.
 [[nodiscard]] UAII_API Error rope_f32(const TensorView& in,
                                       const TensorView* positions,
                                       TensorView* out,
@@ -82,7 +85,8 @@ namespace kernels {
                                       float attn_factor = 1.f,
                                       const float* short_factor = nullptr,
                                       const float* long_factor = nullptr,
-                                      int n_factors = 0);
+                                      int n_factors = 0,
+                                      int rotary_align = 1);
 
 /// Inverse frequency after Hugging Face rope_scaling (pair index 0 .. n_pairs-1).
 /// seq_len is used by dynamic NTK and longrope/su (0 → old_context_len).

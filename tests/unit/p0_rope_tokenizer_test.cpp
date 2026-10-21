@@ -88,6 +88,46 @@ void test_llama3_rope_freqs() {
   }
 }
 
+void test_partial_rotary_leading_and_trailing() {
+  float in[4] = {1.f, 0.f, 0.f, 1.f};
+  float pos[1] = {1.f};
+  float leading_out[4] = {};
+  float trailing_out[4] = {};
+  const std::int64_t shape[] = {1, 4};
+  const std::int64_t pshape[] = {1};
+  uaii::kernels::TensorView vin;
+  vin.dtype = uaii::DType::F32;
+  vin.shape = shape;
+  vin.rank = 2;
+  vin.data = in;
+  vin.nbytes = sizeof(in);
+  uaii::kernels::TensorView vpos = vin;
+  vpos.shape = pshape;
+  vpos.rank = 1;
+  vpos.data = pos;
+  vpos.nbytes = sizeof(pos);
+  uaii::kernels::TensorView vout = vin;
+  vout.data = leading_out;
+  expect(uaii::kernels::rope_f32(vin, &vpos, &vout, 10000.f, 4, 0, 2, nullptr, 1.f, 1.f, 4.f,
+                                 8192.f, 1.f, nullptr, nullptr, 0, /*rotary_align=*/0)
+             .ok(),
+         "leading partial rope");
+  expect_close(leading_out[0], std::cos(1.f), 1e-5f, "phi leading cos");
+  expect_close(leading_out[1], std::sin(1.f), 1e-5f, "phi leading sin");
+  expect_close(leading_out[2], 0.f, 1e-5f, "phi tail dim2 copied");
+  expect_close(leading_out[3], 1.f, 1e-5f, "phi tail dim3 copied");
+
+  vout.data = trailing_out;
+  expect(uaii::kernels::rope_f32(vin, &vpos, &vout, 10000.f, 4, 0, 2, nullptr, 1.f, 1.f, 4.f,
+                                 8192.f, 1.f, nullptr, nullptr, 0, /*rotary_align=*/1)
+             .ok(),
+         "trailing partial rope");
+  expect_close(trailing_out[0], 1.f, 1e-5f, "mla prefix dim0 copied");
+  expect_close(trailing_out[1], 0.f, 1e-5f, "mla prefix dim1 copied");
+  expect_close(trailing_out[2], -std::sin(1.f), 1e-5f, "mla tail cos term");
+  expect_close(trailing_out[3], std::cos(1.f), 1e-5f, "mla tail sin term");
+}
+
 void test_yarn_ramp_matches_hf() {
   // dim=8 (4 pairs), theta=10000, factor=4, original context 2048.
   // HF correction range: low=floor(corr(beta_fast=32))=1, high=ceil(corr(beta_slow=1))=3.
@@ -550,6 +590,7 @@ void test_chat_multiturn_family() {
 int main() {
   test_llama3_rope_freqs();
   test_yarn_ramp_matches_hf();
+  test_partial_rotary_leading_and_trailing();
   test_rope_kernel_applies_scaling();
   test_rmsnorm_offset_and_qk();
   test_sliding_window_mask();

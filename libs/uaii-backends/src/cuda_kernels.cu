@@ -163,7 +163,7 @@ namespace {
 __global__ void rope_kernel(const float* x, float* y, std::int64_t rows, std::int64_t dim,
                             std::int64_t rope_chunk, std::int64_t rotary_dim, int mode,
                             float theta, float base_pos, const float* positions,
-                            const float* inv_freq, float mscale) {
+                            const float* inv_freq, float mscale, int leading) {
   const std::int64_t r = static_cast<std::int64_t>(blockIdx.x);
   if (r >= rows) {
     return;
@@ -173,7 +173,7 @@ __global__ void rope_kernel(const float* x, float* y, std::int64_t rows, std::in
   const float* row = x + r * dim;
   float* out_row = y + r * dim;
   const std::int64_t n_chunks = dim / rope_chunk;
-  const std::int64_t rot_off = rope_chunk - rotary_dim;
+  const std::int64_t rot_off = leading ? 0 : (rope_chunk - rotary_dim);
   const std::int64_t half = rotary_dim / 2;
   const bool neox = (mode == 2);
   const float ms = mscale != 0.f ? mscale : 1.f;
@@ -181,8 +181,10 @@ __global__ void rope_kernel(const float* x, float* y, std::int64_t rows, std::in
   for (std::int64_t h = 0; h < n_chunks; ++h) {
     const float* head = row + h * rope_chunk;
     float* out_head = out_row + h * rope_chunk;
-    for (std::int64_t c = threadIdx.x; c < rot_off; c += blockDim.x) {
-      out_head[c] = head[c];
+    const std::int64_t copy_n = rope_chunk - rotary_dim;
+    const std::int64_t copy_off = leading ? rotary_dim : 0;
+    for (std::int64_t c = threadIdx.x; c < copy_n; c += blockDim.x) {
+      out_head[copy_off + c] = head[copy_off + c];
     }
     const float* rot_in = head + rot_off;
     float* rot_out = out_head + rot_off;
@@ -232,14 +234,14 @@ __global__ void logit_softcap_kernel(const float* x, float* y, std::size_t n, fl
 int launch_rope_f32(const float* x, float* y, std::int64_t rows, std::int64_t dim,
                     std::int64_t rope_chunk, std::int64_t rotary_dim, int mode, float theta,
                     float base_pos, const float* positions, const float* inv_freq, float mscale,
-                    void* stream) {
+                    int leading, void* stream) {
   if (rows <= 0 || dim <= 0 || rope_chunk <= 0 || rotary_dim <= 0) {
     return 0;
   }
   const int block = 256;
   rope_kernel<<<static_cast<unsigned>(rows), block, 0, as_stream(stream)>>>(
       x, y, rows, dim, rope_chunk, rotary_dim, mode, theta, base_pos, positions, inv_freq,
-      mscale);
+      mscale, leading);
   return static_cast<int>(cudaGetLastError());
 }
 

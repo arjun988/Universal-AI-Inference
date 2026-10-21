@@ -642,8 +642,10 @@ Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
     inv_dev = d_inv.p;
   }
 
-  const int st = cuda_kernels::launch_rope_f32(x, y, rows, dim, rope_chunk, rot, mode, theta,
-                                               base_pos, pos_dev, inv_dev, mscale, g_stream);
+  const int rotary_align = static_cast<int>(attr_int(attrs, "rotary_align", 1));
+  const int st = cuda_kernels::launch_rope_f32(
+      x, y, rows, dim, rope_chunk, rot, mode, theta, base_pos, pos_dev, inv_dev, mscale,
+      rotary_align == 0 ? 1 : 0, g_stream);
   err = cuda_status(static_cast<cudaError_t>(st), "RoPE");
   if (err.ok()) {
     err = cuda_status(cudaStreamSynchronize(g_stream), "RoPE sync");

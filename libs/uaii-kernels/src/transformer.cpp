@@ -236,7 +236,8 @@ Error rope_f32(const TensorView& in,
                float attn_factor,
                const float* short_factor,
                const float* long_factor,
-               int n_factors) {
+               int n_factors,
+               int rotary_align) {
   if (out == nullptr || in.data == nullptr || out->data == nullptr) {
     return Error::make(ErrorCode::InvalidArgument, "rope null");
   }
@@ -260,7 +261,9 @@ Error rope_f32(const TensorView& in,
   if (rot > rope_chunk || rot <= 0 || rot % 2 != 0) {
     return Error::make(ErrorCode::InvalidArgument, "rope rotary_dim invalid");
   }
-  const std::int64_t rot_off = rope_chunk - rot;
+  // 0 = leading (HF partial rotary). Anything else keeps the MLA trailing span.
+  const bool leading = rotary_align == 0 && rot < rope_chunk;
+  const std::int64_t rot_off = leading ? 0 : (rope_chunk - rot);
   const bool neox = (mode == 2);
   const std::int64_t n_chunks = dim / rope_chunk;
   const std::int64_t half = rot / 2;
@@ -299,8 +302,11 @@ Error rope_f32(const TensorView& in,
     for (std::int64_t h = 0; h < n_chunks; ++h) {
       const float* head = row + static_cast<std::size_t>(h * rope_chunk);
       float* out_head = out_row + static_cast<std::size_t>(h * rope_chunk);
-      if (rot_off > 0) {
-        std::memcpy(out_head, head, static_cast<std::size_t>(rot_off) * sizeof(float));
+      const std::int64_t copy_n = rope_chunk - rot;
+      if (copy_n > 0) {
+        const std::int64_t copy_off = leading ? rot : 0;
+        std::memcpy(out_head + copy_off, head + copy_off,
+                    static_cast<std::size_t>(copy_n) * sizeof(float));
       }
       const float* rot_in = head + rot_off;
       float* rot_out = out_head + rot_off;

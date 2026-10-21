@@ -289,6 +289,11 @@ std::vector<ir::Attribute> make_rope_attrs(const HfConfig& cfg, std::int64_t hea
   attrs.push_back(ir::make_float_attr("attn_factor", cfg.rope_attn_factor));
   if (cfg.rotary_dim > 0) {
     attrs.push_back(ir::make_int_attr("rotary_dim", cfg.rotary_dim));
+    // HF partial_rotary_factor rotates the leading dims. MLA GGUF rotates the tail
+    // and does not set this attribute (kernel default is trailing).
+    if (head_dim > cfg.rotary_dim) {
+      attrs.push_back(ir::make_int_attr("rotary_align", 0));
+    }
   }
   if (!cfg.rope_short_factor.empty()) {
     attrs.push_back(ir::make_float_array_attr("short_factor", cfg.rope_short_factor));
