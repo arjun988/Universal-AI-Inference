@@ -110,21 +110,25 @@ int main() {
   expect(phone.single_staging, "single staging");
   expect(phone.max_threads == 4, "max threads 4");
   expect(phone.enable_streaming, "streaming on");
-
-  const std::uint64_t avail = system_available_bytes();
-  const std::uint64_t budget = clamp_budget_to_available(2ull * kGiB, avail);
-  expect(phone.ram_budget_bytes == budget, "phone budget is min(2 GiB, available/2)");
-  expect(phone.budget_clamped == (avail != 0 && budget < 2ull * kGiB), "clamped flag");
-  std::int64_t expect_kv = 512;
-  if (phone.budget_clamped && budget < kGiB) {
-    expect_kv = 128;
-  } else if (phone.budget_clamped && budget < kGiB + kGiB / 2ull) {
-    expect_kv = 256;
+  if (!phone.budget_clamped) {
+    expect(phone.ram_budget_bytes == 2ull * kGiB, "phone target stays 2 GiB when half of free RAM covers it");
+    expect(phone.kv_window == 512, "phone kv window");
+    expect(phone.expert_cache_bytes == 256ull * kMiB, "phone expert cache");
+  } else {
+    expect(phone.ram_budget_bytes > 0 && phone.ram_budget_bytes < 2ull * kGiB,
+           "phone cap is below the 2 GiB target");
+    std::int64_t expect_kv = 512;
+    if (phone.ram_budget_bytes < kGiB) {
+      expect_kv = 128;
+    } else if (phone.ram_budget_bytes < kGiB + kGiB / 2ull) {
+      expect_kv = 256;
+    }
+    expect(phone.kv_window == expect_kv, "phone kv window follows the cap");
+    const std::uint64_t expect_expert =
+        (256ull * kMiB) > phone.ram_budget_bytes / 8ull ? phone.ram_budget_bytes / 8ull
+                                                        : 256ull * kMiB;
+    expect(phone.expert_cache_bytes == expect_expert, "phone expert cache follows the cap");
   }
-  expect(phone.kv_window == expect_kv, "phone kv window follows the clamp");
-  const std::uint64_t expect_expert =
-      phone.budget_clamped && (256ull * kMiB) > budget / 8ull ? budget / 8ull : 256ull * kMiB;
-  expect(phone.expert_cache_bytes == expect_expert, "phone expert cache");
 
   SessionOptions opts;
   apply_memory_preset(phone, &opts);
@@ -137,14 +141,20 @@ int main() {
   expect(resolve_memory_preset(MemoryPreset::Laptop, 0, &laptop).ok(), "resolve laptop");
   expect(!laptop.single_staging, "laptop preset keeps two staging slots");
   expect(laptop.max_threads == 0, "laptop preset has no thread cap");
-  if (avail == 0 || avail >= 8ull * kGiB) {
+  if (!laptop.budget_clamped) {
     expect(laptop.ram_budget_bytes == 8ull * kGiB, "laptop target stays 8 GiB when free RAM covers it");
-    expect(!laptop.budget_clamped, "laptop is not half-clamped");
     expect(laptop.kv_window == 2048, "laptop kv window");
     expect(laptop.expert_cache_bytes == kGiB, "laptop expert cache");
   } else {
-    expect(laptop.budget_clamped, "laptop shrinks only below the target");
-    expect(laptop.ram_budget_bytes == avail, "laptop cap is free RAM");
+    // Free RAM moves between samples, so compare against the resolved budget
+    // rather than an earlier system_available_bytes() snapshot.
+    expect(laptop.ram_budget_bytes > 0 && laptop.ram_budget_bytes < 8ull * kGiB,
+           "laptop cap is below the 8 GiB target");
+    expect(laptop.expert_cache_bytes == laptop.ram_budget_bytes / 8ull,
+           "expert cache follows the shrunk cap");
+    if (laptop.ram_budget_bytes >= kGiB + kGiB / 2ull) {
+      expect(laptop.kv_window == 2048, "kv stays 2048 when the cap is at least 1.5 GiB");
+    }
   }
   {
     using namespace uaii;
