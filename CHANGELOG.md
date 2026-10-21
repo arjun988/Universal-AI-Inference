@@ -11,6 +11,7 @@ All notable changes to Universal AI Inference (UAII) are documented here.
 - C API **0.4.0**: preset resolve, RSS / available bytes, cancel, background pause, memory-warning KV drop
 - ARM NEON dot in the quant GEMM. Vulkan mapped f32 MatMul accepts `transpose_b`
 - `examples/mobile` builds with the Android NDK or an iOS toolchain and selects the backend with `auto`. See [docs/mobile.md](docs/mobile.md)
+- `uaii chat --help` lists the phone preset and its 512-token KV window
 
 ## [0.3.1] — 2026-08-15
 

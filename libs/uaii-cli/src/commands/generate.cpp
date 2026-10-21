@@ -72,7 +72,7 @@ void print_generate_usage() {
 void print_chat_usage() {
   std::cout
       << "Usage:\n"
-      << "  uaii chat --model <path.gguf|hf-dir> --jsonl [--preset laptop]\n"
+      << "  uaii chat --model <path.gguf|hf-dir> --jsonl [--preset laptop|phone]\n"
       << "  uaii chat --demo --jsonl\n\n"
       << "JSONL protocol (one JSON object per stdin line):\n"
       << "  {\"cmd\":\"generate\",\"id\":\"1\",\"prompt\":\"hi\",\"max_new_tokens\":64,\n"
@@ -87,7 +87,7 @@ void print_chat_usage() {
       << "  {\"event\":\"error\",\"id\":\"1\",\"error\":\"...\"}\n\n"
       << "Options:\n"
       << "  --backend <name>         auto (GPU if present, else CPU) | cpu|cuda|metal|vulkan|rocm\n"
-      << "  --kv-window <n>          Sliding KV slots (laptop default 2048)\n";
+      << "  --kv-window <n>          Sliding KV slots (laptop default 2048; phone default 512)\n";
 }
 
 bool has_flag(const std::vector<std::string>& args, const std::string& flag) {
