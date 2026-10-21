@@ -55,7 +55,7 @@ Callers built against an older header with a smaller `struct_size` continue to w
 | Symbol | Role |
 |---|---|
 | `uaii_memory_preset_info` | Resolved preset. Set `struct_size` before `uaii_resolve_memory_preset` |
-| `uaii_resolve_memory_preset` | `laptop` / `desktop` / `server` / `phone` / `none`, then clamp to half of OS-available RAM |
+| `uaii_resolve_memory_preset` | `laptop` / `desktop` / `server` / `phone` / `none`. Phone caps at half of free RAM. The others keep their target unless it exceeds free RAM |
 | `uaii_session_options_apply_preset` | Copy that preset onto `uaii_session_options` |
 | `uaii_system_available_bytes` | Bytes the OS can still give this process (0 if unknown) |
 | `uaii_process_rss_bytes` | Current process RSS |

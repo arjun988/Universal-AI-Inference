@@ -6,7 +6,7 @@ All notable changes to Universal AI Inference (UAII) are documented here.
 
 ### Phone preset
 
-- `--preset phone`: ~2 GiB, one staging buffer, 4 threads, KV window 512, expert LRU 256 MiB. The budget is clamped to half of OS-available RAM
+- `--preset phone`: ~2 GiB, one staging buffer, 4 threads, KV window 512, expert LRU 256 MiB. Phone clamps to half of free RAM. Laptop, desktop, and server keep their targets when free RAM covers them
 - C API **0.4.0**: preset resolve, RSS / available bytes, cancel, background pause, memory-warning KV drop
 - ARM NEON dot in the quant GEMM. Vulkan mapped f32 MatMul accepts `transpose_b`
 - `examples/mobile` builds with the Android NDK or an iOS toolchain. See [docs/mobile.md](docs/mobile.md)

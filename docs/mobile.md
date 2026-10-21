@@ -9,7 +9,7 @@ The phone preset is the same paging dial as laptop, stopped lower: about **2 GiB
 | iOS | `os_proc_available_memory()` |
 | macOS | `host_statistics64` free + inactive pages |
 
-A typed `--ram-gb 8` on a phone with 6 GiB free becomes 3 GiB. When the cap is under 1 GiB the KV window becomes 128. When it is under 1.5 GiB the window becomes 256. A cap of exactly 1 GiB keeps 256. The expert LRU is also capped at one eighth of that budget. If available memory is unknown, the requested budget is kept.
+A typed `--ram-gb 8` on a phone with 6 GiB free becomes 3 GiB. When the cap is under 1 GiB the KV window becomes 128. When it is under 1.5 GiB the window becomes 256. A cap of exactly 1 GiB keeps 256. The expert LRU is also capped at one eighth of that budget. If available memory is unknown, the requested budget is kept. Laptop, desktop, and server use a different cap: the target stands when it fits in free RAM, and becomes the free amount when it does not.
 
 Hugging Face BF16 checkpoints at 7B and above stay fail-closed. Convert them to GGUF Q4_K. Vision, SSM, and Hugging Face MLA stay out of this path.
 

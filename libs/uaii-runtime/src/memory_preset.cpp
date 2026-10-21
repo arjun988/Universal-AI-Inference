@@ -134,10 +134,18 @@ void apply_available_memory_clamp(MemoryPresetConfig* cfg,
                                   std::uint64_t available) noexcept {
   if (cfg == nullptr) return;
   const std::uint64_t requested = cfg->ram_budget_bytes;
-  const std::uint64_t cap = clamp_budget_to_available(requested, available);
-  if (available == 0 || cap >= requested) {
+  if (available == 0 || requested == 0) {
     cfg->budget_clamped = false;
-    cfg->ram_budget_bytes = cap;
+    return;
+  }
+  // Phone leaves half of free RAM for the OS and the rest of the app.
+  // Laptop and above already name a resident target, so they shrink only when
+  // that target is larger than the memory the OS can still give this process.
+  const std::uint64_t cap = cfg->preset == MemoryPreset::Phone
+                                ? clamp_budget_to_available(requested, available)
+                                : (requested < available ? requested : available);
+  if (requested <= cap) {
+    cfg->budget_clamped = false;
     return;
   }
   cfg->budget_clamped = true;

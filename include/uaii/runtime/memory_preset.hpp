@@ -51,11 +51,12 @@ UAII_API void apply_memory_preset(const MemoryPresetConfig& cfg, SessionOptions*
 /// Phones use the jetsam / MemAvailable figure, not the spec-sheet RAM.
 [[nodiscard]] UAII_API std::uint64_t system_available_bytes() noexcept;
 
-/// `requested` is kept when `available` is 0. Otherwise the cap is half of `available`.
+/// Phone cap: `requested` is kept when `available` is 0. Otherwise the cap is half of `available`.
 [[nodiscard]] UAII_API std::uint64_t clamp_budget_to_available(std::uint64_t requested,
                                                               std::uint64_t available) noexcept;
 
-/// Shrink budget, KV window, and expert cache so a typed --ram-gb cannot exceed the device.
+/// Phone caps at half of free RAM. Laptop, desktop, and server keep their target
+/// when it fits in free RAM, and shrink to free RAM when it does not.
 UAII_API void apply_available_memory_clamp(MemoryPresetConfig* cfg,
                                            std::uint64_t available) noexcept;
 

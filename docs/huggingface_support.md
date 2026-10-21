@@ -20,7 +20,7 @@ Weights stay on disk (`file#tensor` refs). The session **pins a trunk that fits 
 
 This is the same idea as kimi-k3-in-c: **storage is a scheduler resource**. Supported families (Llama-like, Qwen2/2.5/3 + Qwen2-MoE, Mistral/Mixtral, Gemma 1/2, GPT-2, Kimi/DeepSeek MLA **GGUF**) can run on an 8 GB laptop when the checkpoint is GGUF-quantized or the largest dense tensor is smaller than about half the budget. It will be **slow** (disk + CPU) rather than OOM. Token latency is dominated by paging, not by “the model is small so it should be instant.” Override KV with `--kv-window`. A single **unquantized** FFN/`lm_head` larger than ~half of RAM still fail-closes (`Convert to GGUF Q4_K or use --preset desktop|server`). Hugging Face BF16 folders of 70B-class models need a GGUF conversion for the 8 GB path; we do not silently dequant a 4 GiB tensor into an 8 GiB box.
 
-`phone` is that same dial for Android and iOS. The budget starts at 2 GiB and is clamped to half of what the OS can still give the process, so `--ram-gb 8` on a phone with 6 GiB free becomes 3 GiB. Staging is a single buffer (laptop and above keep the prefetch buffer). See [mobile.md](mobile.md).
+`phone` is that same dial for Android and iOS. Its budget starts at 2 GiB and is clamped to half of what the OS can still give the process, so `--ram-gb 8` on a phone with 6 GiB free becomes 3 GiB. Staging is a single buffer (laptop and above keep the prefetch buffer). Laptop, desktop, and server keep their targets when free RAM covers them, and shrink to free RAM only when the machine has less than the target. See [mobile.md](mobile.md).
 
 Disable with `--preset none` if the whole checkpoint already fits in RAM and you want the fastest load.
 

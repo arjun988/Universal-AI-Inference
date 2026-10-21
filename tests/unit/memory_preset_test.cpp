@@ -33,6 +33,7 @@ int main() {
 
   {
     MemoryPresetConfig cfg;
+    cfg.preset = MemoryPreset::Phone;
     cfg.ram_budget_bytes = 8ull * kGiB;
     cfg.kv_window = 512;
     cfg.expert_cache_bytes = 256ull * kMiB;
@@ -44,6 +45,7 @@ int main() {
   }
   {
     MemoryPresetConfig cfg;
+    cfg.preset = MemoryPreset::Phone;
     cfg.ram_budget_bytes = 2ull * kGiB;
     cfg.kv_window = 512;
     cfg.expert_cache_bytes = 256ull * kMiB;
@@ -54,6 +56,7 @@ int main() {
   }
   {
     MemoryPresetConfig cfg;
+    cfg.preset = MemoryPreset::Phone;
     cfg.ram_budget_bytes = 2ull * kGiB;
     cfg.kv_window = 512;
     cfg.expert_cache_bytes = 256ull * kMiB;
@@ -63,12 +66,30 @@ int main() {
   }
   {
     MemoryPresetConfig cfg;
+    cfg.preset = MemoryPreset::Phone;
     cfg.ram_budget_bytes = 2ull * kGiB;
     cfg.kv_window = 512;
     apply_available_memory_clamp(&cfg, 16ull * kGiB);
     expect(!cfg.budget_clamped && cfg.ram_budget_bytes == 2ull * kGiB, "16 GiB free does not clamp");
     apply_available_memory_clamp(&cfg, 0);
     expect(!cfg.budget_clamped && cfg.ram_budget_bytes == 2ull * kGiB, "available 0 does not clamp");
+  }
+  {
+    MemoryPresetConfig cfg;
+    cfg.preset = MemoryPreset::Laptop;
+    cfg.ram_budget_bytes = 8ull * kGiB;
+    cfg.kv_window = 2048;
+    cfg.expert_cache_bytes = kGiB;
+    apply_available_memory_clamp(&cfg, 12ull * kGiB);
+    expect(!cfg.budget_clamped, "laptop 8 GiB fits in 12 GiB free");
+    expect(cfg.ram_budget_bytes == 8ull * kGiB, "laptop target stays 8 GiB");
+    expect(cfg.kv_window == 2048, "laptop kv stays 2048");
+    expect(cfg.expert_cache_bytes == kGiB, "laptop expert cache stays 1 GiB");
+    apply_available_memory_clamp(&cfg, 6ull * kGiB);
+    expect(cfg.budget_clamped, "laptop shrinks when free RAM is below the target");
+    expect(cfg.ram_budget_bytes == 6ull * kGiB, "laptop cap is free RAM, not half");
+    expect(cfg.kv_window == 2048, "6 GiB keeps the laptop window");
+    expect(cfg.expert_cache_bytes == (6ull * kGiB) / 8ull, "expert cache follows the shrunk cap");
   }
 
   MemoryPreset parsed = MemoryPreset::None;
@@ -109,6 +130,17 @@ int main() {
 
   MemoryPresetConfig laptop;
   expect(resolve_memory_preset(MemoryPreset::Laptop, 0, &laptop).ok(), "resolve laptop");
+  expect(!laptop.single_staging, "laptop preset keeps two staging slots");
+  expect(laptop.max_threads == 0, "laptop preset has no thread cap");
+  if (avail == 0 || avail >= 8ull * kGiB) {
+    expect(laptop.ram_budget_bytes == 8ull * kGiB, "laptop target stays 8 GiB when free RAM covers it");
+    expect(!laptop.budget_clamped, "laptop is not half-clamped");
+    expect(laptop.kv_window == 2048, "laptop kv window");
+    expect(laptop.expert_cache_bytes == kGiB, "laptop expert cache");
+  } else {
+    expect(laptop.budget_clamped, "laptop shrinks only below the target");
+    expect(laptop.ram_budget_bytes == avail, "laptop cap is free RAM");
+  }
   apply_memory_preset(laptop, &opts);
   expect(!opts.single_staging, "laptop keeps prefetch staging");
   expect(opts.max_threads == 0, "laptop clears the thread cap field");
