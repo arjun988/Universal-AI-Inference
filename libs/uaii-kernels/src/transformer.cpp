@@ -213,8 +213,10 @@ float rope_scaled_inv_freq(std::int64_t pair_index, std::int64_t n_pairs, float 
     float ramp = (i - low) / (high - low);
     if (ramp < 0.f) ramp = 0.f;
     if (ramp > 1.f) ramp = 1.f;
-    // ramp 0 → interpolation (scaled); ramp 1 → extrapolation (original)
-    return inv_interp * (1.f - ramp) + inv_extrap * ramp;
+    // ramp 0 (high frequency) stays on the original wavelength.
+    // ramp 1 (low frequency) uses the interpolated 1/factor wavelength.
+    // HF: inv = interp * ramp + extrap * (1 - ramp).
+    return inv_interp * ramp + inv_extrap * (1.f - ramp);
   }
   return inv;
 }

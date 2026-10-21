@@ -88,6 +88,20 @@ void test_llama3_rope_freqs() {
   }
 }
 
+void test_yarn_ramp_matches_hf() {
+  // dim=8 (4 pairs), theta=10000, factor=4, original context 2048.
+  // HF correction range: low=floor(corr(beta_fast=32))=1, high=ceil(corr(beta_slow=1))=3.
+  const float y0 =
+      uaii::kernels::rope_scaled_inv_freq(0, 4, 10000.f, "yarn", 4.f, 1.f, 4.f, 2048.f);
+  expect_close(y0, 1.f, 1e-5f, "yarn high-freq is extrapolation");
+  const float y3 =
+      uaii::kernels::rope_scaled_inv_freq(3, 4, 10000.f, "yarn", 4.f, 1.f, 4.f, 2048.f);
+  expect_close(y3, 0.00025f, 1e-7f, "yarn low-freq is interpolation");
+  const float y2 =
+      uaii::kernels::rope_scaled_inv_freq(2, 4, 10000.f, "yarn", 4.f, 1.f, 4.f, 2048.f);
+  expect_close(y2, 0.00625f, 1e-6f, "yarn mid-band blends");
+}
+
 void test_rope_kernel_applies_scaling() {
   float in[8] = {1, 0, 0, 1, 0.5f, 0.5f, 0, 0};
   float out[8] = {};
@@ -535,6 +549,7 @@ void test_chat_multiturn_family() {
 
 int main() {
   test_llama3_rope_freqs();
+  test_yarn_ramp_matches_hf();
   test_rope_kernel_applies_scaling();
   test_rmsnorm_offset_and_qk();
   test_sliding_window_mask();
