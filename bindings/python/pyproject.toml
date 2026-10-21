@@ -17,8 +17,8 @@ classifiers = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/arjunshukla/Universal-AI-Inference"
-Homepage = "https://github.com/arjunshukla/Universal-AI-Inference"
+Documentation = "https://github.com/arjun988/Universal-AI-Inference"
+Homepage = "https://github.com/arjun988/Universal-AI-Inference"
 
 [tool.setuptools.packages.find]
 where = ["."]
