@@ -166,7 +166,9 @@ class UAII_API KvCache {
     pending_seq_ = 0;
   }
 
-  /// View of committed past K/V: [batch, past_len, k_dim/v_dim]. Empty if past_len==0.
+  /// View of committed past K/V: contiguous [batch, past_len, k_dim/v_dim].
+  /// Empty if past_len==0. K and V views may be held at the same time; each side
+  /// keeps its own shape. A later call for the same side invalidates that side's view.
   [[nodiscard]] kernels::TensorView k_view(std::int64_t layer) const {
     return make_past_view(layer, /*is_k=*/true);
   }
@@ -238,16 +240,34 @@ class UAII_API KvCache {
       return v;
     }
     const std::int64_t d = is_k ? k_dim_ : v_dim_;
-    view_shape_[0] = batch_;
-    view_shape_[1] = past_len_;
-    view_shape_[2] = d;
+    auto& shape = is_k ? k_view_shape_ : v_view_shape_;
+    shape[0] = batch_;
+    shape[1] = past_len_;
+    shape[2] = d;
     v.dtype = DType::F32;
-    v.shape = view_shape_;
+    v.shape = shape;
     v.rank = 3;
-    v.data = const_cast<float*>(
-        (is_k ? k_ : v_)[static_cast<std::size_t>(layer)].data());
-    v.nbytes = static_cast<std::size_t>(batch_) * static_cast<std::size_t>(past_len_) *
-               static_cast<std::size_t>(d) * sizeof(float);
+    const float* src = (is_k ? k_ : v_)[static_cast<std::size_t>(layer)].data();
+    const std::size_t n =
+        static_cast<std::size_t>(batch_) * static_cast<std::size_t>(past_len_) *
+        static_cast<std::size_t>(d);
+    // Storage is [batch, max_seq, dim]. That prefix is contiguous only for batch 1.
+    // Attention indexes a packed [batch, past_len, dim] view, so pack when the
+    // resident window is wider than the occupancy.
+    if (batch_ == 1 || past_len_ == max_seq_) {
+      v.data = const_cast<float*>(src);
+      v.nbytes = n * sizeof(float);
+      return v;
+    }
+    auto& packed = is_k ? k_packed_ : v_packed_;
+    packed.resize(n);
+    for (std::int64_t b = 0; b < batch_; ++b) {
+      std::memcpy(packed.data() + static_cast<std::size_t>(b * past_len_ * d),
+                  src + static_cast<std::size_t>(b * max_seq_ * d),
+                  static_cast<std::size_t>(past_len_ * d) * sizeof(float));
+    }
+    v.data = packed.data();
+    v.nbytes = n * sizeof(float);
     return v;
   }
 
@@ -264,7 +284,10 @@ class UAII_API KvCache {
   std::int64_t sink_ = 4;
   std::vector<std::vector<float>> k_;
   std::vector<std::vector<float>> v_;
-  mutable std::int64_t view_shape_[3]{};
+  mutable std::int64_t k_view_shape_[3]{};
+  mutable std::int64_t v_view_shape_[3]{};
+  mutable std::vector<float> k_packed_;
+  mutable std::vector<float> v_packed_;
 };
 
 }  // namespace runtime
