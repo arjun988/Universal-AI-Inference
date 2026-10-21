@@ -13,5 +13,8 @@ UAII_API void parallel_for(std::size_t n, const std::function<void(std::size_t)>
 
 [[nodiscard]] UAII_API unsigned hardware_concurrency() noexcept;
 
+/// Extra cap on top of UAII_NUM_THREADS / hardware_concurrency. 0 clears the cap.
+UAII_API void set_thread_limit(unsigned n) noexcept;
+
 }  // namespace kernels
 }  // namespace uaii

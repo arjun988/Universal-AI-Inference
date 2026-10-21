@@ -89,7 +89,35 @@ typedef struct uaii_session_options {
   int keep_quantized_weights;
   /** Max context for generate / KV; 0 = graph metadata. */
   int64_t max_context;
+  /** Resident KV window in tokens. 0 = grow until max_context. Appended in 0.4.0. */
+  int64_t kv_window;
+  /** Attention-sink tokens kept when the KV window slides. Default 4. */
+  int64_t kv_sink;
+  /** Pin the first N transformer layers. 0 = stream dense layers under the budget. */
+  int64_t pin_layers;
+  /** MoE expert LRU budget in bytes. 0 = no cross-token expert cache. */
+  uint64_t expert_cache_bytes;
+  /** Thread cap. 0 = hardware_concurrency (UAII_NUM_THREADS still applies). */
+  int max_threads;
+  /** Non-zero keeps one staging buffer (phone). Zero keeps the prefetch buffer. */
+  int single_staging;
 } uaii_session_options;
+
+typedef struct uaii_memory_preset_info {
+  /** Must be set to sizeof(uaii_memory_preset_info). */
+  uint32_t struct_size;
+  uint64_t ram_budget_bytes;
+  int64_t pin_layers;
+  uint64_t expert_cache_bytes;
+  int64_t kv_window;
+  int64_t kv_sink;
+  int enable_streaming;
+  int single_staging;
+  int max_threads;
+  int budget_clamped;
+  uint64_t available_bytes;
+  char label[32];
+} uaii_memory_preset_info;
 
 /** Fill options with safe defaults. */
 UAII_CAPI_API void uaii_session_options_init(uaii_session_options* opts);
@@ -153,6 +181,27 @@ UAII_CAPI_API uaii_status uaii_session_write_trace(uaii_session* session,
 /** Convert GGUF/Safetensors → UAII IR path. */
 UAII_CAPI_API uaii_status uaii_convert_model(const char* input_path,
                                              const char* output_path);
+
+/**
+ * Resolve laptop|desktop|server|phone|none. ram_gb_override 0 keeps the preset budget.
+ * The budget is then clamped to half of the memory the OS can still give this process.
+ */
+UAII_CAPI_API uaii_status uaii_resolve_memory_preset(const char* name,
+                                                     uint64_t ram_gb_override,
+                                                     uaii_memory_preset_info* out);
+
+/** Copy a resolved preset onto session options. Does not change backend or struct_size. */
+UAII_CAPI_API void uaii_session_options_apply_preset(uaii_session_options* opts,
+                                                     const uaii_memory_preset_info* preset);
+
+UAII_CAPI_API uint64_t uaii_system_available_bytes(void);
+UAII_CAPI_API uint64_t uaii_process_rss_bytes(void);
+
+/** generate() clears cancel at entry. Background stays until set back to zero. */
+UAII_CAPI_API void uaii_session_request_cancel(uaii_session* session);
+UAII_CAPI_API void uaii_session_set_background(uaii_session* session, int background);
+/** Drop KV. Weights stay on the streaming plan. */
+UAII_CAPI_API void uaii_session_memory_warning(uaii_session* session);
 
 #ifdef __cplusplus
 }

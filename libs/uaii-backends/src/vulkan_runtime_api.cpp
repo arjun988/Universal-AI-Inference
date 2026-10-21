@@ -356,13 +356,14 @@ Error dispatch_matmul_mapped(const std::vector<kernels::TensorView>& inputs,
   }
   const bool ta = attr_bool(attrs, "transpose_a", false);
   const bool tb = attr_bool(attrs, "transpose_b", false);
-  if (ta || tb) {
-    return Error::make(ErrorCode::NotImplemented, "Vulkan MatMul transpose not supported");
+  if (ta) {
+    return Error::make(ErrorCode::NotImplemented, "Vulkan MatMul transpose_a not supported");
   }
   const std::int64_t m = a.dim(0);
   const std::int64_t k = a.dim(1);
-  const std::int64_t n = b.dim(1);
-  if (b.dim(0) != k || c.dim(0) != m || c.dim(1) != n) {
+  const std::int64_t n = tb ? b.dim(0) : b.dim(1);
+  const bool k_ok = tb ? (b.dim(1) == k) : (b.dim(0) == k);
+  if (!k_ok || c.dim(0) != m || c.dim(1) != n) {
     return Error::make(ErrorCode::InvalidArgument, "Vulkan MatMul shape mismatch");
   }
   if (rec_for_ptr(a.data) == nullptr || rec_for_ptr(b.data) == nullptr ||
@@ -376,7 +377,8 @@ Error dispatch_matmul_mapped(const std::vector<kernels::TensorView>& inputs,
     for (std::int64_t col = 0; col < n; ++col) {
       float sum = 0.0f;
       for (std::int64_t t = 0; t < k; ++t) {
-        sum += af[row * k + t] * bf[t * n + col];
+        const float bv = tb ? bf[col * k + t] : bf[t * n + col];
+        sum += af[row * k + t] * bv;
       }
       cf[row * n + col] = sum;
     }
@@ -488,10 +490,10 @@ const char* vulkan_capability_details() noexcept {
 #if defined(UAII_HAVE_VULKAN_HEADERS)
   if (g_add_pipeline_ready) {
     return "Vulkan native buffers; Add(VkCompute); MatMul/RMSNorm CPU-on-mapped "
-           "(host_fallback=true); Softmax,Silu,Attention host";
+           "(transpose_b; host_fallback=true); Softmax,Silu,Attention,RoPE host";
   }
-  return "Vulkan native host-visible buffers; host_fallback=true for MatMul,Add,"
-         "RMSNorm,Softmax,Silu,Attention (compute shaders pending)";
+  return "Vulkan native host-visible buffers; host_fallback=true for MatMul "
+         "(transpose_b),Add,RMSNorm,Softmax,Silu,Attention,RoPE (compute shaders pending)";
 #else
   return "Vulkan headers unavailable — host_fallback: all ops";
 #endif

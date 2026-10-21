@@ -23,6 +23,8 @@ struct OptimizeOptions {
   bool prefer_mmap = true;
   std::int64_t pin_layers = 0;
   std::uint64_t expert_cache_bytes = 0;
+  /// 1 = phone single staging buffer. 2 = double buffer. 0 = 2.
+  int staging_slots = 2;
 };
 
 struct OptimizeResult {

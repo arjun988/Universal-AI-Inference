@@ -174,6 +174,44 @@ int main() {
            "oversized message");
   }
 
+  // One staging slot fits when pin + 1×stage fits and pin + 2×stage does not.
+  // Two 1 MiB layers (2 MiB total) exceed a 1.5 MiB budget, so streaming turns on.
+  {
+    ir::GraphBuilder b("one_slot");
+    TensorId x = b.add_tensor("x", DType::F32, Shape{{1, 4}});
+    TensorId w3 = b.add_weight("model.layers.3.self_attn.q_proj.weight", DType::F32,
+                               Shape{{512, 512}}, "l3.bin");  // 1 MiB
+    TensorId w4 = b.add_weight("model.layers.4.self_attn.q_proj.weight", DType::F32,
+                               Shape{{512, 512}}, "l4.bin");  // 1 MiB
+    TensorId y = b.add_tensor("y", DType::F32, Shape{{1, 4}});
+    b.add_node("id", "Identity", "1", {x}, {y});
+    (void)w3;
+    (void)w4;
+    ir::Graph g = b.build();
+
+    planner::StoragePlanOptions wide;
+    wide.enable_streaming = true;
+    wide.ram_budget_bytes = (3ull * 1024ull * 1024ull) / 2ull;  // 1.5 MiB
+    wide.pin_layers = 0;
+    wide.staging_slots = 2;
+    planner::StoragePlan wide_plan;
+    const Error wide_err = planner::build_storage_plan(g, wide, &wide_plan);
+    expect(!wide_err.ok(), "double staging exceeds 1.5 MiB");
+
+    planner::StoragePlanOptions one = wide;
+    one.staging_slots = 1;
+    planner::StoragePlan plan;
+    const Error err = planner::build_storage_plan(g, one, &plan);
+    expect(err.ok(), "single staging fits 1.5 MiB");
+    expect(plan.staging_slots == 1, "staging_slots=1");
+    expect(plan.streaming_required, "layer streamed");
+    int streamed = 0;
+    for (const auto& p : plan.placements) {
+      if (p.stream) ++streamed;
+    }
+    expect(streamed == 2, "both 1 MiB layers streamed into one slot");
+  }
+
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";
     return EXIT_FAILURE;

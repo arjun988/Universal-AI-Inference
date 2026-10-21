@@ -15,6 +15,7 @@ enum class MemoryPreset {
   Laptop,   // ~8 GiB resident target
   Desktop,  // ~32 GiB
   Server,   // ~128 GiB
+  Phone,    // ~2 GiB process cap (Android / iOS)
 };
 
 struct MemoryPresetConfig {
@@ -28,6 +29,12 @@ struct MemoryPresetConfig {
   std::int64_t kv_window = 0;
   std::int64_t kv_sink = 4;
   bool enable_streaming = false;
+  /// Phone keeps one staging buffer. Laptop and above prefetch into a second.
+  bool single_staging = false;
+  /// 0 = use hardware_concurrency (still honors UAII_NUM_THREADS). Phone uses 4.
+  int max_threads = 0;
+  /// True when the OS available-RAM cap reduced ram_budget_bytes.
+  bool budget_clamped = false;
   std::string label;
 };
 
@@ -39,6 +46,18 @@ struct MemoryPresetConfig {
 
 /// Apply preset fields onto SessionOptions (budget + streaming + pin_layers metadata).
 UAII_API void apply_memory_preset(const MemoryPresetConfig& cfg, SessionOptions* opts);
+
+/// Bytes the OS will still give this process (0 if unknown).
+/// Phones use the jetsam / MemAvailable figure, not the spec-sheet RAM.
+[[nodiscard]] UAII_API std::uint64_t system_available_bytes() noexcept;
+
+/// `requested` is kept when `available` is 0. Otherwise the cap is half of `available`.
+[[nodiscard]] UAII_API std::uint64_t clamp_budget_to_available(std::uint64_t requested,
+                                                              std::uint64_t available) noexcept;
+
+/// Shrink budget, KV window, and expert cache so a typed --ram-gb cannot exceed the device.
+UAII_API void apply_available_memory_clamp(MemoryPresetConfig* cfg,
+                                           std::uint64_t available) noexcept;
 
 /// Current process peak / current RSS in bytes (0 if unavailable).
 [[nodiscard]] UAII_API std::uint64_t process_current_rss_bytes() noexcept;

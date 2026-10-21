@@ -52,8 +52,13 @@ Error StreamingWeightStore::configure(const planner::StoragePlan& plan,
   expert_budget_ = plan.expert_cache_bytes;
   const std::size_t staging = static_cast<std::size_t>(
       std::max<std::uint64_t>(plan.staging_bytes, 1));
+  const int slots = plan.staging_slots <= 1 ? 1 : 2;
   buffers_[0].assign(staging, 0);
-  buffers_[1].assign(staging, 0);
+  if (slots <= 1) {
+    buffers_[1].clear();
+  } else {
+    buffers_[1].assign(staging, 0);
+  }
 
   for (const auto& p : plan.placements) {
     if (!p.stream) continue;
@@ -67,7 +72,7 @@ Error StreamingWeightStore::configure(const planner::StoragePlan& plan,
     expert_[p.tensor_id] = p.expert;
   }
   log::info("storage") << "streaming configured staging=" << buffers_[0].size()
-                       << "B x2 tensors=" << handles_.size()
+                       << "B x" << slots << " tensors=" << handles_.size()
                        << " expert_budget=" << expert_budget_;
   return Error::success();
 }
@@ -198,6 +203,7 @@ Error StreamingWeightStore::stage_into(int slot, TensorId id) {
 
 void StreamingWeightStore::prefetch(TensorId id) {
   if (!is_streamed(id)) return;
+  if (buffers_[1].empty()) return;
   std::lock_guard<std::mutex> lock(mu_);
   if (resident_[active_] == id || resident_[1 - active_] == id) return;
   if (prefetch_fut_.valid()) return;  // one in flight
@@ -234,6 +240,7 @@ bool StreamingWeightStore::try_peek_prefetched(TensorId id, const void** out_dat
     }
   }
   const int inactive = 1 - active_;
+  if (buffers_[inactive].empty()) return false;
   if (resident_[inactive] != id) return false;
   auto sit = sizes_.find(id);
   if (sit == sizes_.end()) return false;
@@ -256,15 +263,17 @@ Error StreamingWeightStore::stage(TensorId id, const void** out_data, std::size_
     Error err = prefetch_fut_.get();
     prefetch_id_ = 0;
     if (!err.ok()) return err;
-    active_ = 1 - active_;
+    const int other = 1 - active_;
+    if (!buffers_[other].empty()) active_ = other;
   } else {
     if (prefetch_fut_.valid()) {
       (void)prefetch_fut_.get();
       prefetch_id_ = 0;
     }
     if (resident_[active_] != id) {
-      if (resident_[1 - active_] == id) {
-        active_ = 1 - active_;
+      const int other = 1 - active_;
+      if (!buffers_[other].empty() && resident_[other] == id) {
+        active_ = other;
       } else {
         Error err = stage_into(active_, id);
         if (!err.ok()) return err;

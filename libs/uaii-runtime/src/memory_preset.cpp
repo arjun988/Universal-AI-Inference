@@ -1,6 +1,7 @@
 #include "uaii/runtime/memory_preset.hpp"
 
 #include "uaii/core/log.hpp"
+#include "uaii/kernels/thread_pool.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -13,7 +14,11 @@
 #  include <windows.h>
 #  include <psapi.h>
 #elif defined(__APPLE__)
+#  include <TargetConditionals.h>
 #  include <mach/mach.h>
+#  if TARGET_OS_IPHONE
+#    include <os/proc.h>
+#  endif
 #else
 #  include <cstdio>
 #endif
@@ -46,6 +51,10 @@ bool parse_memory_preset(const std::string& name, MemoryPreset* out) {
   }
   if (n == "server") {
     *out = MemoryPreset::Server;
+    return true;
+  }
+  if (n == "phone") {
+    *out = MemoryPreset::Phone;
     return true;
   }
   return false;
@@ -87,6 +96,17 @@ Error resolve_memory_preset(MemoryPreset preset, std::uint64_t ram_gb_override,
       out->enable_streaming = true;
       out->label = "server";
       break;
+    case MemoryPreset::Phone:
+      out->ram_budget_bytes = gib(2);
+      out->pin_layers = 0;
+      out->expert_cache_bytes = 256ull * 1024ull * 1024ull;
+      out->kv_window = 512;
+      out->kv_sink = 4;
+      out->enable_streaming = true;
+      out->single_staging = true;
+      out->max_threads = 4;
+      out->label = "phone";
+      break;
     case MemoryPreset::None:
     default:
       out->enable_streaming = false;
@@ -99,7 +119,37 @@ Error resolve_memory_preset(MemoryPreset preset, std::uint64_t ram_gb_override,
     out->enable_streaming = true;
     if (out->label == "none") out->label = "custom";
   }
+  apply_available_memory_clamp(out, system_available_bytes());
   return Error::success();
+}
+
+std::uint64_t clamp_budget_to_available(std::uint64_t requested,
+                                       std::uint64_t available) noexcept {
+  if (available == 0 || requested == 0) return requested;
+  const std::uint64_t half = available / 2ull;
+  return requested < half ? requested : half;
+}
+
+void apply_available_memory_clamp(MemoryPresetConfig* cfg,
+                                  std::uint64_t available) noexcept {
+  if (cfg == nullptr) return;
+  const std::uint64_t requested = cfg->ram_budget_bytes;
+  const std::uint64_t cap = clamp_budget_to_available(requested, available);
+  if (available == 0 || cap >= requested) {
+    cfg->budget_clamped = false;
+    cfg->ram_budget_bytes = cap;
+    return;
+  }
+  cfg->budget_clamped = true;
+  cfg->ram_budget_bytes = cap;
+  constexpr std::uint64_t kGiB = 1024ull * 1024ull * 1024ull;
+  if (cap < kGiB) {
+    if (cfg->kv_window > 128) cfg->kv_window = 128;
+  } else if (cap < kGiB + kGiB / 2ull) {
+    if (cfg->kv_window > 256) cfg->kv_window = 256;
+  }
+  const std::uint64_t expert_cap = cap / 8ull;
+  if (cfg->expert_cache_bytes > expert_cap) cfg->expert_cache_bytes = expert_cap;
 }
 
 void apply_memory_preset(const MemoryPresetConfig& cfg, SessionOptions* opts) {
@@ -112,13 +162,53 @@ void apply_memory_preset(const MemoryPresetConfig& cfg, SessionOptions* opts) {
   opts->expert_cache_bytes = cfg.expert_cache_bytes;
   opts->kv_window = cfg.kv_window;
   opts->kv_sink = cfg.kv_sink;
+  opts->single_staging = cfg.single_staging;
+  opts->max_threads = cfg.max_threads;
+  kernels::set_thread_limit(cfg.max_threads > 0 ? static_cast<unsigned>(cfg.max_threads) : 0u);
   if (!cfg.label.empty()) {
     log::info("memory") << "preset=" << cfg.label
                         << " budget_bytes=" << cfg.ram_budget_bytes
                         << " pin_layers=" << cfg.pin_layers
                         << " kv_window=" << cfg.kv_window
+                        << " staging_slots=" << (cfg.single_staging ? 1 : 2)
+                        << " threads=" << cfg.max_threads
+                        << " clamped=" << (cfg.budget_clamped ? "yes" : "no")
                         << " streaming=" << (cfg.enable_streaming ? "on" : "off");
   }
+}
+
+std::uint64_t system_available_bytes() noexcept {
+#if defined(_WIN32)
+  MEMORYSTATUSEX st{};
+  st.dwLength = sizeof(st);
+  if (!GlobalMemoryStatusEx(&st)) return 0;
+  return static_cast<std::uint64_t>(st.ullAvailPhys);
+#elif defined(__APPLE__)
+#  if TARGET_OS_IPHONE
+  return static_cast<std::uint64_t>(os_proc_available_memory());
+#  else
+  vm_statistics64_data_t vm{};
+  mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+  if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                        reinterpret_cast<host_info64_t>(&vm), &count) != KERN_SUCCESS) {
+    return 0;
+  }
+  vm_size_t page = 0;
+  if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS || page == 0) return 0;
+  return static_cast<std::uint64_t>(vm.free_count + vm.inactive_count) *
+         static_cast<std::uint64_t>(page);
+#  endif
+#else
+  FILE* f = std::fopen("/proc/meminfo", "r");
+  if (!f) return 0;
+  char line[256];
+  unsigned long long kb = 0;
+  while (std::fgets(line, sizeof(line), f)) {
+    if (std::sscanf(line, "MemAvailable: %llu", &kb) == 1) break;
+  }
+  std::fclose(f);
+  return static_cast<std::uint64_t>(kb) * 1024ull;
+#endif
 }
 
 std::uint64_t process_current_rss_bytes() noexcept {

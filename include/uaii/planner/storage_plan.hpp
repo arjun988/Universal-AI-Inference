@@ -35,6 +35,8 @@ struct StoragePlan {
   std::uint64_t ram_budget_bytes = 0;
   std::uint64_t total_weight_bytes = 0;
   std::uint64_t staging_bytes = 0;  // max single streamed weight
+  /// 1 = phone (no prefetch buffer). 2 = double-buffer prefetch.
+  int staging_slots = 2;
   std::uint64_t expert_cache_bytes = 0;
   std::size_t expert_windows = 0;
   bool streaming_required = false;
@@ -46,11 +48,13 @@ struct StoragePlanOptions {
   bool prefer_mmap = true;
   bool enable_streaming = true;
   /// Preferred pinned trunk depth. Under a real RAM budget (>= 1 MiB) the planner
-  /// drops layers, then lm_head, then embed until pin + 2×staging fits.
+  /// drops layers, then lm_head, then embed until pin + staging_slots×staging fits.
   std::int64_t pin_layers = 0;
   /// Expert LRU budget (bytes). 0 = experts still stream but are not cached across tokens.
   /// Tight budgets assign leftover RAM after the trunk, never at the trunk's expense.
   std::uint64_t expert_cache_bytes = 0;
+  /// 1 = one staging buffer (phone). 2 = prefetch double buffer. 0 = 2.
+  int staging_slots = 2;
 };
 
 /// True for Mixtral/Qwen-MoE expert banks and per-expert HF tensors.

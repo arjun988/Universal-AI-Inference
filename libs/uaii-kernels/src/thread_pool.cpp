@@ -8,17 +8,32 @@
 
 namespace uaii {
 namespace kernels {
+namespace {
+
+std::atomic<unsigned> g_thread_limit{0};
+
+}  // namespace
+
+void set_thread_limit(unsigned n) noexcept {
+  g_thread_limit.store(n, std::memory_order_relaxed);
+}
 
 unsigned hardware_concurrency() noexcept {
+  unsigned n = 0;
   const char* env = std::getenv("UAII_NUM_THREADS");
   if (env && env[0] != '\0') {
     char* end = nullptr;
     const long v = std::strtol(env, &end, 10);
     if (end != env && v > 0 && v < 4096) {
-      return static_cast<unsigned>(v);
+      n = static_cast<unsigned>(v);
     }
   }
-  const unsigned n = std::thread::hardware_concurrency();
+  if (n == 0) {
+    n = std::thread::hardware_concurrency();
+    if (n == 0) n = 1u;
+  }
+  const unsigned cap = g_thread_limit.load(std::memory_order_relaxed);
+  if (cap > 0 && n > cap) n = cap;
   return n == 0 ? 1u : n;
 }
 

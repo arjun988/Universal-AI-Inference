@@ -4,13 +4,13 @@
 
 UAII is a modular C++ inference runtime: load a model into a common intermediate representation, optimize and schedule it, then execute on CPU or GPU backends through one session API. It is built as an *execution platform*—loaders, operators, backends, schedulers, and storage are pluggable—not a single-family engine hard-wired to one format.
 
-**Ready to recommend today:** Hugging Face **decoder-only** folders (`*ForCausalLM` / GPT-2 / Mixtral, layout auto-detect) and **GGUF `blk.*`**, with a default **laptop** RAM dial (pin trunk, stream the rest — kimi-style). Vision / SSM / RWKV / HF MLA are still roadmap — see [docs/huggingface_support.md](docs/huggingface_support.md) and [upgrade.md](upgrade.md).
+**Ready to recommend today:** Hugging Face **decoder-only** folders (`*ForCausalLM` / GPT-2 / Mixtral, layout auto-detect) and **GGUF `blk.*`**, with a default **laptop** RAM dial (pin trunk, stream the rest — kimi-style). **Phone** is the lower stop on that same dial (~2 GiB, one staging buffer) — see [docs/mobile.md](docs/mobile.md). Vision / SSM / RWKV / HF MLA are still roadmap — see [docs/huggingface_support.md](docs/huggingface_support.md) and [upgrade.md](upgrade.md).
 
 | | |
 |---|---|
 | **Language** | C++17 |
 | **Build** | CMake 3.20+ |
-| **Stable ABI** | C API `0.3.0` (`uaii_capi`) |
+| **Stable ABI** | C API `0.4.0` (`uaii_capi`) |
 | **License** | [MIT](LICENSE) |
 
 ---
@@ -270,7 +270,7 @@ Useful environment variables: `UAII_LOG_LEVEL`, `UAII_NUM_THREADS`, `UAII_GEMM`,
 
 Shared library target: **`uaii_capi`**. Header: [`include/uaii/c_api/uaii.h`](include/uaii/c_api/uaii.h).
 
-Current version: **0.3.0** (pre-1.0). Callers must set `uaii_session_options.struct_size` after `uaii_session_options_init`.
+Current version: **0.4.0** (pre-1.0). Callers must set `uaii_session_options.struct_size` after `uaii_session_options_init`. 0.4.0 appends KV / pin / thread fields and adds `uaii_resolve_memory_preset`, cancel, background, and memory-warning entry points. Phone build steps are in [docs/mobile.md](docs/mobile.md).
 
 Highlights:
 

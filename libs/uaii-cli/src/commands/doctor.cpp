@@ -8,7 +8,12 @@
 #include "uaii/interfaces/types.hpp"
 #include "uaii/kernels/gemm.hpp"
 #include "uaii/plugins/operator_host.hpp"
+#include "uaii/runtime/memory_preset.hpp"
 #include "uaii/version.hpp"
+
+#if defined(__APPLE__)
+#  include <TargetConditionals.h>
+#endif
 
 #include <iostream>
 #include <memory>
@@ -48,8 +53,14 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   print_kv("plugin_abi", std::to_string(UAII_PLUGIN_ABI_VERSION));
 #if defined(_WIN32)
   print_kv("platform", "windows");
+#elif defined(__ANDROID__)
+  print_kv("platform", "android");
 #elif defined(__APPLE__)
+#  if TARGET_OS_IPHONE
+  print_kv("platform", "ios");
+#  else
   print_kv("platform", "macos");
+#  endif
 #else
   print_kv("platform", "linux");
 #endif
@@ -80,13 +91,37 @@ int cmd_doctor(const Config& config, bool load_plugins, const std::string& exe_d
   print_kv("plugin.dirs", join_dirs(dirs));
   std::cout << '\n';
 
+  std::cout << "Memory\n";
+  {
+    const std::uint64_t avail = runtime::system_available_bytes();
+    std::ostringstream avail_s;
+    avail_s << avail << " (" << (avail / (1024ull * 1024ull)) << " MiB)";
+    print_kv("available_bytes", avail_s.str());
+    runtime::MemoryPresetConfig phone;
+    const Error perr = runtime::resolve_memory_preset(runtime::MemoryPreset::Phone, 0, &phone);
+    if (perr.ok()) {
+      std::ostringstream bud;
+      bud << phone.ram_budget_bytes << " (" << (phone.ram_budget_bytes / (1024ull * 1024ull))
+          << " MiB)";
+      print_kv("phone_budget_bytes", bud.str());
+      print_kv("phone_clamped", phone.budget_clamped ? "yes" : "no");
+      print_kv("phone_kv_window", std::to_string(phone.kv_window));
+      print_kv("phone_staging_slots", phone.single_staging ? "1" : "2");
+      print_kv("phone_threads", std::to_string(phone.max_threads));
+    }
+    print_kv("phone_gpu",
+             "MatMul may use Metal on iOS or Vulkan mapped f32 on Android, including "
+             "transpose_b. Attention and RoPE stay on CPU. Q4_K stays in the CPU quant GEMM.");
+  }
+  std::cout << '\n';
+
   std::cout << "Modules (probed)\n";
   print_kv("uaii-core", "active");
   print_kv("uaii-ir", "active");
   print_kv("uaii-runtime",
            "active (session; compute_dtype F32|F16; memory presets; peak RSS)");
   print_kv("uaii-memory", "active");
-  print_kv("uaii-storage", "active (OS mmap + double-buffer streaming)");
+  print_kv("uaii-storage", "active (OS mmap; phone x1 staging, laptop+ x2 prefetch)");
   print_kv("uaii-planner", "active (fusion, memory/storage plan, disk cache)");
   print_kv("uaii-kernels",
            std::string("GEMM=") + kernels::GemmRegistry::instance().describe() +

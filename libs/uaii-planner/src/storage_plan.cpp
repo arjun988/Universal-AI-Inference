@@ -173,6 +173,11 @@ Error build_storage_plan(const ir::Graph& graph,
     if (biggest_stream) *biggest_stream = std::move(big);
   };
 
+  int staging_slots = options.staging_slots;
+  if (staging_slots <= 0) staging_slots = 2;
+  if (staging_slots > 2) staging_slots = 2;
+  const std::uint64_t slot_n = static_cast<std::uint64_t>(staging_slots);
+
   if (pressure || expert_page) {
     out->streaming_required = true;
 
@@ -183,7 +188,7 @@ Error build_storage_plan(const ir::Graph& graph,
       std::string biggest;
       for (int step = 0; step < 64; ++step) {
         pin_and_staging(&pin, &stage, &biggest);
-        const std::uint64_t need = pin + stage * 2ull;
+        const std::uint64_t need = pin + stage * slot_n;
         if (need <= options.ram_budget_bytes) break;
         if (pin_layers > 0) {
           --pin_layers;
@@ -200,7 +205,7 @@ Error build_storage_plan(const ir::Graph& graph,
         break;
       }
       pin_and_staging(&pin, &stage, &biggest);
-      const std::uint64_t need = pin + stage * 2ull;
+      const std::uint64_t need = pin + stage * slot_n;
       if (stage > 0 && need > options.ram_budget_bytes) {
         return Error::make(
             ErrorCode::InvalidArgument,
@@ -239,11 +244,13 @@ Error build_storage_plan(const ir::Graph& graph,
     if (p.stream) max_streamed = std::max(max_streamed, p.bytes);
   }
   out->staging_bytes = max_streamed > 0 ? max_streamed : max_weight;
+  out->staging_slots = staging_slots;
 
   std::ostringstream oss;
   oss << "weights=" << out->total_weight_bytes << "B dense=" << dense_bytes
       << "B experts=" << expert_bytes << "B budget=" << out->ram_budget_bytes
-      << "B staging=" << out->staging_bytes << "B expert_cache=" << out->expert_cache_bytes
+      << "B staging=" << out->staging_bytes << "B x" << out->staging_slots
+      << " expert_cache=" << out->expert_cache_bytes
       << "B streaming=" << (out->streaming_required ? "yes" : "no")
       << " pin_layers=" << pin_layers << " pin_embed=" << (pin_embed ? "yes" : "no")
       << " pin_lm_head=" << (pin_lm ? "yes" : "no") << " windows=" << out->windows.size()

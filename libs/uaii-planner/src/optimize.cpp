@@ -46,6 +46,7 @@ Error optimize_graph(ir::Graph graph,
     sopts.enable_streaming = options.enable_streaming;
     sopts.pin_layers = options.pin_layers;
     sopts.expert_cache_bytes = options.expert_cache_bytes;
+    sopts.staging_slots = options.staging_slots;
     Error err = build_storage_plan(graph, sopts, &out->storage);
     if (!err.ok()) return err;
   }

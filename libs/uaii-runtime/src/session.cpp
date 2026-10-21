@@ -9,6 +9,7 @@
 #include "uaii/ir/validator.hpp"
 #include "uaii/kernels/gemm.hpp"
 #include "uaii/kernels/kernels.hpp"
+#include "uaii/kernels/thread_pool.hpp"
 #include "uaii/loaders/gguf.hpp"
 #include "uaii/loaders/registry.hpp"
 #include "uaii/quant/quantizer.hpp"
@@ -117,6 +118,10 @@ Error Session::create(ir::Graph graph, SessionOptions options) {
   oopts.prefer_mmap = true;
   oopts.pin_layers = options_.pin_layers;
   oopts.expert_cache_bytes = options_.expert_cache_bytes;
+  oopts.staging_slots = options_.single_staging ? 1 : 2;
+  kernels::set_thread_limit(options_.max_threads > 0
+                                ? static_cast<unsigned>(options_.max_threads)
+                                : 0u);
   options_.peak_rss_bytes =
       std::max(options_.peak_rss_bytes, process_peak_rss_bytes());
 
@@ -1054,6 +1059,11 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   if (max_new_tokens < 0) {
     return Error::make(ErrorCode::InvalidArgument, "max_new_tokens < 0");
   }
+  cancel_.store(false, std::memory_order_relaxed);
+  {
+    Error paused = reject_if_paused();
+    if (!paused.ok()) return paused;
+  }
 
   auto is_stop = [&](std::int64_t tok) {
     for (const auto s : stop_token_ids) {
@@ -1150,6 +1160,10 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   const std::int64_t chunk =
       options_.prefill_chunk_size > 0 ? options_.prefill_chunk_size : 64;
   for (std::int64_t i = 0; i < prompt_len; ++i) {
+    {
+      Error paused = reject_if_paused();
+      if (!paused.ok()) return paused;
+    }
     if (!sliding_kv && max_ctx > 0 && (i + 1) > max_ctx) {
       return Error::make(ErrorCode::InvalidArgument, "context length exceeded during prefill");
     }
@@ -1170,6 +1184,10 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
 
   // Decode: sample next token (greedy when SampleParams::greedy()).
   for (std::int64_t n = 0; n < max_new_tokens; ++n) {
+    {
+      Error paused = reject_if_paused();
+      if (!paused.ok()) return paused;
+    }
     const std::int64_t pos = static_cast<std::int64_t>(out_tokens->size());
     if (!sliding_kv && max_ctx > 0 && pos >= max_ctx) {
       return Error::make(ErrorCode::InvalidArgument, "context length exceeded during decode");
@@ -1198,9 +1216,35 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   return Error::success();
 }
 
+Error Session::reject_if_paused() const {
+  if (background_.load(std::memory_order_relaxed)) {
+    return Error::make(ErrorCode::InvalidArgument, "paused: app backgrounded");
+  }
+  if (cancel_.load(std::memory_order_relaxed)) {
+    return Error::make(ErrorCode::InvalidArgument, "cancelled");
+  }
+  return Error::success();
+}
+
+void Session::request_cancel() noexcept {
+  cancel_.store(true, std::memory_order_relaxed);
+}
+
+void Session::set_background(bool background) noexcept {
+  background_.store(background, std::memory_order_relaxed);
+}
+
+void Session::on_memory_warning() noexcept {
+  if (kv_) kv_->reset();
+}
+
 Error Session::run() {
   if (!ready_) {
     return Error::make(ErrorCode::InvalidArgument, "session not ready");
+  }
+  {
+    Error paused = reject_if_paused();
+    if (!paused.ok()) return paused;
   }
 
   ActiveKvBinding kv_bind(kv_.get());

@@ -2,7 +2,7 @@
 
 **Surface:** [`include/uaii/c_api/uaii.h`](../include/uaii/c_api/uaii.h)  
 **API version macros:** [`include/uaii/c_api/version.h`](../include/uaii/c_api/version.h)  
-**Current C API:** `UAII_C_API_VERSION` = **0.3.0** (pre-1.0; `struct_size` required)
+**Current C API:** `UAII_C_API_VERSION` = **0.4.0** (pre-1.0; `struct_size` required)
 
 ## Semantic versioning
 
@@ -23,7 +23,7 @@ Package version (`uaii_get_version` / CMake `PROJECT_VERSION`) may advance indep
 5. Defaults are **fail-closed**: `weight_init = NONE` (no silent Ones fill).
 6. Plugin ABI (`UAII_PLUGIN_ABI_VERSION`) is **separate** from the C API version.
 
-## `uaii_session_options` (0.3.0)
+## `uaii_session_options` (0.4.0)
 
 | Field | Default | Notes |
 |---|---|---|
@@ -41,8 +41,27 @@ Package version (`uaii_get_version` / CMake `PROJECT_VERSION`) may advance indep
 | `compute_dtype` | `UAII_COMPUTE_DTYPE_F32` | Added at end of struct (0.3.0) |
 | `keep_quantized_weights` | 1 | GGUF block-quant packed path |
 | `max_context` | 0 | 0 = graph metadata / unlimited generate bound |
+| `kv_window` | 0 | Appended in 0.4.0. 0 = grow until `max_context` |
+| `kv_sink` | 4 | Attention-sink tokens kept when the window slides |
+| `pin_layers` | 0 | First N transformer layers kept resident |
+| `expert_cache_bytes` | 0 | MoE expert LRU budget |
+| `max_threads` | 0 | 0 = hardware concurrency. Phone sets 4 |
+| `single_staging` | 0 | Non-zero = one staging buffer (phone) |
 
 Callers built against an older header with a smaller `struct_size` continue to work: the library zero-initializes defaults then copies only `struct_size` bytes.
+
+## Added in 0.4.0
+
+| Symbol | Role |
+|---|---|
+| `uaii_memory_preset_info` | Resolved preset. Set `struct_size` before `uaii_resolve_memory_preset` |
+| `uaii_resolve_memory_preset` | `laptop` / `desktop` / `server` / `phone` / `none`, then clamp to half of OS-available RAM |
+| `uaii_session_options_apply_preset` | Copy that preset onto `uaii_session_options` |
+| `uaii_system_available_bytes` | Bytes the OS can still give this process (0 if unknown) |
+| `uaii_process_rss_bytes` | Current process RSS |
+| `uaii_session_request_cancel` | `generate` / `run` return `cancelled`. `generate` clears this at entry |
+| `uaii_session_set_background` | Non-zero: `generate` / `run` return `paused: app backgrounded` until cleared |
+| `uaii_session_memory_warning` | Drop the KV cache. Streamed weights stay on the plan |
 
 ## Shared library
 

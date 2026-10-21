@@ -109,7 +109,7 @@ int main() {
 
   // C API version + options defaults fail-closed
   {
-    expect(std::string(uaii_get_c_api_version_string()) == "0.3.0", "c api 0.3.0");
+    expect(std::string(uaii_get_c_api_version_string()) == "0.4.0", "c api 0.4.0");
     uaii_session_options opts;
     uaii_session_options_init(&opts);
     expect(opts.struct_size == sizeof(opts), "struct_size");

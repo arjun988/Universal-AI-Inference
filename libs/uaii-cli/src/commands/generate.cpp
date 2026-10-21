@@ -48,10 +48,10 @@ void print_generate_usage() {
       << "  --tokenizer-gguf <path>  Tokenizer source when --model is IR/GGUF override\n"
       << "  --max-new-tokens <n>     Default 64\n"
       << "  --max-context <n>        Session max context (0 = model default)\n"
-      << "  --kv-window <n>          Sliding KV slots (laptop default 2048; 0 = grow until max-context)\n"
+      << "  --kv-window <n>          Sliding KV slots (laptop default 2048; phone default 512; 0 = grow until max-context)\n"
       << "  --kv-sink <n>            Keep first N tokens when sliding (default 4)\n"
       << "  --backend <name>         auto (GPU if present, else CPU) | cpu|cuda|metal|vulkan|rocm\n"
-      << "  --preset <name>          Memory dial: laptop (default)|desktop|server|none\n"
+      << "  --preset <name>          Memory dial: laptop (default)|desktop|server|phone|none\n"
       << "  --ram-gb <n>             Override RAM budget (enables streaming)\n"
       << "  --pin-layers <n>         Pin first N layers resident when streaming\n"
       << "  --stream-weights         Enable weight streaming under budget\n"
@@ -124,7 +124,7 @@ bool parse_memory_args(const std::vector<std::string>& args, runtime::MemoryPres
   runtime::MemoryPreset preset = runtime::MemoryPreset::Laptop;
   if (!preset_name.empty()) {
     if (!runtime::parse_memory_preset(preset_name, &preset)) {
-      std::cerr << "unknown --preset (use laptop|desktop|server|none)\n";
+      std::cerr << "unknown --preset (use laptop|desktop|server|phone|none)\n";
       return false;
     }
   }

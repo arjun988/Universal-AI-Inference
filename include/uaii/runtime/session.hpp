@@ -18,6 +18,7 @@
 #include "uaii/runtime/scheduler_device.hpp"
 #include "uaii/storage/streaming.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -77,6 +78,10 @@ struct SessionOptions {
   std::int64_t pin_layers = 0;
   /// MoE expert LRU budget in bytes (0 = unused / auto later).
   std::uint64_t expert_cache_bytes = 0;
+  /// Phone uses one staging buffer. Laptop and above keep the prefetch buffer.
+  bool single_staging = false;
+  /// 0 = hardware_concurrency (still honors UAII_NUM_THREADS). Phone uses 4.
+  int max_threads = 0;
   /// Prefill progress reporting stride (tokens). Execution remains seq=1 per step.
   std::int64_t prefill_chunk_size = 64;
   /// Optional progress callback while weights are loaded onto the device/host.
@@ -153,6 +158,13 @@ class UAII_API Session {
   [[nodiscard]] KvCache* kv_cache() noexcept { return kv_.get(); }
   [[nodiscard]] const KvCache* kv_cache() const noexcept { return kv_.get(); }
 
+  /// Cooperative stop. generate() clears this at entry so a previous cancel does not stick.
+  void request_cancel() noexcept;
+  /// While set, generate() and run() return "paused: app backgrounded".
+  void set_background(bool background) noexcept;
+  /// Drop the KV cache. Weights stay on the streaming plan.
+  void on_memory_warning() noexcept;
+
   [[nodiscard]] std::string debug_stats() const;
 
  private:
@@ -174,6 +186,7 @@ class UAII_API Session {
                                         const std::vector<std::int64_t>& history,
                                         std::mt19937_64* rng,
                                         std::int64_t* token) const;
+  [[nodiscard]] Error reject_if_paused() const;
 
   bool ready_ = false;
   SessionOptions options_;
@@ -197,6 +210,8 @@ class UAII_API Session {
   std::unordered_map<int, memory::TensorBuffer> owned_slots_;
   std::unordered_map<TensorId, memory::TensorBuffer> buffers_;
   std::unordered_map<std::string, TensorId> name_to_id_;
+  std::atomic<bool> cancel_{false};
+  std::atomic<bool> background_{false};
 };
 
 [[nodiscard]] UAII_API Error run_toy_mlp_demo(std::vector<float>* out_values,

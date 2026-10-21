@@ -13,11 +13,14 @@ Related: [gguf_support.md](gguf_support.md) · [huggingface_decoder_completeness
 | `laptop` (default) | ~8 GiB | auto-shrunk trunk (layers → lm_head → embed) + always-pin norm | leftover after trunk (cap 1 GiB) | 2048 tokens (+ 4 sink) | on when weights exceed budget |
 | `desktop` | ~32 GiB | 16 layers | 4 GiB | 4096 | on under pressure |
 | `server` | ~128 GiB | dense if it fits | 32 GiB | 8192 | on under pressure |
+| `phone` | ~2 GiB, then half of OS-available RAM | norm only, unless embed / lm_head still fit | 256 MiB, then cap/8 | 512 (256 under 1.5 GiB, 128 under 1 GiB) | on, one staging buffer, 4 threads |
 | `none` | unlimited | — | — | grow with `--max-context` | off |
 
 Weights stay on disk (`file#tensor` refs). The session **pins a trunk that fits the budget** (final norm always; embeddings, lm_head, and the first N layers while they still fit) and **pages the rest** through a double buffer of **packed** bytes. Under `--preset laptop`, if embed or `lm_head` would blow the 8 GiB floor, they are unpinned and streamed like any other tensor — the same dial kimi-k3-in-c uses. Routed MoE expert tensors are **never fully pinned**; an LRU keeps recently used experts in **leftover** RAM after the trunk, never by shrinking the trunk to make room. KV is a **sliding window** (default 2048 on laptop, plus 4 attention-sink tokens) so long chats cannot OOM. GGUF Mixtral/Qwen banks are split per expert (`#e=N`) and only the **top-k** experts of that token are staged. GGUF block-quant weights (Q4_K, Q5_K, …) stay packed in staging and in the expert LRU — they are **not** widened to f32 on the way in. Peak RSS is reported on generate.
 
 This is the same idea as kimi-k3-in-c: **storage is a scheduler resource**. Supported families (Llama-like, Qwen2/2.5/3 + Qwen2-MoE, Mistral/Mixtral, Gemma 1/2, GPT-2, Kimi/DeepSeek MLA **GGUF**) can run on an 8 GB laptop when the checkpoint is GGUF-quantized or the largest dense tensor is smaller than about half the budget. It will be **slow** (disk + CPU) rather than OOM. Token latency is dominated by paging, not by “the model is small so it should be instant.” Override KV with `--kv-window`. A single **unquantized** FFN/`lm_head` larger than ~half of RAM still fail-closes (`Convert to GGUF Q4_K or use --preset desktop|server`). Hugging Face BF16 folders of 70B-class models need a GGUF conversion for the 8 GB path; we do not silently dequant a 4 GiB tensor into an 8 GiB box.
+
+`phone` is that same dial for Android and iOS. The budget starts at 2 GiB and is clamped to half of what the OS can still give the process, so `--ram-gb 8` on a phone with 6 GiB free becomes 3 GiB. Staging is a single buffer (laptop and above keep the prefetch buffer). See [mobile.md](mobile.md).
 
 Disable with `--preset none` if the whole checkpoint already fits in RAM and you want the fastest load.
 

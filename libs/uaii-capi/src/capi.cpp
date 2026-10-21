@@ -3,10 +3,13 @@
 #include "uaii/ir/serialize.hpp"
 #include "uaii/loaders/registry.hpp"
 #include "uaii/profiler/profiler.hpp"
+#include "uaii/runtime/memory_preset.hpp"
 #include "uaii/runtime/session.hpp"
 #include "uaii/version.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -75,6 +78,12 @@ void uaii_session_options_init(uaii_session_options* opts) {
   opts->compute_dtype = UAII_COMPUTE_DTYPE_F32;
   opts->keep_quantized_weights = 1;
   opts->max_context = 0;
+  opts->kv_window = 0;
+  opts->kv_sink = 4;
+  opts->pin_layers = 0;
+  opts->expert_cache_bytes = 0;
+  opts->max_threads = 0;
+  opts->single_staging = 0;
 }
 
 uaii_status uaii_get_version(int* major, int* minor, int* patch) {
@@ -173,6 +182,12 @@ uaii_status uaii_session_create(const char* path,
   }
   sopts.keep_quantized_weights = local.keep_quantized_weights != 0;
   sopts.max_context = local.max_context;
+  sopts.kv_window = local.kv_window;
+  sopts.kv_sink = local.kv_sink;
+  sopts.pin_layers = local.pin_layers;
+  sopts.expert_cache_bytes = local.expert_cache_bytes;
+  sopts.max_threads = local.max_threads;
+  sopts.single_staging = local.single_staging != 0;
 
   err = handle->session.create(std::move(graph), sopts);
   if (!err.ok()) return from_error(err);
@@ -283,6 +298,84 @@ uaii_status uaii_session_write_trace(uaii_session* session, const char* path) {
   }
   auto* h = reinterpret_cast<SessionHandle*>(session);
   return from_error(uaii::profiler::write_chrome_trace(h->session.profiler(), path));
+}
+
+uaii_status uaii_resolve_memory_preset(const char* name, uint64_t ram_gb_override,
+                                     uaii_memory_preset_info* out) {
+  if (out == nullptr) {
+    set_error_msg("memory preset out null");
+    return UAII_ERR_INVALID_ARGUMENT;
+  }
+  if (out->struct_size == 0 || out->struct_size > sizeof(uaii_memory_preset_info)) {
+    set_error_msg("uaii_memory_preset_info.struct_size invalid");
+    return UAII_ERR_ABI;
+  }
+  uaii::runtime::MemoryPreset preset = uaii::runtime::MemoryPreset::None;
+  if (!uaii::runtime::parse_memory_preset(name ? name : "", &preset)) {
+    set_error_msg("unknown memory preset");
+    return UAII_ERR_INVALID_ARGUMENT;
+  }
+  uaii::runtime::MemoryPresetConfig cfg;
+  uaii::Error err = uaii::runtime::resolve_memory_preset(preset, ram_gb_override, &cfg);
+  if (!err.ok()) return from_error(err);
+
+  uaii_memory_preset_info full;
+  std::memset(&full, 0, sizeof(full));
+  full.struct_size = static_cast<uint32_t>(sizeof(full));
+  full.ram_budget_bytes = cfg.ram_budget_bytes;
+  full.pin_layers = cfg.pin_layers;
+  full.expert_cache_bytes = cfg.expert_cache_bytes;
+  full.kv_window = cfg.kv_window;
+  full.kv_sink = cfg.kv_sink;
+  full.enable_streaming = cfg.enable_streaming ? 1 : 0;
+  full.single_staging = cfg.single_staging ? 1 : 0;
+  full.max_threads = cfg.max_threads;
+  full.budget_clamped = cfg.budget_clamped ? 1 : 0;
+  full.available_bytes = uaii::runtime::system_available_bytes();
+  std::snprintf(full.label, sizeof(full.label), "%s", cfg.label.c_str());
+
+  const uint32_t nbytes = out->struct_size;
+  std::memcpy(out, &full, static_cast<std::size_t>(nbytes));
+  out->struct_size = nbytes;
+  g_last_error.clear();
+  return UAII_OK;
+}
+
+void uaii_session_options_apply_preset(uaii_session_options* opts,
+                                       const uaii_memory_preset_info* preset) {
+  if (opts == nullptr || preset == nullptr) return;
+  if (preset->struct_size < offsetof(uaii_memory_preset_info, label)) return;
+  opts->budget_bytes = preset->ram_budget_bytes;
+  opts->enable_streaming = preset->enable_streaming;
+  opts->kv_window = preset->kv_window;
+  opts->kv_sink = preset->kv_sink;
+  opts->pin_layers = preset->pin_layers;
+  opts->expert_cache_bytes = preset->expert_cache_bytes;
+  opts->max_threads = preset->max_threads;
+  opts->single_staging = preset->single_staging;
+}
+
+uint64_t uaii_system_available_bytes(void) {
+  return uaii::runtime::system_available_bytes();
+}
+
+uint64_t uaii_process_rss_bytes(void) {
+  return uaii::runtime::process_current_rss_bytes();
+}
+
+void uaii_session_request_cancel(uaii_session* session) {
+  if (session == nullptr) return;
+  reinterpret_cast<SessionHandle*>(session)->session.request_cancel();
+}
+
+void uaii_session_set_background(uaii_session* session, int background) {
+  if (session == nullptr) return;
+  reinterpret_cast<SessionHandle*>(session)->session.set_background(background != 0);
+}
+
+void uaii_session_memory_warning(uaii_session* session) {
+  if (session == nullptr) return;
+  reinterpret_cast<SessionHandle*>(session)->session.on_memory_warning();
 }
 
 uaii_status uaii_convert_model(const char* input_path, const char* output_path) {

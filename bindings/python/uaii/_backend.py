@@ -99,6 +99,12 @@ class _CTypesOpts(ctypes.Structure):
         ("compute_dtype", c_int),
         ("keep_quantized_weights", c_int),
         ("max_context", ctypes.c_int64),
+        ("kv_window", ctypes.c_int64),
+        ("kv_sink", ctypes.c_int64),
+        ("pin_layers", ctypes.c_int64),
+        ("expert_cache_bytes", ctypes.c_uint64),
+        ("max_threads", c_int),
+        ("single_staging", c_int),
     ]
 
 

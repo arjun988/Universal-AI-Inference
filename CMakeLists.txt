@@ -74,6 +74,14 @@ if(UAII_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks)
 endif()
 
+option(UAII_BUILD_MOBILE_SAMPLE "Build examples/mobile/uaii_phone on the host toolchain" OFF)
+if(UAII_BUILD_MOBILE_SAMPLE)
+  enable_language(C)
+  add_executable(uaii_phone examples/mobile/main.c)
+  set_target_properties(uaii_phone PROPERTIES LINKER_LANGUAGE CXX)
+  target_link_libraries(uaii_phone PRIVATE uaii::capi)
+endif()
+
 # --- Install / find_package(uaii) --------------------------------------------
 include(CMakePackageConfigHelpers)
 
