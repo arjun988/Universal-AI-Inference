@@ -46,7 +46,7 @@ cmake -S examples/mobile -B build-android -G Ninja \
 cmake --build build-android --target uaii_phone
 ```
 
-Ship `libuaii_capi.so` next to the binary. `uaii_phone` with no arguments prints the resolved budget. `uaii_phone model.q4_k.gguf` loads that file and generates a few tokens from ids `1, 2, 3`.
+Ship `libuaii_capi.so` next to the binary. `uaii_phone` with no arguments prints the resolved budget. `uaii_phone model.q4_k.gguf` loads that file with backend `auto` (Metal on iOS, Vulkan on Android when that backend is compiled in, otherwise CPU) and generates a few tokens from ids `1, 2, 3`. Attention and RoPE stay on CPU.
 
 ## iOS (arm64, deployment target 15)
 

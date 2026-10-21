@@ -10,7 +10,7 @@ All notable changes to Universal AI Inference (UAII) are documented here.
 - Background, cancel, and memory-warning are safe to call from the UI thread while `generate` / `run` is in progress. A memory warning drops KV without clearing the longrope scale length
 - C API **0.4.0**: preset resolve, RSS / available bytes, cancel, background pause, memory-warning KV drop
 - ARM NEON dot in the quant GEMM. Vulkan mapped f32 MatMul accepts `transpose_b`
-- `examples/mobile` builds with the Android NDK or an iOS toolchain. See [docs/mobile.md](docs/mobile.md)
+- `examples/mobile` builds with the Android NDK or an iOS toolchain and selects the backend with `auto`. See [docs/mobile.md](docs/mobile.md)
 
 ## [0.3.1] — 2026-08-15
 

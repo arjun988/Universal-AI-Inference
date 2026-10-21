@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
   uaii_session_options opts;
   uaii_session_options_init(&opts);
   uaii_session_options_apply_preset(&opts, &info);
-  opts.backend = "cpu";
+  opts.backend = "auto";
 
   uaii_session* session = NULL;
   if (uaii_session_create(argv[1], &opts, &session) != UAII_OK) {
