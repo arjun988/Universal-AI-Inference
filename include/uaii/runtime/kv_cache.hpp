@@ -76,6 +76,7 @@ class UAII_API KvCache {
     past_len_ = 0;
     pending_seq_ = 0;
     abs_pos_ = 0;
+    rope_scale_len_ = 0;
     for (auto& buf : k_) std::fill(buf.begin(), buf.end(), 0.f);
     for (auto& buf : v_) std::fill(buf.begin(), buf.end(), 0.f);
   }
@@ -84,6 +85,10 @@ class UAII_API KvCache {
   [[nodiscard]] std::int64_t past_len() const noexcept { return past_len_; }
   /// Absolute RoPE position of the token currently being encoded (does not rewind on slide).
   [[nodiscard]] std::int64_t rope_pos() const noexcept { return abs_pos_; }
+  /// Sequence length used for dynamic NTK / longrope. 0 means "this token's position + 1".
+  /// Prefill sets the full prompt length so every token shares one frequency table.
+  void set_rope_scale_len(std::int64_t n) noexcept { rope_scale_len_ = n > 0 ? n : 0; }
+  [[nodiscard]] std::int64_t rope_scale_len() const noexcept { return rope_scale_len_; }
   [[nodiscard]] std::int64_t sink() const noexcept { return sink_; }
   [[nodiscard]] std::int64_t max_seq() const noexcept { return max_seq_; }
   [[nodiscard]] std::int64_t n_layers() const noexcept { return n_layers_; }
@@ -281,6 +286,7 @@ class UAII_API KvCache {
   std::int64_t past_len_ = 0;
   std::int64_t pending_seq_ = 0;
   std::int64_t abs_pos_ = 0;
+  std::int64_t rope_scale_len_ = 0;
   std::int64_t sink_ = 4;
   std::vector<std::vector<float>> k_;
   std::vector<std::vector<float>> v_;

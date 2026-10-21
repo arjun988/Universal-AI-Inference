@@ -1132,6 +1132,16 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   Error err = ensure_kv_cache(kv_max);
   if (!err.ok()) return err;
 
+  // Longrope / dynamic NTK must use one sequence length for the whole prompt.
+  // Token-by-token prefill would otherwise scale each token by its own index.
+  struct RopeScaleLenGuard {
+    KvCache* kv = nullptr;
+    ~RopeScaleLenGuard() {
+      if (kv != nullptr) kv->set_rope_scale_len(0);
+    }
+  } scale_guard{kv_.get()};
+  if (kv_) kv_->set_rope_scale_len(prompt_len);
+
   out_tokens->clear();
   out_tokens->reserve(static_cast<std::size_t>(total));
 
@@ -1155,6 +1165,8 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
                              << " peak_rss_bytes=" << options_.peak_rss_bytes;
     }
   }
+
+  if (kv_) kv_->set_rope_scale_len(0);
 
   // Decode: sample next token (greedy when SampleParams::greedy()).
   for (std::int64_t n = 0; n < max_new_tokens; ++n) {

@@ -291,6 +291,12 @@ Error rope_f32(const TensorView& in,
   // Default position: KV cache length (seq=1 decode) or row index.
   const std::int64_t base_pos =
       (active_kv_cache() != nullptr) ? active_kv_cache()->rope_pos() : 0;
+  // Dynamic NTK and longrope pick short vs long factors from the sequence length,
+  // not from each token's own index. Prefill publishes the full prompt length.
+  const float scale_seq_override =
+      (active_kv_cache() != nullptr && active_kv_cache()->rope_scale_len() > 0)
+          ? static_cast<float>(active_kv_cache()->rope_scale_len())
+          : 0.f;
 
   for (std::size_t r = 0; r < rows; ++r) {
     float pos = static_cast<float>(base_pos + static_cast<std::int64_t>(r));
@@ -313,9 +319,10 @@ Error rope_f32(const TensorView& in,
       if (neox) {
         // NeoX / GPT-NeoX: pair (i, i + half) — required by Qwen2/Phi/Falcon.
         for (std::int64_t i = 0; i < half; ++i) {
+          const float scale_seq = scale_seq_override > 0.f ? scale_seq_override : pos + 1.f;
           const float freq = rope_scaled_inv_freq(
               i, half, theta, scale_type, scale_factor, low_freq_factor, high_freq_factor,
-              old_context_len, pos + 1.f, short_factor, long_factor, n_factors);
+              old_context_len, scale_seq, short_factor, long_factor, n_factors);
           const float angle = pos * freq;
           const float c = std::cos(angle) * yarn_mscale;
           const float s = std::sin(angle) * yarn_mscale;
@@ -327,9 +334,10 @@ Error rope_f32(const TensorView& in,
       } else {
         // Interleaved pairs (i, i+1) — llama.cpp NORMAL / GPT-J style.
         for (std::int64_t i = 0; i < rot; i += 2) {
+          const float scale_seq = scale_seq_override > 0.f ? scale_seq_override : pos + 1.f;
           const float freq = rope_scaled_inv_freq(
               i / 2, half, theta, scale_type, scale_factor, low_freq_factor,
-              high_freq_factor, old_context_len, pos + 1.f, short_factor, long_factor,
+              high_freq_factor, old_context_len, scale_seq, short_factor, long_factor,
               n_factors);
           const float angle = pos * freq;
           const float c = std::cos(angle) * yarn_mscale;

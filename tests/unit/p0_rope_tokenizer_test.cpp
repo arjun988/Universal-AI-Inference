@@ -142,6 +142,50 @@ void test_yarn_ramp_matches_hf() {
   expect_close(y2, 0.00625f, 1e-6f, "yarn mid-band blends");
 }
 
+void test_longrope_uses_prompt_scale_len() {
+  // Position 1, original context 4. Without an override, seq_len=2 uses short_factor.
+  // A prompt-length override of 8 must select long_factor for that same position.
+  float in[2] = {1.f, 0.f};
+  float pos[1] = {1.f};
+  float out_short[2] = {};
+  float out_long[2] = {};
+  const std::int64_t shape[] = {1, 2};
+  const std::int64_t pshape[] = {1};
+  const float short_f[] = {1.f};
+  const float long_f[] = {2.f};
+  uaii::kernels::TensorView vin;
+  vin.dtype = uaii::DType::F32;
+  vin.shape = shape;
+  vin.rank = 2;
+  vin.data = in;
+  vin.nbytes = sizeof(in);
+  uaii::kernels::TensorView vpos = vin;
+  vpos.shape = pshape;
+  vpos.rank = 1;
+  vpos.data = pos;
+  vpos.nbytes = sizeof(pos);
+  uaii::kernels::TensorView vout = vin;
+  vout.data = out_short;
+  expect(uaii::kernels::rope_f32(vin, &vpos, &vout, 10000.f, 2, 0, 0, "longrope", 1.f, 1.f, 4.f,
+                                 /*old_context_len=*/4.f, 1.f, short_f, long_f, 1)
+             .ok(),
+         "longrope short path");
+  expect_close(out_short[0], std::cos(1.f), 1e-5f, "pos1 uses short factor");
+  expect_close(out_short[1], std::sin(1.f), 1e-5f, "pos1 short sin");
+
+  uaii::runtime::KvCache cache;
+  cache.set_rope_scale_len(8);
+  uaii::kernels::set_active_kv_cache(&cache);
+  vout.data = out_long;
+  const uaii::Error err =
+      uaii::kernels::rope_f32(vin, &vpos, &vout, 10000.f, 2, 0, 0, "longrope", 1.f, 1.f, 4.f,
+                              /*old_context_len=*/4.f, 1.f, short_f, long_f, 1);
+  uaii::kernels::set_active_kv_cache(nullptr);
+  expect(err.ok(), "longrope prompt-length path");
+  expect_close(out_long[0], std::cos(0.5f), 1e-5f, "prompt length selects long factor");
+  expect_close(out_long[1], std::sin(0.5f), 1e-5f, "prompt length long sin");
+}
+
 void test_rope_kernel_applies_scaling() {
   float in[8] = {1, 0, 0, 1, 0.5f, 0.5f, 0, 0};
   float out[8] = {};
@@ -590,6 +634,7 @@ void test_chat_multiturn_family() {
 int main() {
   test_llama3_rope_freqs();
   test_yarn_ramp_matches_hf();
+  test_longrope_uses_prompt_scale_len();
   test_partial_rotary_leading_and_trailing();
   test_rope_kernel_applies_scaling();
   test_rmsnorm_offset_and_qk();

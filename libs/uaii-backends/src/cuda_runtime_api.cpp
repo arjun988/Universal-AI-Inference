@@ -547,12 +547,16 @@ Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
   if (base_pos < 0.f) {
     base_pos = attr_float(attrs, "past_len", -1.f);
   }
+  runtime::KvCache* cache = kernels::active_kv_cache();
   if (base_pos < 0.f) {
-    runtime::KvCache* cache = kernels::active_kv_cache();
     base_pos = (cache != nullptr) ? static_cast<float>(cache->rope_pos()) : 0.f;
   }
   const std::int64_t rows =
       static_cast<std::int64_t>(in.numel() / static_cast<std::size_t>(dim));
+  float seq_len = base_pos + static_cast<float>(rows);
+  if (cache != nullptr && cache->rope_scale_len() > 0) {
+    seq_len = static_cast<float>(cache->rope_scale_len());
+  }
 
   DeviceBuf d_in, d_out, d_pos;
   const float* x = nullptr;
@@ -598,7 +602,6 @@ Error dispatch_rope(const std::vector<kernels::TensorView>& inputs,
 
   const std::int64_t half = rot / 2;
   std::vector<float> inv(static_cast<std::size_t>(std::max<std::int64_t>(half, 0)));
-  const float seq_len = base_pos + static_cast<float>(rows);
   const float scale_factor = attr_float(attrs, "scale_factor", 1.f);
   const float low_f = attr_float(attrs, "low_freq_factor", 1.f);
   const float high_f = attr_float(attrs, "high_freq_factor", 4.f);
