@@ -41,19 +41,20 @@ target_link_libraries(uaii_memory_preset_test PRIVATE uaii::runtime uaii::ir uai
 uaii_set_warnings(uaii_memory_preset_test)
 add_test(NAME uaii_memory_preset_test COMMAND uaii_memory_preset_test)
 
-# Ensure Windows finds uaii_capi.dll (and deps) next to / via PATH.
-set(_uaii_test_path "$<TARGET_FILE_DIR:uaii_capi>;$ENV{PATH}")
+# Ensure Windows finds uaii_capi.dll and the MinGW runtime. Semicolons inside
+# PATH must be escaped or CTest treats them as separate environment entries.
+string(REPLACE ";" "\\;" _uaii_env_path "$ENV{PATH}")
 set_tests_properties(uaii_runtime_test PROPERTIES
-  ENVIRONMENT "PATH=${_uaii_test_path}")
+  ENVIRONMENT "PATH=$<TARGET_FILE_DIR:uaii_capi>\\;${_uaii_env_path}")
 
 # Demo / CLI smoke (skipped if binary path missing — CI sets WORKING_DIRECTORY)
 add_test(NAME uaii_cli_inspect_help
   COMMAND $<TARGET_FILE:uaii> inspect --help)
 set_tests_properties(uaii_cli_inspect_help PROPERTIES
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  ENVIRONMENT "PATH=$<TARGET_FILE_DIR:uaii>;$ENV{PATH}")
+  ENVIRONMENT "PATH=$<TARGET_FILE_DIR:uaii>\\;${_uaii_env_path}")
 add_test(NAME uaii_cli_demo_toy_mlp
   COMMAND $<TARGET_FILE:uaii> run --demo toy_mlp)
 set_tests_properties(uaii_cli_demo_toy_mlp PROPERTIES
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  ENVIRONMENT "PATH=$<TARGET_FILE_DIR:uaii>;$ENV{PATH}")
+  ENVIRONMENT "PATH=$<TARGET_FILE_DIR:uaii>\\;${_uaii_env_path}")
