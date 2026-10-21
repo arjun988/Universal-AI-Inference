@@ -72,9 +72,9 @@ export default function Page() {
         RAM after the trunk. GGUF block-quants stay packed.
       </p>
       <p>
-        A single unquantized tensor larger than about half the budget fail-closes. Convert
-        Hugging Face BF16 7B and larger to GGUF Q4_K. <code>--ram-gb 8</code> on a phone with 6
-        GiB free becomes 3 GiB.
+        Laptop and above keep two staging buffers, so the largest streamed tensor has to fit
+        twice. Phone keeps one, so that tensor has to fit once. Convert Hugging Face BF16 7B and
+        larger to GGUF Q4_K. <code>--ram-gb 8</code> on a phone with 6 GiB free becomes 3 GiB.
       </p>
 
       <h2>CLI</h2>

@@ -36,9 +36,10 @@ export default function Page() {
       </div>
       <p>
         Generation defaults to the laptop preset: pin a trunk that fits, page packed GGUF weights,
-        and keep a 2048-token KV window. A single unquantized tensor larger than about half the
-        budget fail-closes. Convert Hugging Face BF16 7B and larger to GGUF Q4_K. Phone is a
-        separate preset. See <Link href="/docs/memory/">Memory</Link>.
+        and keep a 2048-token KV window. Laptop keeps two staging buffers, so an unquantized
+        tensor larger than about half the budget fail-closes. Convert Hugging Face BF16 7B and
+        larger to GGUF Q4_K. Phone is a separate preset with one staging buffer. See{" "}
+        <Link href="/docs/memory/">Memory</Link>.
       </p>
 
       <h2>Model sizes</h2>

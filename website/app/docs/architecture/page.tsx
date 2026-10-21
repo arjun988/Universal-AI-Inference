@@ -96,8 +96,8 @@ export default function Page() {
       <p>
         CLI and dashboard generation apply the laptop preset unless you pass another one. Weights
         stay on disk. The session pins a trunk that fits and pages the rest. Phone uses one
-        staging buffer. Laptop and above use two. An unquantized tensor larger than about half
-        the budget fail-closes.
+        staging buffer, so the largest streamed tensor has to fit once. Laptop and above use two,
+        so it has to fit twice.
       </p>
       <ul>
         <li>
