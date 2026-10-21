@@ -1059,7 +1059,7 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
   if (max_new_tokens < 0) {
     return Error::make(ErrorCode::InvalidArgument, "max_new_tokens < 0");
   }
-  cancel_.store(false, std::memory_order_relaxed);
+  cancel_.store(false, std::memory_order_release);
   {
     Error paused = reject_if_paused();
     if (!paused.ok()) return paused;
@@ -1217,25 +1217,36 @@ Error Session::generate(const std::vector<std::int64_t>& prompt_tokens,
 }
 
 Error Session::reject_if_paused() const {
-  if (background_.load(std::memory_order_relaxed)) {
+  if (background_.load(std::memory_order_acquire)) {
     return Error::make(ErrorCode::InvalidArgument, "paused: app backgrounded");
   }
-  if (cancel_.load(std::memory_order_relaxed)) {
+  if (cancel_.load(std::memory_order_acquire)) {
     return Error::make(ErrorCode::InvalidArgument, "cancelled");
   }
   return Error::success();
 }
 
 void Session::request_cancel() noexcept {
-  cancel_.store(true, std::memory_order_relaxed);
+  cancel_.store(true, std::memory_order_release);
 }
 
 void Session::set_background(bool background) noexcept {
-  background_.store(background, std::memory_order_relaxed);
+  background_.store(background, std::memory_order_release);
+}
+
+void Session::apply_pending_kv_drop_locked() {
+  if (!drop_kv_) return;
+  drop_kv_ = false;
+  if (!kv_) return;
+  const std::int64_t scale = kv_->rope_scale_len();
+  kv_->reset();
+  if (scale > 0) kv_->set_rope_scale_len(scale);
 }
 
 void Session::on_memory_warning() noexcept {
-  if (kv_) kv_->reset();
+  std::lock_guard<std::mutex> lock(lifecycle_mu_);
+  drop_kv_ = true;
+  if (!in_run_) apply_pending_kv_drop_locked();
 }
 
 Error Session::run() {
@@ -1246,6 +1257,22 @@ Error Session::run() {
     Error paused = reject_if_paused();
     if (!paused.ok()) return paused;
   }
+
+  struct RunGuard {
+    Session* self;
+    explicit RunGuard(Session* s) : self(s) {
+      std::lock_guard<std::mutex> lock(self->lifecycle_mu_);
+      self->apply_pending_kv_drop_locked();
+      self->in_run_ = true;
+    }
+    ~RunGuard() {
+      std::lock_guard<std::mutex> lock(self->lifecycle_mu_);
+      self->in_run_ = false;
+      self->apply_pending_kv_drop_locked();
+    }
+    RunGuard(const RunGuard&) = delete;
+    RunGuard& operator=(const RunGuard&) = delete;
+  } guard{this};
 
   ActiveKvBinding kv_bind(kv_.get());
 

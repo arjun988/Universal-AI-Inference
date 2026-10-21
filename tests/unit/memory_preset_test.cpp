@@ -1,9 +1,14 @@
+#include "uaii/ir/graph.hpp"
 #include "uaii/kernels/thread_pool.hpp"
 #include "uaii/runtime/memory_preset.hpp"
 
+#include <string>
+
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 namespace {
 
@@ -141,6 +146,43 @@ int main() {
     expect(laptop.budget_clamped, "laptop shrinks only below the target");
     expect(laptop.ram_budget_bytes == avail, "laptop cap is free RAM");
   }
+  {
+    using namespace uaii;
+    ir::GraphBuilder b("pause");
+    TensorId x = b.add_tensor("x", DType::F32, Shape{{1, 4}});
+    TensorId w1 = b.add_weight("w1", DType::F32, Shape{{4, 4}}, "missing.bin");
+    TensorId y = b.add_tensor("y", DType::F32, Shape{{1, 4}});
+    b.add_node("m", "MatMul", "1", {x, w1}, {y});
+    b.set_inputs({x}).set_outputs({y});
+    SessionOptions ready;
+    ready.weight_init = WeightInit::Ones;
+    Session session;
+    expect(session.create(b.build(), ready).ok(), "session for pause and cancel");
+    session.set_background(true);
+    const uaii::Error paused = session.run();
+    expect(!paused.ok(), "background pauses run");
+    expect(paused.message().find("paused: app backgrounded") != std::string::npos, "pause message");
+    session.set_background(false);
+    expect(session.set_tensor_f32("x", {1.f, 0.f, 0.f, 0.f}).ok(), "set x");
+    expect(session.run().ok(), "run after foreground");
+    std::atomic<bool> stop{false};
+    std::thread warner([&] {
+      while (!stop.load(std::memory_order_acquire)) session.on_memory_warning();
+    });
+    bool runs_ok = true;
+    for (int i = 0; i < 40; ++i) {
+      if (!session.run().ok()) runs_ok = false;
+    }
+    stop.store(true, std::memory_order_release);
+    warner.join();
+    expect(runs_ok, "run stays up while memory warnings arrive");
+    session.request_cancel();
+    const uaii::Error cancelled = session.run();
+    expect(!cancelled.ok(), "cancel stops run");
+    expect(cancelled.message().find("cancelled") != std::string::npos, "cancel message");
+    session.on_memory_warning();
+  }
+
   apply_memory_preset(laptop, &opts);
   expect(!opts.single_staging, "laptop keeps prefetch staging");
   expect(opts.max_threads == 0, "laptop clears the thread cap field");

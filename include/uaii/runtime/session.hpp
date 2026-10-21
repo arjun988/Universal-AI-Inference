@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -187,6 +188,7 @@ class UAII_API Session {
                                         std::mt19937_64* rng,
                                         std::int64_t* token) const;
   [[nodiscard]] Error reject_if_paused() const;
+  void apply_pending_kv_drop_locked();
 
   bool ready_ = false;
   SessionOptions options_;
@@ -212,6 +214,9 @@ class UAII_API Session {
   std::unordered_map<std::string, TensorId> name_to_id_;
   std::atomic<bool> cancel_{false};
   std::atomic<bool> background_{false};
+  std::mutex lifecycle_mu_;
+  bool in_run_ = false;
+  bool drop_kv_ = false;
 };
 
 [[nodiscard]] UAII_API Error run_toy_mlp_demo(std::vector<float>* out_values,

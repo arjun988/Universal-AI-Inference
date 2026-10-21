@@ -37,7 +37,7 @@ uaii_set_warnings(uaii_kv_cache_test)
 add_test(NAME uaii_kv_cache_test COMMAND uaii_kv_cache_test)
 
 add_executable(uaii_memory_preset_test unit/memory_preset_test.cpp)
-target_link_libraries(uaii_memory_preset_test PRIVATE uaii::runtime uaii::kernels uaii::core)
+target_link_libraries(uaii_memory_preset_test PRIVATE uaii::runtime uaii::ir uaii::kernels uaii::core)
 uaii_set_warnings(uaii_memory_preset_test)
 add_test(NAME uaii_memory_preset_test COMMAND uaii_memory_preset_test)
 

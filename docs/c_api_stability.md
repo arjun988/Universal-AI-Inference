@@ -61,7 +61,7 @@ Callers built against an older header with a smaller `struct_size` continue to w
 | `uaii_process_rss_bytes` | Current process RSS |
 | `uaii_session_request_cancel` | `generate` / `run` return `cancelled`. `generate` clears this at entry |
 | `uaii_session_set_background` | Non-zero: `generate` / `run` return `paused: app backgrounded` until cleared |
-| `uaii_session_memory_warning` | Drop the KV cache. Streamed weights stay on the plan |
+| `uaii_session_memory_warning` | Drop the KV cache between steps. Streamed weights stay on the plan. The longrope scale length is kept |
 
 ## Shared library
 
