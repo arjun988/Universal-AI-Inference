@@ -27,7 +27,7 @@ jobs:
           python bindings/python/scripts/bundle_native.py --build-dir build
           python -m pip install build
           python -m build bindings/python
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}
           path: bindings/python/dist/*
